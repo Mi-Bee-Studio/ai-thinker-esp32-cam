@@ -1,0 +1,39 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "camera_driver.c"
+        "config_manager.c"
+        "health_monitor.c"
+        "mjpeg_streamer.c"
+        "motion_detect.c"
+        "nas_uploader.c"
+        "ftp_client.c"
+        "webdav_client.c"
+        "status_led.c"
+        "storage_manager.c"
+        "time_sync.c"
+        "web_server.c"
+        "wifi_manager.c"
+        "cJSON.c"
+    INCLUDE_DIRS "."
+    REQUIRES
+        esp_wifi
+        nvs_flash
+        esp_http_server
+        espressif__esp32-camera
+        driver
+        esp_driver_i2c
+        spiffs
+        fatfs
+        sdmmc
+        esp_http_client
+        tcp_transport
+        mbedtls
+        esp_netif
+        esp_event
+        esp_timer
+        lwip
+        freertos
+        esp_system
+        log
+)

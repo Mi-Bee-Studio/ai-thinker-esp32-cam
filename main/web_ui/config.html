@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI-Thinker CAM 配置</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--c:#0D9488;--cd:#0F766E;--bg:#F8FAFB;--card:#fff;--t:#1E293B;--t2:#64748B;--bdr:#E2E8F0}
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;background:var(--bg);color:var(--t);font-size:14px}
+.hdr{background:linear-gradient(135deg,#0F766E,#0D9488);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:10px}
+.hdr h1{font-size:17px;font-weight:700}
+.hdr .sub{font-size:12px;opacity:.75;margin-left:auto}
+.nav{background:var(--card);border-bottom:1px solid var(--bdr);display:flex}
+.nav a{flex:1;text-align:center;padding:10px 0;font-size:13px;color:var(--t2);text-decoration:none;border-bottom:2px solid transparent;transition:all .15s}
+.nav a.act{color:var(--c);border-bottom-color:var(--c);font-weight:600}
+.nav a:hover{background:#F1F5F9}
+.main{padding:12px;max-width:600px;margin:0 auto;padding-bottom:20px}
+.card{background:var(--card);border-radius:10px;padding:14px 16px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.ct{font-size:15px;color:var(--c);margin-bottom:12px;font-weight:700;border-bottom:1px solid var(--bdr);padding-bottom:6px}
+.fld{margin-bottom:10px}
+.fld:last-child{margin-bottom:0}
+.fld label{display:block;font-size:13px;color:var(--t2);margin-bottom:4px;font-weight:500}
+.fld input[type="text"],.fld input[type="password"],.fld input[type="number"],.fld select{width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:14px;font-family:inherit;background:#FAFBFC;color:var(--t)}
+.fld input:focus,.fld select:focus{outline:none;border-color:var(--c);background:#fff}
+.fld input[type="checkbox"]{margin-right:6px;transform:scale(1.2);vertical-align:middle}
+.inline{display:flex;align-items:flex-start;gap:10px}
+.inline>div{flex:1}
+.port-f{width:80px!important;flex-shrink:0}
+.range-r{display:flex;align-items:center;gap:10px}
+.range-r input[type="range"]{flex:1}
+.range-v{min-width:36px;text-align:center;font-weight:700;color:var(--c);font-size:15px}
+.chk-r{display:flex;align-items:center;margin-bottom:10px}
+.chk-r label{margin-bottom:0;font-size:14px;color:var(--t);cursor:pointer}
+.btn-row{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+.btn{padding:10px 20px;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s}
+.btn-sv{background:var(--c);color:#fff}
+.btn-sv:hover{background:var(--cd)}
+.btn-rb{background:#D97706;color:#fff}
+.btn-rb:hover{background:#B45309}
+.btn-rs{background:#DC2626;color:#fff}
+.btn-rs:hover{background:#B91C1C}
+.pw-w{position:relative}
+.pw-w input{padding-right:36px}
+.pw-w .eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);cursor:pointer;user-select:none;font-size:16px;color:var(--t2);line-height:1}
+.toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);padding:10px 24px;border-radius:8px;font-size:14px;z-index:100;opacity:0;transition:opacity .3s;pointer-events:none;font-weight:500}
+.toast.show{opacity:1}
+.toast.ok{background:var(--c);color:#fff}
+.toast.err{background:#DC2626;color:#fff}
+</style>
+</head>
+<body>
+<div class="hdr">
+<h1>AI-Thinker CAM</h1>
+<span class="sub">配置</span>
+</div>
+<div class="nav">
+<a href="/">仪表盘</a>
+<a href="/preview.html">实时预览</a>
+<a href="/config.html" class="act">配置</a>
+<a href="/files.html">照片</a>
+</div>
+<div class="main">
+
+<div class="card">
+<div class="ct">WiFi 设置</div>
+<div class="fld"><label>SSID</label><input type="text" id="wifi_ssid" placeholder="WiFi名称"></div>
+<div class="fld"><label>密码</label><div class="pw-w"><input type="password" id="wifi_pass" placeholder="WiFi密码"><span class="eye" onclick="togPw(this)">&#128065;</span></div></div>
+</div>
+
+<div class="card">
+<div class="ct">摄像头</div>
+<div class="fld"><label>分辨率</label>
+<select id="resolution">
+<option value="5">VGA (640x480)</option>
+<option value="6">SVGA (800x600)</option>
+<option value="7">XGA (1024x768)</option>
+<option value="8">UXGA (1600x1200)</option>
+</select></div>
+<div class="fld"><label>JPEG 质量 (1=最高 63=最低)</label>
+<div class="range-r"><input type="range" id="jpeg_quality" min="1" max="63" value="10"><span class="range-v" id="qVal">10</span></div></div>
+</div>
+
+<div class="card">
+<div class="ct">设备</div>
+<div class="fld"><label>设备名称</label><input type="text" id="device_name" placeholder="AI-Thinker CAM"></div>
+<div class="fld"><label>Web 管理密码</label><div class="pw-w"><input type="password" id="web_password" placeholder="留空则不修改"><span class="eye" onclick="togPw(this)">&#128065;</span></div></div>
+<div class="fld"><label>确认密码</label><div class="pw-w"><input type="password" id="web_password_confirm" placeholder="再次输入新密码"><span class="eye" onclick="togPw(this)">&#128065;</span></div></div>
+</div>
+
+<div class="card">
+<div class="ct">移动侦测</div>
+<div class="chk-r"><input type="checkbox" id="motion_enabled"><label for="motion_enabled">启用移动侦测</label></div>
+<div class="fld"><label>检测阈值 (1-100)</label>
+<div class="range-r"><input type="range" id="motion_threshold" min="1" max="100" value="30"><span class="range-v" id="mtVal">30</span></div></div>
+<div class="fld"><label>冷却时间 (秒)</label>
+<div class="range-r"><input type="range" id="motion_cooldown" min="1" max="60" value="5"><span class="range-v" id="mcVal">5</span></div></div>
+</div>
+
+<div class="card">
+<div class="ct">NAS 上传</div>
+<div class="fld"><label>协议</label>
+<select id="nas_protocol">
+<option value="http">HTTP</option>
+<option value="ftp">FTP</option>
+<option value="webdav">WebDAV</option>
+</select></div>
+<div class="fld"><div class="inline"><div><label>服务器地址</label><input type="text" id="nas_host" placeholder="192.168.1.100"></div><div class="port-f"><label>端口</label><input type="number" id="nas_port" value="80" min="1" max="65535"></div></div></div>
+<div class="fld"><label>用户名</label><input type="text" id="nas_user" placeholder="用户名"></div>
+<div class="fld"><label>密码</label><div class="pw-w"><input type="password" id="nas_pass" placeholder="密码"><span class="eye" onclick="togPw(this)">&#128065;</span></div></div>
+<div class="fld"><label>远程路径</label><input type="text" id="nas_path" placeholder="/photos"></div>
+</div>
+
+<div class="card">
+<div class="ct">系统操作</div>
+<div class="btn-row">
+<button class="btn btn-sv" onclick="saveConfig()">保存配置</button>
+<button class="btn btn-rb" onclick="rebootDevice()">重启设备</button>
+<button class="btn btn-rs" onclick="factoryReset()">恢复出厂</button>
+</div>
+</div>
+
+</div>
+<div class="toast" id="toast"></div>
+<script>
+function $(s){return document.getElementById(s)}
+var tT=null;
+function showToast(m,e){var t=$('toast');t.textContent=m;t.className='toast show '+(e?'err':'ok');clearTimeout(tT);tT=setTimeout(function(){t.className='toast'},3000)}
+function getPw(){return localStorage.getItem('cam_password')||''}
+function setPw(p){localStorage.setItem('cam_password',p)}
+function authH(){var p=getPw();return p?{'X-Password':p}:{}}
+function authFetch(u,o){o=o||{};o.headers=Object.assign({},o.headers||{},authH());return fetch(u,o).then(function(r){if(r.status===401){setPw('');loginDialog();throw new Error('Unauthorized')}return r})}
+function loginDialog(cb){var p=prompt('请输入管理密码:');if(!p)return;fetch('/api/status',{headers:{'X-Password':p}}).then(function(r){if(r.ok){setPw(p);if(cb)cb()}else{alert('密码错误');loginDialog(cb)}})}
+function requireAuth(cb){if(getPw())cb();else loginDialog(cb)}
+function togPw(el){var i=el.previousElementSibling;if(i.type==='password'){i.type='text';el.textContent='\uD83D\uDC41'}else{i.type='password';el.textContent='\uD83D\uDC40'}}
+
+$('jpeg_quality').oninput=function(){$('qVal').textContent=this.value};
+$('motion_threshold').oninput=function(){$('mtVal').textContent=this.value};
+$('motion_cooldown').oninput=function(){$('mcVal').textContent=this.value};
+
+$('nas_protocol').onchange=function(){
+var p=parseInt(this.value==='ftp'?21:this.value==='webdav'?80:80);
+$('nas_port').value=p;
+};
+
+function loadConfig(){
+fetch('/api/config').then(function(r){return r.json()}).then(function(d){
+if(!d||!d.ok)return;var v=d.data;
+$('wifi_ssid').value=v.wifi_ssid||'';
+$('wifi_pass').value=v.wifi_pass||'';
+$('device_name').value=v.device_name||'';
+$('resolution').value=v.resolution!=null?v.resolution:'6';
+$('jpeg_quality').value=v.jpeg_quality||10;$('qVal').textContent=$('jpeg_quality').value;
+$('web_password').value='';
+$('motion_enabled').checked=!!v.motion_enabled;
+$('motion_threshold').value=v.motion_threshold||30;$('mtVal').textContent=$('motion_threshold').value;
+$('motion_cooldown').value=v.motion_cooldown||5;$('mcVal').textContent=$('motion_cooldown').value;
+$('nas_protocol').value=v.nas_protocol||'http';
+$('nas_host').value=v.nas_host||'';
+$('nas_port').value=v.nas_port||80;
+$('nas_user').value=v.nas_user||'';
+$('nas_pass').value=v.nas_pass||'';
+$('nas_path').value=v.nas_path||'/photos';
+}).catch(function(e){console.error('Load config failed:',e)});
+}
+
+function saveConfig(){
+var pw=$('web_password').value,cpw=$('web_password_confirm').value;
+if(pw&&pw!==cpw){showToast('两次输入的密码不一致',true);return}
+requireAuth(function(){
+var cfg={
+wifi_ssid:$('wifi_ssid').value,
+wifi_pass:$('wifi_pass').value,
+device_name:$('device_name').value,
+resolution:parseInt($('resolution').value),
+jpeg_quality:parseInt($('jpeg_quality').value),
+motion_enabled:$('motion_enabled').checked,
+motion_threshold:parseInt($('motion_threshold').value),
+motion_cooldown:parseInt($('motion_cooldown').value),
+nas_protocol:$('nas_protocol').value,
+nas_host:$('nas_host').value,
+nas_port:parseInt($('nas_port').value)||80,
+nas_user:$('nas_user').value,
+nas_pass:$('nas_pass').value,
+nas_path:$('nas_path').value
+};
+if(pw)cfg.web_password=pw;
+authFetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}).then(function(r){return r.json()}).then(function(d){
+if(d&&d.ok){showToast('配置已保存');$('web_password_confirm').value='';loadConfig()}
+else showToast('保存失败: '+(d.error||'未知错误'),true);
+}).catch(function(e){showToast('保存失败',true);console.error(e)});
+});
+}
+
+function rebootDevice(){
+if(!confirm('确定要重启设备？'))return;
+requireAuth(function(){
+authFetch('/api/reboot',{method:'POST'}).catch(function(){});
+showToast('设备正在重启...');
+});
+}
+
+function factoryReset(){
+if(!confirm('确定要恢复出厂设置？\n所有配置将被清除，设备将重启。'))return;
+requireAuth(function(){
+authFetch('/api/reset',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+if(d&&d.ok)showToast('正在恢复出厂设置...');
+else showToast('操作失败: '+(d.error||'未知错误'),true);
+}).catch(function(e){showToast('操作失败',true);console.error(e)});
+});
+}
+
+window.onload=loadConfig;
+</script>
+</body>
+</html>

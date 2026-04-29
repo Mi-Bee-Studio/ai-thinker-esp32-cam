@@ -1,0 +1,21 @@
+menu "ai-thinker-cam Configuration"
+
+    config AI_THINKER_CAM_ENABLE_MOTION
+        bool "Enable motion detection"
+        default y
+        help
+            Enable frame-difference motion detection.
+
+    config AI_THINKER_CAM_ENABLE_NAS
+        bool "Enable NAS upload (FTP/WebDAV/HTTP)"
+        default y
+        help
+            Enable file upload to NAS server via FTP, WebDAV, or HTTP POST.
+
+    config AI_THINKER_CAM_ENABLE_HEALTH
+        bool "Enable health monitoring"
+        default y
+        help
+            Enable periodic health monitoring with Prometheus /metrics endpoint.
+
+endmenu

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI-Thinker CAM 实时预览</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--c:#0D9488;--cd:#0F766E;--bg:#F8FAFB;--card:#fff;--t:#1E293B;--t2:#64748B;--bdr:#E2E8F0}
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;background:var(--bg);color:var(--t);font-size:14px}
+.hdr{background:linear-gradient(135deg,#0F766E,#0D9488);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:10px}
+.hdr h1{font-size:17px;font-weight:700}
+.hdr .sub{font-size:12px;opacity:.75;margin-left:auto}
+.nav{background:var(--card);border-bottom:1px solid var(--bdr);display:flex}
+.nav a{flex:1;text-align:center;padding:10px 0;font-size:13px;color:var(--t2);text-decoration:none;border-bottom:2px solid transparent;transition:all .15s}
+.nav a.act{color:var(--c);border-bottom-color:var(--c);font-weight:600}
+.nav a:hover{background:#F1F5F9}
+.main{padding:12px;max-width:860px;margin:0 auto;padding-bottom:20px}
+.stream-card{background:#000;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.15);position:relative}
+#stream{width:100%;display:block;background:#000;min-height:200px}
+.ph{display:flex;flex-direction:column;align-items:center;justify-content:center;color:#666;min-height:300px;font-size:15px}
+.ph .sp{width:32px;height:32px;border:3px solid #333;border-top-color:var(--c);border-radius:50%;animation:spin 1s linear infinite;margin-bottom:12px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ctrl{background:var(--card);border-radius:10px;padding:12px 16px;margin-top:10px;box-shadow:0 1px 3px rgba(0,0,0,.06);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+.ctrl-left{display:flex;align-items:center;gap:12px;font-size:13px}
+.ctrl-item{display:flex;align-items:center;gap:4px}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.dot.g{background:#059669}
+.dot.r{background:#DC2626;animation:pls 1s infinite}
+.dot.y{background:#D97706;animation:pls .8s infinite}
+@keyframes pls{0%,100%{opacity:1}50%{opacity:.3}}
+.cl{color:var(--t2);font-size:12px}
+.cv{font-weight:600;font-size:13px}
+.ctrl-right{display:flex;align-items:center;gap:8px}
+select,button{font-family:inherit}
+.sel{padding:6px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:var(--card);color:var(--t);cursor:pointer}
+.btn{padding:7px 16px;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;transition:background .15s}
+.btn-cap{background:var(--c);color:#fff}
+.btn-cap:hover{background:var(--cd)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.range-row{display:flex;align-items:center;gap:8px;font-size:12px}
+.range-row input[type="range"]{width:80px}
+.range-val{min-width:28px;font-weight:600;color:var(--c)}
+#stream:fullscreen,#stream:-webkit-full-screen{max-height:100vh;object-fit:contain}
+</style>
+</head>
+<body>
+<div class="hdr">
+<h1>AI-Thinker CAM</h1>
+<span class="sub">实时预览</span>
+</div>
+<div class="nav">
+<a href="/">仪表盘</a>
+<a href="/preview.html" class="act">实时预览</a>
+<a href="/config.html">配置</a>
+<a href="/files.html">照片</a>
+</div>
+<div class="main">
+<div class="stream-card">
+<div class="ph" id="placeholder">
+<div class="sp"></div>
+正在连接摄像头...
+</div>
+<img id="stream" style="display:none" alt="实时画面">
+</div>
+<div class="ctrl">
+<div class="ctrl-left">
+<div class="ctrl-item"><span class="dot y" id="sDot"></span><span class="cv" id="sTxt">连接中</span></div>
+<div class="ctrl-item"><span class="cl">帧率:</span><span class="cv" id="fps">--</span></div>
+<div class="ctrl-item"><span class="cl">客户端:</span><span class="cv" id="clients">--</span></div>
+</div>
+<div class="ctrl-right">
+<select class="sel" id="resSel" onchange="changeRes()">
+<option value="5">VGA (640x480)</option>
+<option value="6">SVGA (800x600)</option>
+<option value="7">XGA (1024x768)</option>
+<option value="8">UXGA (1600x1200)</option>
+</select>
+<div class="range-row">
+<span>质量</span>
+<input type="range" id="qSlider" min="1" max="63" value="10" onchange="changeQuality()">
+<span class="range-val" id="qVal">10</span>
+</div>
+<button class="btn btn-cap" onclick="capture()">拍照</button>
+</div>
+</div>
+</div>
+<script>
+var img=document.getElementById('stream');
+var ph=document.getElementById('placeholder');
+var sDot=document.getElementById('sDot');
+var sTxt=document.getElementById('sTxt');
+var fpsEl=document.getElementById('fps');
+var clientsEl=document.getElementById('clients');
+var connected=false;
+var fc=0,lt=Date.now(),retryT=null;
+
+function onConn(){
+connected=true;clearTimeout(retryT);
+ph.style.display='none';img.style.display='block';
+sDot.className='dot g';sTxt.textContent='已连接';sTxt.style.color='#059669';
+}
+function onDisconn(msg){
+connected=false;
+sDot.className='dot r';sTxt.textContent=msg||'连接断开';sTxt.style.color='#DC2626';
+if(retryT)clearTimeout(retryT);
+retryT=setTimeout(function(){
+sDot.className='dot y';sTxt.textContent='重新连接中';sTxt.style.color='#D97706';
+img.src='/stream?t='+Date.now();
+},3000);
+}
+
+img.onload=function(){fc++;onConn()};
+img.onerror=function(){onDisconn('连接断开')};
+img.src='/stream';
+
+setInterval(function(){
+if(!connected)return;
+var now=Date.now(),el=now-lt;
+if(el>0)fpsEl.textContent=Math.round(fc*1000/el)+' fps';
+fc=0;lt=now;
+},1000);
+
+setInterval(function(){
+fetch('/api/status').then(function(r){return r.json()}).then(function(d){
+if(d&&d.ok)clientsEl.textContent=(d.data.stream_clients!=null?d.data.stream_clients:'--');
+}).catch(function(){});
+},5000);
+
+function changeRes(){
+var v=document.getElementById('resSel').value;
+fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({resolution:parseInt(v)})}).catch(function(){});
+}
+function changeQuality(){
+var v=document.getElementById('qSlider').value;
+document.getElementById('qVal').textContent=v;
+fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jpeg_quality:parseInt(v)})}).catch(function(){});
+}
+function capture(){
+window.open('/capture','_blank');
+}
+function stopStream(){
+if(retryT)clearTimeout(retryT);img.onload=null;img.onerror=null;img.src='';
+}
+document.querySelectorAll('.nav a').forEach(function(a){
+a.addEventListener('click',function(e){e.preventDefault();stopStream();setTimeout(function(){location.href=a.href},80)});
+});
+window.addEventListener('beforeunload',stopStream);
+window.addEventListener('pagehide',stopStream);
+</script>
+</body>
+</html>

@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI-Thinker CAM 照片管理</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--c:#0D9488;--cd:#0F766E;--bg:#F8FAFB;--card:#fff;--t:#1E293B;--t2:#64748B;--bdr:#E2E8F0}
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;background:var(--bg);color:var(--t);font-size:14px}
+.hdr{background:linear-gradient(135deg,#0F766E,#0D9488);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:10px}
+.hdr h1{font-size:17px;font-weight:700}
+.hdr .sub{font-size:12px;opacity:.75;margin-left:auto}
+.nav{background:var(--card);border-bottom:1px solid var(--bdr);display:flex}
+.nav a{flex:1;text-align:center;padding:10px 0;font-size:13px;color:var(--t2);text-decoration:none;border-bottom:2px solid transparent;transition:all .15s}
+.nav a.act{color:var(--c);border-bottom-color:var(--c);font-weight:600}
+.nav a:hover{background:#F1F5F9}
+.main{padding:12px;max-width:600px;margin:0 auto;padding-bottom:20px}
+.card{background:var(--card);border-radius:10px;padding:14px 16px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.ct{font-size:13px;color:var(--t2);margin-bottom:8px;font-weight:600}
+.bar-w{background:#E2E8F0;border-radius:4px;height:8px;margin:6px 0;overflow:hidden}
+.bar-f{height:100%;border-radius:4px;transition:width .5s}
+.bar-f.g{background:var(--c)}
+.bar-f.y{background:#D97706}
+.bar-f.r{background:#DC2626}
+.bar-t{font-size:12px;color:var(--t2)}
+.toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px}
+.toolbar .left{display:flex;align-items:center;gap:8px}
+.btn{padding:6px 14px;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s}
+.btn-p{background:var(--c);color:#fff}
+.btn-p:hover{background:var(--cd)}
+.btn-d{background:#DC2626;color:#fff}
+.btn-d:hover{background:#B91C1C}
+.btn-s{background:var(--card);color:var(--t);border:1px solid var(--bdr)}
+.btn-s:hover{background:#F1F5F9}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.grid-tog{display:flex;border:1px solid var(--bdr);border-radius:6px;overflow:hidden}
+.grid-tog button{padding:5px 10px;border:none;background:var(--card);color:var(--t2);cursor:pointer;font-size:12px}
+.grid-tog button.act{background:var(--c);color:#fff}
+.grid-view{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}
+.list-view{display:flex;flex-direction:column}
+.photo-card{background:#F8FAFB;border-radius:8px;overflow:hidden;cursor:pointer;transition:transform .15s,box-shadow .15s}
+.photo-card:hover{transform:translateY(-1px);box-shadow:0 2px 8px rgba(0,0,0,.1)}
+.photo-card img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:#E2E8F0}
+.photo-card .info{padding:6px 8px;font-size:11px;color:var(--t2)}
+.photo-card .name{font-size:12px;color:var(--t);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file-item{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #F1F5F9}
+.file-item:last-child{border-bottom:none}
+.file-info{flex:1;min-width:0}
+.file-name{font-size:13px;word-break:break-all;color:var(--t)}
+.file-size{font-size:12px;color:var(--t2);margin-top:2px}
+.file-actions{display:flex;gap:6px;flex-shrink:0;margin-left:8px}
+.btn-sm{padding:4px 10px;border:none;border-radius:4px;font-size:12px;cursor:pointer;font-family:inherit;font-weight:500;transition:background .15s}
+.btn-dl{background:var(--c);color:#fff}
+.btn-dl:hover{background:var(--cd)}
+.btn-del{background:#DC2626;color:#fff}
+.btn-del:hover{background:#B91C1C}
+.btn-up{background:#D97706;color:#fff}
+.btn-up:hover{background:#B45309}
+.empty{text-align:center;padding:40px 20px;color:var(--t2);font-size:14px}
+.empty .icon{font-size:40px;margin-bottom:12px;opacity:.4}
+.toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);padding:10px 24px;border-radius:8px;font-size:14px;z-index:100;opacity:0;transition:opacity .3s;pointer-events:none;font-weight:500}
+.toast.show{opacity:1}
+.toast.ok{background:var(--c);color:#fff}
+.toast.err{background:#DC2626;color:#fff}
+</style>
+</head>
+<body>
+<div class="hdr">
+<h1>AI-Thinker CAM</h1>
+<span class="sub">照片管理</span>
+</div>
+<div class="nav">
+<a href="/">仪表盘</a>
+<a href="/preview.html">实时预览</a>
+<a href="/config.html">配置</a>
+<a href="/files.html" class="act">照片</a>
+</div>
+<div class="main">
+
+<div class="card">
+<div class="ct">存储空间</div>
+<div class="bar-w"><div class="bar-f g" id="sBar" style="width:0%"></div></div>
+<div class="bar-t" id="sTxt">--</div>
+</div>
+
+<div class="toolbar">
+<div class="left">
+<span style="font-size:13px;color:var(--t2)" id="fSummary">加载中...</span>
+<button class="btn btn-s" onclick="refreshFiles()">刷新</button>
+</div>
+<div class="grid-tog">
+<button class="act" id="gridBtn" onclick="setView('grid')">网格</button>
+<button id="listBtn" onclick="setView('list')">列表</button>
+</div>
+</div>
+
+<div id="fileList"></div>
+
+</div>
+<div class="toast" id="toast"></div>
+<script>
+function $(s){return document.getElementById(s)}
+var tT=null;
+function showToast(m,e){var t=$('toast');t.textContent=m;t.className='toast show '+(e?'err':'ok');clearTimeout(tT);tT=setTimeout(function(){t.className='toast'},3000)}
+function getPw(){return localStorage.getItem('cam_password')||''}
+function setPw(p){localStorage.setItem('cam_password',p)}
+function authH(){var p=getPw();return p?{'X-Password':p}:{}}
+function authFetch(u,o){o=o||{};o.headers=Object.assign({},o.headers||{},authH());return fetch(u,o).then(function(r){if(r.status===401){setPw('');loginDialog();throw new Error('Unauthorized')}return r})}
+function loginDialog(cb){var p=prompt('请输入管理密码:');if(!p)return;fetch('/api/status',{headers:{'X-Password':p}}).then(function(r){if(r.ok){setPw(p);if(cb)cb()}else{alert('密码错误');loginDialog(cb)}})}
+function requireAuth(cb){if(getPw())cb();else loginDialog(cb)}
+function fmtB(b){if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';return(b/1048576).toFixed(1)+'MB'}
+
+var curView='grid';
+var curFiles=[];
+
+function setView(v){
+curView=v;
+$('gridBtn').className=v==='grid'?'act':'';
+$('listBtn').className=v==='list'?'act':'';
+renderFiles();
+}
+
+function renderFiles(){
+if(!curFiles.length){
+$('fileList').innerHTML='<div class="empty"><div class="icon">&#128247;</div>暂无照片<br><span style="font-size:12px">通过预览页拍照或开启移动侦测来自动保存</span></div>';
+return;
+}
+if(curView==='grid'){
+var h='<div class="grid-view">';
+for(var i=0;i<curFiles.length;i++){
+var f=curFiles[i];
+var thumb='/api/download?name='+encodeURIComponent(f.name)+'&thumb=1';
+h+='<div class="photo-card">';
+h+='<img src="'+thumb+'" alt="'+f.name+'" onerror="this.style.display=\'none\'">';
+h+='<div class="info"><div class="name">'+f.name+'</div>'+fmtB(f.size)+'</div>';
+h+='<div style="padding:0 8px 8px;display:flex;gap:4px">';
+h+='<button class="btn-sm btn-dl" onclick="dlFile(\''+f.name.replace(/'/g,"\\'")+'\')">下载</button>';
+h+='<button class="btn-sm btn-del" onclick="delFile(\''+f.name.replace(/'/g,"\\'")+'\')">删除</button>';
+h+='<button class="btn-sm btn-up" onclick="uploadFile(\''+f.name.replace(/'/g,"\\'")+'\')">上传</button>';
+h+='</div></div>';
+}
+h+='</div>';
+$('fileList').innerHTML=h;
+}else{
+var h='<div class="list-view">';
+for(var i=0;i<curFiles.length;i++){
+var f=curFiles[i];
+h+='<div class="file-item">';
+h+='<div class="file-info"><div class="file-name">'+f.name+'</div><div class="file-size">'+fmtB(f.size)+'</div></div>';
+h+='<div class="file-actions">';
+h+='<button class="btn-sm btn-dl" onclick="dlFile(\''+f.name.replace(/'/g,"\\'")+'\')">下载</button>';
+h+='<button class="btn-sm btn-up" onclick="uploadFile(\''+f.name.replace(/'/g,"\\'")+'\')">上传</button>';
+h+='<button class="btn-sm btn-del" onclick="delFile(\''+f.name.replace(/'/g,"\\'")+'\')">删除</button>';
+h+='</div></div>';
+}
+h+='</div>';
+$('fileList').innerHTML=h;
+}
+}
+
+function refreshFiles(){
+fetch('/api/files').then(function(r){return r.json()}).then(function(d){
+if(!d||!d.ok){$('fSummary').textContent='加载失败';return}
+var v=d.data;
+if(v.spiffs_total!=null&&v.spiffs_free!=null){
+var used=v.spiffs_total-v.spiffs_free;
+var pct=Math.round(used*100/v.spiffs_total);
+$('sBar').style.width=pct+'%';
+$('sBar').className='bar-f '+(pct>90?'r':pct>70?'y':'g');
+$('sTxt').textContent='已用 '+fmtB(used)+' / '+fmtB(v.spiffs_total)+' ('+pct+'%)';
+}
+curFiles=v.files||[];
+curFiles.sort(function(a,b){return b.name.localeCompare(a.name)});
+$('fSummary').textContent='共 '+curFiles.length+' 张照片';
+renderFiles();
+}).catch(function(e){
+$('fSummary').textContent='加载失败';console.error(e);
+});
+}
+
+function dlFile(name){
+var a=document.createElement('a');
+a.href='/api/download?name='+encodeURIComponent(name);
+a.download=name.split('/').pop();
+document.body.appendChild(a);a.click();document.body.removeChild(a);
+}
+
+function delFile(name){
+requireAuth(function(){
+if(!confirm('确定删除 '+name+'?'))return;
+authFetch('/api/files?name='+encodeURIComponent(name),{method:'DELETE'}).then(function(r){return r.json()}).then(function(d){
+if(d&&d.ok){showToast('已删除');refreshFiles()}
+else showToast('删除失败: '+(d.error||'未知错误'),true);
+}).catch(function(e){showToast('删除失败',true);console.error(e)});
+});
+}
+
+function uploadFile(name){
+requireAuth(function(){
+showToast('正在上传 '+name+'...');
+authFetch('/api/upload?name='+encodeURIComponent(name),{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+if(d&&d.ok)showToast('上传成功');
+else showToast('上传失败: '+(d.error||'未知错误'),true);
+}).catch(function(e){showToast('上传失败',true);console.error(e)});
+});
+}
+
+window.onload=refreshFiles;
+</script>
+</body>
+</html>

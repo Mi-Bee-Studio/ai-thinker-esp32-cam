@@ -1,0 +1,34 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.0
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Build firmware
+        run: |
+          . ${IDF_PATH}/export.sh
+          idf.py set-target esp32
+          idf.py build
+      
+      - name: Package firmware
+        run: |
+          mkdir -p firmware
+          cp build/ai_thinker_cam.bin firmware/
+          cp build/bootloader/bootloader.bin firmware/
+          cp build/partition_table/partition-table.bin firmware/
+          echo "Flash command: idf.py -p COMx -b 460800 flash" > firmware/FLASH_INSTRUCTIONS.txt
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: firmware/*
+          generate_release_notes: true

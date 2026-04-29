@@ -1,0 +1,324 @@
+/*
+ * AI Thinker ESP32-CAM - Main Entry Point
+ * 16-step boot sequence integrating all modules.
+ *
+ * Boot order (CRITICAL):
+ *   NVS -> config -> LED -> SPIFFS -> camera -> WiFi -> callback -> health
+ *   -> STA/AP -> MJPEG -> time_sync -> web_server -> motion -> SD -> NAS -> boot_btn
+ */
+
+#include "esp_log.h"
+#include "esp_system.h"
+#include "esp_spiffs.h"
+#include "nvs_flash.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/gpio.h"
+
+#include "common.h"
+#include "config_manager.h"
+#include "status_led.h"
+#include "wifi_manager.h"
+#include "camera_driver.h"
+#include "health_monitor.h"
+#include "mjpeg_streamer.h"
+#include "time_sync.h"
+#include "web_server.h"
+#include "motion_detect.h"
+#include "storage_manager.h"
+#include "nas_uploader.h"
+
+static const char *TAG = "main";
+
+/* Track what's been started (prevent double-init from WiFi callback) */
+static bool s_mjpeg_started = false;
+static bool s_web_server_started = false;
+static bool s_motion_started = false;
+static bool s_time_sync_started = false;
+static bool s_sd_init_done = false;
+static bool s_nas_started = false;
+
+/* ---------------------------------------------------------------------------
+ * WiFi state callback - triggers post-connection services
+ * --------------------------------------------------------------------------- */
+static void wifi_state_cb(wifi_state_t state, void *user_data)
+{
+    switch (state) {
+    case WIFI_STATE_STA_CONNECTED:
+        ESP_LOGI(TAG, "WiFi connected, IP: %s", wifi_get_ip_str());
+
+        /* Start MJPEG streamer (once) */
+        if (!s_mjpeg_started) {
+            esp_err_t ret = mjpeg_streamer_init();
+            if (ret == ESP_OK) {
+                s_mjpeg_started = true;
+                ESP_LOGI(TAG, "MJPEG streamer initialized");
+            } else {
+                ESP_LOGW(TAG, "MJPEG streamer init failed: %s", esp_err_to_name(ret));
+            }
+        }
+
+        /* Start time sync (once) */
+        if (!s_time_sync_started) {
+            const cam_config_t *cfg = config_get();
+            esp_err_t ret = time_sync_init(cfg->timezone[0] ? cfg->timezone : CONFIG_DEFAULT_TIMEZONE);
+            if (ret == ESP_OK) {
+                s_time_sync_started = true;
+            } else {
+                ESP_LOGW(TAG, "Time sync init failed: %s", esp_err_to_name(ret));
+            }
+        }
+
+        /* Start web server (once) */
+        if (!s_web_server_started) {
+            esp_err_t ret = web_server_start(80);
+            if (ret == ESP_OK) {
+                s_web_server_started = true;
+                ESP_LOGI(TAG, "Web server started on port 80");
+            } else {
+                ESP_LOGE(TAG, "Web server start failed: %s", esp_err_to_name(ret));
+            }
+        }
+
+        /* Start motion detection (once) */
+        if (!s_motion_started) {
+            esp_err_t ret = motion_detect_start();
+            if (ret == ESP_OK) {
+                s_motion_started = true;
+                ESP_LOGI(TAG, "Motion detection started");
+            } else {
+                ESP_LOGE(TAG, "Motion detection start failed: %s", esp_err_to_name(ret));
+            }
+        }
+
+        /* System is fully up */
+        led_set_status(LED_RUNNING);
+        break;
+
+    case WIFI_STATE_STA_DISCONNECTED:
+        ESP_LOGW(TAG, "WiFi disconnected");
+        led_set_status(LED_WIFI_CONNECTING);
+        break;
+
+    case WIFI_STATE_AP:
+        ESP_LOGI(TAG, "AP mode active - limited functionality");
+        led_set_status(LED_AP_MODE);
+        break;
+
+    default:
+        break;
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * BOOT button (GPIO0) long-press 5s - factory reset
+ * --------------------------------------------------------------------------- */
+static void boot_btn_task(void *arg)
+{
+    gpio_num_t boot_gpio = BOOT_BTN_GPIO;
+
+    gpio_config_t btn_conf = {
+        .pin_bit_mask = (1ULL << boot_gpio),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&btn_conf);
+
+    ESP_LOGI(TAG, "BOOT button monitor started (GPIO%d, 5s hold = factory reset)", BOOT_BTN_GPIO);
+
+    while (1) {
+        if (gpio_get_level(boot_gpio) == 0) {
+            ESP_LOGW(TAG, "BOOT button pressed, waiting for long press...");
+            vTaskDelay(pdMS_TO_TICKS(5000));
+
+            if (gpio_get_level(boot_gpio) == 0) {
+                ESP_LOGW(TAG, "Factory reset triggered!");
+                config_reset();
+                esp_restart();
+            } else {
+                ESP_LOGI(TAG, "BOOT button released before 5s, no reset");
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * app_main - system entry point, 16-step boot sequence
+ * --------------------------------------------------------------------------- */
+void app_main(void)
+{
+    ESP_LOGI(TAG, "========================================");
+    ESP_LOGI(TAG, "  AI Thinker ESP32-CAM");
+    ESP_LOGI(TAG, "========================================");
+
+    /* Step 1/16: NVS flash init */
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "NVS partition needs erase, formatting...");
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+    ESP_LOGI(TAG, "=== Step 1/16: NVS initialized ===");
+
+    /* Step 2/16: Config manager init */
+    ret = config_init();
+    ESP_ERROR_CHECK(ret);
+    ESP_LOGI(TAG, "=== Step 2/16: Config initialized ===");
+
+    /* Step 3/16: LED init */
+    ret = led_init();
+    ESP_ERROR_CHECK(ret);
+    led_set_status(LED_STARTING);
+    ESP_LOGI(TAG, "=== Step 3/16: LED initialized ===");
+
+    /* Step 4/16: SPIFFS mount (/spiffs partition for Web UI) */
+    esp_vfs_spiffs_conf_t spiffs_conf = {
+        .base_path = "/spiffs",
+        .partition_label = "spiffs",
+        .max_files = 5,
+        .format_if_mount_failed = true,
+    };
+    ret = esp_vfs_spiffs_register(&spiffs_conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "SPIFFS mount failed: %s", esp_err_to_name(ret));
+    } else {
+        size_t total = 0, used = 0;
+        esp_spiffs_info("spiffs", &total, &used);
+        ESP_LOGI(TAG, "=== Step 4/16: SPIFFS mounted (%" PRIu32 " KB total, %" PRIu32 " KB used) ===",
+                 total / 1024, used / 1024);
+    }
+
+    /* Step 5/16: Camera init (BEFORE WiFi - I2C bus conflict)
+     *          Also BEFORE SD card - GPIO14 shared with SD CLK */
+    camera_release_sd_bus();
+    {
+        const cam_config_t *cam_cfg = config_get();
+        ret = camera_init((camera_resolution_t)cam_cfg->resolution,
+                         cam_cfg->fps, cam_cfg->jpeg_quality);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Camera init failed: %s", esp_err_to_name(ret));
+            led_set_status(LED_ERROR);
+        } else {
+            ESP_LOGI(TAG, "=== Step 5/16: Camera initialized (%s, %d fps, quality %d) ===",
+                     camera_get_sensor_name(), cam_cfg->fps, cam_cfg->jpeg_quality);
+        }
+    }
+
+    /* Step 6/16: WiFi init (netif + event loop) */
+    ret = wifi_init();
+    ESP_ERROR_CHECK(ret);
+    ESP_LOGI(TAG, "=== Step 6/16: WiFi subsystem initialized ===");
+
+    /* Step 7/16: Register WiFi state change callback */
+    wifi_register_callback(wifi_state_cb, NULL);
+    ESP_LOGI(TAG, "=== Step 7/16: WiFi callback registered ===");
+
+    /* Step 8/16: Health monitor init */
+    ret = health_monitor_init();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Health monitor init failed: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "=== Step 8/16: Health monitor initialized ===");
+    }
+
+    /* Step 9/16: WiFi mode selection (STA or AP) */
+    const cam_config_t *cfg = config_get();
+    bool has_wifi = cfg->wifi_ssid[0] != '\0';
+
+    if (has_wifi) {
+        ESP_LOGI(TAG, "=== Step 9/16: Starting STA mode (SSID: %s) ===", cfg->wifi_ssid);
+        ret = wifi_start_sta(cfg->wifi_ssid, cfg->wifi_pass);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "WiFi STA start failed: %s", esp_err_to_name(ret));
+            led_set_status(LED_ERROR);
+        }
+        /* Remaining services (MJPEG, time_sync, web_server, motion)
+         * are started by wifi_state_cb when WIFI_STATE_STA_CONNECTED fires. */
+    } else {
+        ESP_LOGI(TAG, "=== Step 9/16: No WiFi config, starting AP mode ===");
+        ret = wifi_start_ap();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "WiFi AP start failed: %s", esp_err_to_name(ret));
+            led_set_status(LED_ERROR);
+            return;
+        }
+
+        ESP_LOGI(TAG, "========================================");
+        ESP_LOGI(TAG, "  AP Mode: SSID=%s  Pass=%s", CONFIG_DEFAULT_AP_SSID, CONFIG_DEFAULT_AP_PASS);
+        ESP_LOGI(TAG, "  Config page: http://192.168.4.1");
+        ESP_LOGI(TAG, "========================================");
+
+        /* In AP mode: start minimal services for config page */
+        ret = mjpeg_streamer_init();
+        if (ret == ESP_OK) {
+            s_mjpeg_started = true;
+        }
+
+        ret = web_server_start(80);
+        if (ret == ESP_OK) {
+            s_web_server_started = true;
+            ESP_LOGI(TAG, "Web server started (AP mode)");
+        }
+    }
+
+    /* Step 10/16: MJPEG streamer init (STA mode - already done in AP branch above)
+     * Note: In STA mode this is deferred to wifi_state_cb, but we log it here
+     * for sequence tracking. The actual init happens on WiFi_STATE_STA_CONNECTED. */
+    if (!s_mjpeg_started) {
+        ESP_LOGI(TAG, "=== Step 10/16: MJPEG streamer deferred to WiFi connect ===");
+    } else {
+        ESP_LOGI(TAG, "=== Step 10/16: MJPEG streamer initialized ===");
+    }
+
+    /* Step 11/16: Time sync init (STA mode - deferred to wifi_state_cb) */
+    if (!s_time_sync_started) {
+        ESP_LOGI(TAG, "=== Step 11/16: Time sync deferred to WiFi connect ===");
+    } else {
+        ESP_LOGI(TAG, "=== Step 11/16: Time sync initialized ===");
+    }
+
+    /* Step 12/16: Web server start (STA mode - deferred to wifi_state_cb) */
+    if (!s_web_server_started) {
+        ESP_LOGI(TAG, "=== Step 12/16: Web server deferred to WiFi connect ===");
+    } else {
+        ESP_LOGI(TAG, "=== Step 12/16: Web server started ===");
+    }
+
+    /* Step 13/16: Motion detection start (STA mode - deferred to wifi_state_cb) */
+    if (!s_motion_started) {
+        ESP_LOGI(TAG, "=== Step 13/16: Motion detection deferred to WiFi connect ===");
+    } else {
+        ESP_LOGI(TAG, "=== Step 13/16: Motion detection started ===");
+    }
+
+    /* Step 14/16: SD card init - AFTER camera (GPIO14 conflict) */
+    ret = storage_init();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "SD card init failed: %s", esp_err_to_name(ret));
+        ESP_LOGI(TAG, "=== Step 14/16: SD card init failed ===");
+    } else {
+        s_sd_init_done = true;
+        ESP_LOGI(TAG, "=== Step 14/16: SD card initialized ===");
+    }
+
+    /* Step 15/16: NAS uploader init */
+    ret = nas_uploader_init();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "NAS uploader init failed: %s", esp_err_to_name(ret));
+        ESP_LOGI(TAG, "=== Step 15/16: NAS uploader init failed ===");
+    } else {
+        s_nas_started = true;
+        ESP_LOGI(TAG, "=== Step 15/16: NAS uploader initialized ===");
+    }
+
+    /* Step 16/16: Boot button monitor task */
+    xTaskCreate(boot_btn_task, "boot_btn", 4096, NULL, 5, NULL);
+    ESP_LOGI(TAG, "=== Step 16/16: BOOT button monitor started ===");
+
+    ESP_LOGI(TAG, "========================================");
+    ESP_LOGI(TAG, "  System startup complete");
+    ESP_LOGI(TAG, "========================================");
+}
