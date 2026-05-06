@@ -274,10 +274,11 @@ static void hotplug_monitor_task(void *arg)
 
         xSemaphoreTake(s_mutex, portMAX_DELAY);
 
-        /* Check card presence via f_stat on the root */
-        FILINFO fno;
-        FRESULT res = f_stat("/sdcard", &fno);
-        bool is_present = (res == FR_OK);
+        /* Check card presence via FatFs f_getfree on drive 0 */
+        DWORD free_cls = 0;
+        FATFS *ff = NULL;
+        FRESULT res = f_getfree("0:", &free_cls, &ff);
+        bool is_present = (res == FR_OK && ff != NULL);
 
         if (was_present && !is_present) {
             ESP_LOGW(TAG, "SD card removed!");

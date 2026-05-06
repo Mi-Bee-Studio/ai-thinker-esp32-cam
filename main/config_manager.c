@@ -21,6 +21,8 @@ static void apply_defaults(cam_config_t *cfg)
     strncpy(cfg->timezone, CONFIG_DEFAULT_TIMEZONE, sizeof(cfg->timezone) - 1);
     cfg->motion_threshold = 30;
     cfg->motion_cooldown = 10;
+    cfg->vflip = 0;
+    cfg->motion_saved_threshold = 30;
     cfg->nas_protocol = NAS_PROTOCOL_HTTP;
     cfg->nas_port = 8080;
     strncpy(cfg->nas_path, "/upload", sizeof(cfg->nas_path) - 1);
@@ -52,17 +54,51 @@ esp_err_t config_init(void)
         size_t len = sizeof(cam_config_t);
         ret = nvs_get_blob(handle, NVS_CONFIG_KEY, &s_config, &len);
         nvs_close(handle);
+
+        // V1 -> V2 migration: old blob is smaller by 2 uint8_t fields
+        if (ret == ESP_ERR_NVS_INVALID_LENGTH) {
+            ESP_LOGW(TAG, "V1 config detected, migrating to V2");
+            // Re-open for read-write since we'll save after migration
+            ret = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+            if (ret == ESP_OK) {
+                // Read old V1 blob into temporary buffer
+                size_t old_size = sizeof(cam_config_t) - 2 * sizeof(uint8_t);
+                uint8_t tmp[old_size];
+                len = old_size;
+                ret = nvs_get_blob(handle, NVS_CONFIG_KEY, tmp, &len);
+                nvs_close(handle);
+                if (ret == ESP_OK) {
+                    // Copy V1 fields (struct layout is identical up to the new fields)
+                    memcpy(&s_config, tmp, old_size);
+                    s_config.vflip = 0;
+                    s_config.motion_saved_threshold = 30;
+                    s_config.version = 2;
+                    ESP_LOGI(TAG, "V1->V2 migration done, saving upgraded config");
+                    config_save();
+                    ret = ESP_OK;
+                }
+            }
+        }
     }
 
     if (ret == ESP_OK && s_config.magic == CONFIG_MAGIC && s_config.version == CONFIG_VERSION) {
-        ESP_LOGI(TAG, "Config loaded from NVS (device=%s)", s_config.device_name);
+        ESP_LOGI(TAG, "Config loaded from NVS (device=%s, wifi_ssid='%s', ssid[0]=0x%02x)",
+                 s_config.device_name, s_config.wifi_ssid, s_config.wifi_ssid[0]);
         return ESP_OK;
     }
 
-    // No valid config — apply defaults and save
-    ESP_LOGW(TAG, "No valid config found, applying defaults");
+    // No valid config found
+    // Only save defaults on first boot (nvs_open failed = namespace missing)
+    // If nvs_open succeeded but blob read failed, NVS may be corrupted —
+    // don't overwrite with defaults, just use them in memory.
+    bool first_boot = (ret != ESP_OK);  // nvs_open or nvs_get_blob failed
+    ESP_LOGW(TAG, "No valid config found (first_boot=%d), applying defaults", first_boot);
     apply_defaults(&s_config);
-    config_save();
+    if (first_boot) {
+        config_save();  // Save defaults only on truly first boot
+    } else {
+        ESP_LOGW(TAG, "NVS blob read OK but invalid — NOT overwriting with defaults");
+    }
     return ESP_OK;
 }
 
@@ -99,7 +135,7 @@ esp_err_t config_save(void)
         return ret;
     }
 
-    ESP_LOGI(TAG, "Config saved (device=%s)", s_config.device_name);
+    ESP_LOGW(TAG, "Config saved: wifi_ssid='%s' device=%s", s_config.wifi_ssid, s_config.device_name);
     return ESP_OK;
 }
 
@@ -206,6 +242,21 @@ esp_err_t config_set_fps(uint8_t fps)
     ESP_LOGI(TAG, "FPS set to %u", fps);
     return config_save();
 }
+
+esp_err_t config_set_vflip(uint8_t vflip)
+{
+    s_config.vflip = vflip ? 1 : 0;
+    ESP_LOGI(TAG, "Vflip set to %u", s_config.vflip);
+    return config_save();
+}
+esp_err_t config_set_motion_saved_threshold(uint8_t threshold)
+{
+    s_config.motion_saved_threshold = threshold;
+    return config_save();
+}
+
+
+
 
 esp_err_t config_set_jpeg_quality(uint8_t quality)
 {

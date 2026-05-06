@@ -32,6 +32,9 @@
 #include "health_monitor.h"
 #include "nas_uploader.h"
 #include "time_sync.h"
+#include "esp_spiffs.h"
+
+#define FIRMWARE_VERSION "v1.0"
 
 #include <string.h>
 #include <stdio.h>
@@ -141,36 +144,47 @@ static esp_err_t handler_api_status(httpd_req_t *req)
 
     cJSON *data = cJSON_CreateObject();
 
+    /* Device info */
+    cJSON_AddStringToObject(data, "device_name", cfg->device_name);
+    cJSON_AddNumberToObject(data, "uptime", (double)m->uptime_seconds);
+    cJSON_AddStringToObject(data, "firmware_version", FIRMWARE_VERSION);
+
     /* Camera */
-    cJSON_AddStringToObject(data, "camera", camera_get_sensor_name());
+    cJSON_AddBoolToObject(data, "camera_ok", camera_is_initialized());
+    cJSON_AddStringToObject(data, "sensor", camera_get_sensor_name());
 
-    /* WiFi sub-object */
-    cJSON *wifi = cJSON_CreateObject();
-    cJSON_AddNumberToObject(wifi, "state", (double)m->wifi_state);
-    cJSON_AddStringToObject(wifi, "ip", wifi_get_ip_str());
-    if (m->wifi_rssi >= -127) {
-        cJSON_AddNumberToObject(wifi, "rssi", (double)m->wifi_rssi);
+    /* Resolution as display string */
+    static const char *res_names[] = {"VGA", "SVGA", "XGA", "UXGA"};
+    cJSON_AddStringToObject(data, "resolution",
+        cfg->resolution < CAMERA_RES_MAX ? res_names[cfg->resolution] : "Unknown");
+
+    /* WiFi */
+    const char *wifi_mode_str;
+    switch (m->wifi_state) {
+        case WIFI_STATE_AP:              wifi_mode_str = "AP"; break;
+        case WIFI_STATE_STA_CONNECTING:  wifi_mode_str = "STA连接中"; break;
+        case WIFI_STATE_STA_CONNECTED:   wifi_mode_str = "STA已连接"; break;
+        case WIFI_STATE_STA_DISCONNECTED: wifi_mode_str = "STA断开"; break;
+        default:                         wifi_mode_str = "--"; break;
     }
-    cJSON_AddItemToObject(data, "wifi", wifi);
+    cJSON_AddStringToObject(data, "wifi_mode", wifi_mode_str);
+    cJSON_AddStringToObject(data, "ip", wifi_get_ip_str());
+    cJSON_AddNumberToObject(data, "wifi_rssi", (double)m->wifi_rssi);
 
-    /* Storage sub-object */
-    cJSON *storage = cJSON_CreateObject();
-    cJSON_AddBoolToObject(storage, "available", m->sd_mounted);
-    cJSON_AddNumberToObject(storage, "free_mb", (double)m->sd_free_mb);
-    cJSON_AddNumberToObject(storage, "photos", (double)m->photo_count);
-    cJSON_AddItemToObject(data, "storage", storage);
+    /* SPIFFS storage */
+    size_t spiffs_total = 0, spiffs_used = 0;
+    esp_spiffs_info("spiffs", &spiffs_total, &spiffs_used);
+    cJSON_AddNumberToObject(data, "spiffs_total", (double)spiffs_total);
+    cJSON_AddNumberToObject(data, "spiffs_free", (double)(spiffs_total - spiffs_used));
 
-    /* Uptime */
-    cJSON_AddStringToObject(data, "uptime", health_monitor_get_uptime_str());
+    /* Photos & motion */
+    cJSON_AddNumberToObject(data, "photo_count", (double)m->photo_count);
+    cJSON_AddBoolToObject(data, "motion_enabled", cfg->motion_threshold > 0);
+    cJSON_AddNumberToObject(data, "motion_events", (double)m->motion_events);
 
-    /* Motion detection enabled */
-    cJSON_AddBoolToObject(data, "motion", cfg->motion_threshold > 0);
-
-    /* Stream clients */
-    cJSON_AddNumberToObject(data, "stream_clients", (double)m->stream_clients);
-
-    /* NAS upload queue */
-    cJSON_AddNumberToObject(data, "nas_pending", (double)m->nas_pending);
+    /* Heap */
+    cJSON_AddNumberToObject(data, "free_heap", (double)m->free_heap);
+    cJSON_AddNumberToObject(data, "min_heap", (double)m->min_free_heap);
 
     return send_json_ok(req, data);
 }
@@ -185,6 +199,7 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
 
     cJSON *data = cJSON_CreateObject();
     cJSON_AddStringToObject(data, "device_name", cfg->device_name);
+    cJSON_AddStringToObject(data, "wifi_ssid", cfg->wifi_ssid);
     cJSON_AddNumberToObject(data, "resolution", (double)cfg->resolution);
     cJSON_AddNumberToObject(data, "fps", (double)cfg->fps);
     cJSON_AddNumberToObject(data, "jpeg_quality", (double)cfg->jpeg_quality);
@@ -195,6 +210,7 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON_AddStringToObject(data, "nas_host", cfg->nas_host);
     cJSON_AddNumberToObject(data, "nas_port", (double)cfg->nas_port);
     cJSON_AddStringToObject(data, "nas_path", cfg->nas_path);
+    cJSON_AddNumberToObject(data, "vflip", (double)cfg->vflip);
 
     return send_json_ok(req, data);
 }
@@ -205,14 +221,18 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
 
 static esp_err_t handler_api_config_post(httpd_req_t *req)
 {
+    ESP_LOGW(TAG, "=== POST /api/config ENTRY === content_len=%d", (int)req->content_len);
     if (!check_auth(req)) {
+        ESP_LOGW(TAG, "POST /api/config: AUTH FAILED");
         return send_unauthorized(req);
     }
 
     char *body = read_body(req, 2048);
     if (!body) {
+        ESP_LOGW(TAG, "POST /api/config: BODY is NULL (content_len=%d)", (int)req->content_len);
         return send_json_error(req, "empty or invalid body", 400);
     }
+    ESP_LOGI(TAG, "POST /api/config received (%d bytes)", (int)req->content_len);
 
     cJSON *json = cJSON_Parse(body);
     free(body);
@@ -222,6 +242,7 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
 
     cJSON *item;
     bool need_save = false;
+    bool wifi_changed = false;
 
     if ((item = cJSON_GetObjectItem(json, "device_name")) && cJSON_IsString(item)) {
         config_set_device_name(item->valuestring);
@@ -238,22 +259,39 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
         if ((item = cJSON_GetObjectItem(json, "wifi_pass")) && cJSON_IsString(item)) {
             pass = item->valuestring;
         }
-        if (ssid) {
-            config_set_wifi(ssid, pass ? pass : "");
+        ESP_LOGI(TAG, "WiFi save request: ssid='%s' pass_len=%d",
+                 ssid ? ssid : "(null)", pass ? (int)strlen(pass) : -1);
+        /* Only update WiFi if ssid is non-empty.
+         * Frontend wifi_pass field is always empty (GET never returns password),
+         * so only save WiFi when user explicitly fills in the SSID field. */
+        if (ssid && strlen(ssid) > 0) {
+            esp_err_t wret = config_set_wifi(ssid, pass ? pass : "");
+            wifi_changed = (wret == ESP_OK);
+            ESP_LOGI(TAG, "config_set_wifi result: %s", esp_err_to_name(wret));
         }
     }
 
-    /* Resolution (has dedicated setter) */
+    /* Camera settings (resolution/fps/quality) — also apply live */
+    bool camera_changed = false;
     if ((item = cJSON_GetObjectItem(json, "resolution")) && cJSON_IsNumber(item)) {
         config_set_resolution((camera_resolution_t)item->valueint);
+        camera_changed = true;
     }
 
     if ((item = cJSON_GetObjectItem(json, "fps")) && cJSON_IsNumber(item)) {
         config_set_fps((uint8_t)item->valueint);
+        camera_changed = true;
     }
 
     if ((item = cJSON_GetObjectItem(json, "jpeg_quality")) && cJSON_IsNumber(item)) {
         config_set_jpeg_quality((uint8_t)item->valueint);
+        camera_changed = true;
+    }
+
+    /* Apply camera changes in one batch (deinit+init is expensive) */
+    if (camera_changed) {
+        const cam_config_t *cur = config_get();
+        camera_apply_settings(cur->resolution, cur->fps, cur->jpeg_quality);
     }
 
     /* Web password (has dedicated setter) */
@@ -274,6 +312,28 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
         bool set_motion = false;
         uint8_t threshold = config_get()->motion_threshold;
         uint8_t cooldown = config_get()->motion_cooldown;
+        bool motion_enabled = true;
+
+        /* Handle motion_enabled boolean from frontend */
+        item = cJSON_GetObjectItem(json, "motion_enabled");
+        if (item && cJSON_IsBool(item)) {
+            motion_enabled = item->valueint;
+        }
+
+        if (motion_enabled) {
+            /* If enabling, restore saved threshold (or use current if valid) */
+            uint8_t saved = config_get()->motion_saved_threshold;
+            if (saved > 0) threshold = saved;
+            else if (threshold == 0) threshold = 30; /* safety default */
+            set_motion = true;
+        } else {
+            /* If disabling, save current threshold first */
+            if (threshold > 0) {
+                config_set_motion_saved_threshold(threshold);
+            }
+            threshold = 0;
+            set_motion = true;
+        }
 
         item = cJSON_GetObjectItem(json, "motion_threshold");
         if (item && cJSON_IsNumber(item)) {
@@ -288,6 +348,13 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
         if (set_motion) {
             config_set_motion(threshold, cooldown);
         }
+    }
+
+    /* Vflip (apply immediately via sensor register) */
+    if ((item = cJSON_GetObjectItem(json, "vflip")) && cJSON_IsNumber(item)) {
+        uint8_t new_vflip = (uint8_t)item->valueint;
+        config_set_vflip(new_vflip);
+        camera_apply_vflip(new_vflip);
     }
 
     /* NAS settings (has dedicated setter — merge with current values) */
@@ -327,6 +394,9 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
 
     cJSON *resp = cJSON_CreateObject();
     cJSON_AddStringToObject(resp, "message", "config updated");
+    if (wifi_changed) {
+        cJSON_AddBoolToObject(resp, "wifi_changed", true);
+    }
     return send_json_ok(req, resp);
 }
 
@@ -559,6 +629,19 @@ static esp_err_t handler_api_upload(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------ */
+/*  GET /api/auth  - Validate password (returns 200 or 401)            */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handler_api_auth(httpd_req_t *req)
+{
+    if (check_auth(req)) {
+        return send_json_ok(req, NULL);
+    }
+    return send_unauthorized(req);
+}
+
+
+/* ------------------------------------------------------------------ */
 /*  OPTIONS *   - CORS preflight                                       */
 /* ------------------------------------------------------------------ */
 
@@ -651,9 +734,10 @@ static const uri_entry_t s_uris[] = {
     { "/api/files",    HTTP_GET,    handler_api_files        },
     { "/api/download", HTTP_GET,    handler_api_download     },
     { "/api/upload",   HTTP_POST,   handler_api_upload       },
-    /* Wildcards last (lowest priority) */
-    { "/*",            HTTP_OPTIONS, handler_options         },
-    { "/*",            HTTP_GET,    handler_static          },
+    { "/api/auth",     HTTP_GET,    handler_api_auth         },
+
+    { "/*",             HTTP_OPTIONS, handler_options         },
+    { "/*",             HTTP_GET,    handler_static          },
 };
 
 #define NUM_URIS (sizeof(s_uris) / sizeof(s_uris[0]))
@@ -691,7 +775,7 @@ esp_err_t web_server_start(uint16_t port)
         return ret;
     }
 
-    /* Register API endpoints (specific paths before wildcards) */
+    /* Register API endpoints */
     for (size_t i = 0; i < NUM_URIS; i++) {
         httpd_uri_t uri = {
             .uri      = s_uris[i].uri,
@@ -699,13 +783,24 @@ esp_err_t web_server_start(uint16_t port)
             .handler  = s_uris[i].handler,
             .user_ctx = NULL,
         };
+        /* Stop before wildcards - register /stream first */
+        if (strcmp(s_uris[i].uri, "/*") == 0) break;
         httpd_register_uri_handler(s_server, &uri);
     }
 
-    /* Register MJPEG stream handler (before wildcard, after API) */
-    ret = mjpeg_streamer_register(s_server);
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to register MJPEG stream handler");
+    /* Register /stream BEFORE wildcards (wildcard would block it) */
+    mjpeg_streamer_register(s_server);
+
+    /* Now register wildcard handlers */
+    for (size_t i = 0; i < NUM_URIS; i++) {
+        if (strcmp(s_uris[i].uri, "/*") != 0) continue;
+        httpd_uri_t uri = {
+            .uri      = s_uris[i].uri,
+            .method   = s_uris[i].method,
+            .handler  = s_uris[i].handler,
+            .user_ctx = NULL,
+        };
+        httpd_register_uri_handler(s_server, &uri);
     }
 
     ESP_LOGI(TAG, "Web server started on port %d", port);

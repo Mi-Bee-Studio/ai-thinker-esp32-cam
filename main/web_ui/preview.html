@@ -71,10 +71,10 @@ select,button{font-family:inherit}
 </div>
 <div class="ctrl-right">
 <select class="sel" id="resSel" onchange="changeRes()">
-<option value="5">VGA (640x480)</option>
-<option value="6">SVGA (800x600)</option>
-<option value="7">XGA (1024x768)</option>
-<option value="8">UXGA (1600x1200)</option>
+<option value="0">VGA (640x480)</option>
+<option value="1">SVGA (800x600)</option>
+<option value="2">XGA (1024x768)</option>
+<option value="3">UXGA (1600x1200)</option>
 </select>
 <div class="range-row">
 <span>质量</span>
@@ -86,6 +86,8 @@ select,button{font-family:inherit}
 </div>
 </div>
 <script>
+function getPw(){return localStorage.getItem('cam_password')||''}
+function setPw(p){localStorage.setItem('cam_password',p)}
 var img=document.getElementById('stream');
 var ph=document.getElementById('placeholder');
 var sDot=document.getElementById('sDot');
@@ -106,7 +108,7 @@ sDot.className='dot r';sTxt.textContent=msg||'连接断开';sTxt.style.color='#D
 if(retryT)clearTimeout(retryT);
 retryT=setTimeout(function(){
 sDot.className='dot y';sTxt.textContent='重新连接中';sTxt.style.color='#D97706';
-img.src='/stream?t='+Date.now();
+img.src='/stream';
 },3000);
 }
 
@@ -129,24 +131,49 @@ if(d&&d.ok)clientsEl.textContent=(d.data.stream_clients!=null?d.data.stream_clie
 
 function changeRes(){
 var v=document.getElementById('resSel').value;
-fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({resolution:parseInt(v)})}).catch(function(){});
+var h={'Content-Type':'application/json'};
+var pw=getPw();
+if(pw)h['X-Password']=pw;
+fetch('/api/config',{method:'POST',headers:h,body:JSON.stringify({resolution:parseInt(v)})})
+  .then(function(r){if(r.status===401){setPw('');var p=prompt('请输入管理密码 (默认: admin):');if(p){setPw(p);changeRes()}}})
+  .catch(function(){});
 }
 function changeQuality(){
 var v=document.getElementById('qSlider').value;
 document.getElementById('qVal').textContent=v;
-fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jpeg_quality:parseInt(v)})}).catch(function(){});
+var h={'Content-Type':'application/json'};
+var pw=getPw();
+if(pw)h['X-Password']=pw;
+fetch('/api/config',{method:'POST',headers:h,body:JSON.stringify({jpeg_quality:parseInt(v)})})
+  .then(function(r){if(r.status===401){setPw('');var p=prompt('请输入管理密码 (默认: admin):');if(p){setPw(p);changeQuality()}}})
+  .catch(function(){});
 }
 function capture(){
 window.open('/capture','_blank');
 }
 function stopStream(){
-if(retryT)clearTimeout(retryT);img.onload=null;img.onerror=null;img.src='';
+if(retryT)clearTimeout(retryT);
+img.onload=null;img.onerror=null;
+// Force abort by setting to a tiny data URI, then empty
+img.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+connected=false;
 }
 document.querySelectorAll('.nav a').forEach(function(a){
-a.addEventListener('click',function(e){e.preventDefault();stopStream();setTimeout(function(){location.href=a.href},80)});
+a.addEventListener('click',function(e){e.preventDefault();stopStream();setTimeout(function(){location.href=a.href},200)});
 });
 window.addEventListener('beforeunload',stopStream);
 window.addEventListener('pagehide',stopStream);
+// Load current resolution/quality from config
+fetch('/api/config').then(function(r){return r.json()}).then(function(d){
+if(d&&d.ok&&d.data){
+var c=d.data;
+if(c.resolution!=null)document.getElementById('resSel').value=c.resolution;
+if(c.jpeg_quality!=null){
+document.getElementById('qSlider').value=c.jpeg_quality;
+document.getElementById('qVal').textContent=c.jpeg_quality;
+}
+}
+}).catch(function(){});
 </script>
 </body>
 </html>

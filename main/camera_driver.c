@@ -9,9 +9,10 @@
 #include "camera_driver.h"
 #include "esp_log.h"
 #include "esp_camera.h"
-#include "driver/i2c_master.h"
 #include "driver/gpio.h"
 #include "sensor.h"
+#include "config_manager.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "camera_driver";
 
@@ -23,6 +24,7 @@ static const char *TAG = "camera_driver";
 /* ── Module state ── */
 static bool s_camera_initialized = false;
 static camera_resolution_t s_current_resolution = CAMERA_RES_VGA;
+static SemaphoreHandle_t s_camera_mutex = NULL;
 
 /* ── Helpers ── */
 
@@ -123,35 +125,9 @@ esp_err_t camera_init(camera_resolution_t resolution, uint8_t fps, uint8_t jpeg_
     ESP_LOGI(TAG, "Initializing camera: %s, %d fps, quality %d, XCLK %lu MHz",
              resolution_to_string(resolution), fps, jpeg_quality, xclk_freq_hz / 1000000);
 
-    /* Pre-scan I2C bus to verify camera hardware presence */
-    {
-        i2c_master_bus_handle_t bus_handle = NULL;
-        i2c_master_bus_config_t bus_config = {
-            .i2c_port = I2C_NUM_0,
-            .sda_io_num = CAM_PIN_SIOD,
-            .scl_io_num = CAM_PIN_SIOC,
-            .clk_source = I2C_CLK_SRC_DEFAULT,
-        };
-        esp_err_t bus_ret = i2c_new_master_bus(&bus_config, &bus_handle);
-        if (bus_ret == ESP_OK) {
-            ESP_LOGI(TAG, "I2C bus scan:");
-            bool found_camera = false;
-            for (int addr = 0x08; addr < 0x78; addr++) {
-                if (i2c_master_probe(bus_handle, addr, 50) == ESP_OK) {
-                    ESP_LOGI(TAG, "  Found I2C device at 0x%02x", addr);
-                    if (addr == 0x3c) {
-                        found_camera = true;
-                    }
-                }
-            }
-            if (!found_camera) {
-                ESP_LOGW(TAG, "No camera sensor detected at 0x3c (OV2640 SCCB address)");
-            }
-            i2c_del_master_bus(bus_handle);
-        } else {
-            ESP_LOGE(TAG, "Failed to init I2C bus for scan: %s", esp_err_to_name(bus_ret));
-        }
-    }
+    /* NOTE: I2C pre-scan removed — it conflicts with camera SCCB init.
+     * The camera driver does its own sensor detection during esp_camera_init().
+     */
 
     esp_err_t ret = esp_camera_init(&config);
     if (ret != ESP_OK) {
@@ -189,6 +165,18 @@ esp_err_t camera_init(camera_resolution_t resolution, uint8_t fps, uint8_t jpeg_
         esp_camera_fb_return(test_fb);
     } else {
         ESP_LOGW(TAG, "Test capture returned NULL (may succeed later)");
+    }
+
+    /* Create mutex for thread-safe reinit and vflip changes */
+    if (s_camera_mutex == NULL) {
+        s_camera_mutex = xSemaphoreCreateMutex();
+    }
+
+    /* Apply vflip from config */
+    const cam_config_t *cam_cfg = config_get();
+    if (cam_cfg->vflip && sensor && sensor->set_vflip) {
+        sensor->set_vflip(sensor, 1);
+        ESP_LOGI(TAG, "Vflip enabled from config");
     }
 
     s_camera_initialized = true;
@@ -274,4 +262,29 @@ const char* camera_get_sensor_name(void)
 camera_resolution_t camera_get_resolution(void)
 {
     return s_current_resolution;
+}
+
+esp_err_t camera_apply_vflip(uint8_t vflip)
+{
+    if (!s_camera_initialized) return ESP_ERR_NOT_SUPPORTED;
+    sensor_t *sensor = esp_camera_sensor_get();
+    if (!sensor || !sensor->set_vflip) return ESP_ERR_NOT_SUPPORTED;
+    if (s_camera_mutex) xSemaphoreTake(s_camera_mutex, portMAX_DELAY);
+    sensor->set_vflip(sensor, vflip ? 1 : 0);
+    if (s_camera_mutex) xSemaphoreGive(s_camera_mutex);
+    ESP_LOGI(TAG, "Vflip %s", vflip ? "enabled" : "disabled");
+    return ESP_OK;
+}
+
+esp_err_t camera_apply_settings(camera_resolution_t resolution, uint8_t fps, uint8_t jpeg_quality)
+{
+    if (s_camera_mutex) xSemaphoreTake(s_camera_mutex, portMAX_DELAY);
+    esp_err_t ret = camera_deinit();
+    if (ret != ESP_OK) {
+        if (s_camera_mutex) xSemaphoreGive(s_camera_mutex);
+        return ret;
+    }
+    ret = camera_init(resolution, fps, jpeg_quality);
+    if (s_camera_mutex) xSemaphoreGive(s_camera_mutex);
+    return ret;
 }

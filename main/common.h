@@ -6,7 +6,7 @@
 #include "esp_err.h"
 
 // Config version and magic
-#define CONFIG_VERSION  1
+#define CONFIG_VERSION  2
 #define CONFIG_MAGIC    0xA5B6C7D8
 
 // Default values
@@ -98,6 +98,8 @@ typedef struct {
     char nas_user[33];
     char nas_pass[65];
     char nas_path[65];
+    uint8_t vflip;
+    uint8_t motion_saved_threshold;
     uint32_t magic;
     uint32_t version;
 } cam_config_t;

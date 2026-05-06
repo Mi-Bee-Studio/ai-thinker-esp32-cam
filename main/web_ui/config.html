@@ -72,13 +72,14 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 <div class="ct">摄像头</div>
 <div class="fld"><label>分辨率</label>
 <select id="resolution">
-<option value="5">VGA (640x480)</option>
-<option value="6">SVGA (800x600)</option>
-<option value="7">XGA (1024x768)</option>
-<option value="8">UXGA (1600x1200)</option>
+<option value="0">VGA (640x480)</option>
+<option value="1">SVGA (800x600)</option>
+<option value="2">XGA (1024x768)</option>
+<option value="3">UXGA (1600x1200)</option>
 </select></div>
 <div class="fld"><label>JPEG 质量 (1=最高 63=最低)</label>
 <div class="range-r"><input type="range" id="jpeg_quality" min="1" max="63" value="10"><span class="range-v" id="qVal">10</span></div></div>
+<div class="chk-r"><input type="checkbox" id="vflip"><label for="vflip">镜头上下翻转</label></div>
 </div>
 
 <div class="card">
@@ -101,9 +102,9 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 <div class="ct">NAS 上传</div>
 <div class="fld"><label>协议</label>
 <select id="nas_protocol">
-<option value="http">HTTP</option>
-<option value="ftp">FTP</option>
-<option value="webdav">WebDAV</option>
+<option value="0">HTTP</option>
+<option value="1">FTP</option>
+<option value="2">WebDAV</option>
 </select></div>
 <div class="fld"><div class="inline"><div><label>服务器地址</label><input type="text" id="nas_host" placeholder="192.168.1.100"></div><div class="port-f"><label>端口</label><input type="number" id="nas_port" value="80" min="1" max="65535"></div></div></div>
 <div class="fld"><label>用户名</label><input type="text" id="nas_user" placeholder="用户名"></div>
@@ -130,7 +131,7 @@ function getPw(){return localStorage.getItem('cam_password')||''}
 function setPw(p){localStorage.setItem('cam_password',p)}
 function authH(){var p=getPw();return p?{'X-Password':p}:{}}
 function authFetch(u,o){o=o||{};o.headers=Object.assign({},o.headers||{},authH());return fetch(u,o).then(function(r){if(r.status===401){setPw('');loginDialog();throw new Error('Unauthorized')}return r})}
-function loginDialog(cb){var p=prompt('请输入管理密码:');if(!p)return;fetch('/api/status',{headers:{'X-Password':p}}).then(function(r){if(r.ok){setPw(p);if(cb)cb()}else{alert('密码错误');loginDialog(cb)}})}
+function loginDialog(cb){var p=prompt('请输入管理密码 (默认: admin):');if(!p){showToast('需要密码才能操作',true);return};fetch('/api/auth',{headers:{'X-Password':p}}).then(function(r){if(r.ok){setPw(p);if(cb)cb()}else{alert('密码错误');loginDialog(cb)}})}
 function requireAuth(cb){if(getPw())cb();else loginDialog(cb)}
 function togPw(el){var i=el.previousElementSibling;if(i.type==='password'){i.type='text';el.textContent='\uD83D\uDC41'}else{i.type='password';el.textContent='\uD83D\uDC40'}}
 
@@ -139,8 +140,8 @@ $('motion_threshold').oninput=function(){$('mtVal').textContent=this.value};
 $('motion_cooldown').oninput=function(){$('mcVal').textContent=this.value};
 
 $('nas_protocol').onchange=function(){
-var p=parseInt(this.value==='ftp'?21:this.value==='webdav'?80:80);
-$('nas_port').value=p;
+var v=parseInt(this.value);
+$('nas_port').value=v===1?21:v===2?80:80;
 };
 
 function loadConfig(){
@@ -149,13 +150,14 @@ if(!d||!d.ok)return;var v=d.data;
 $('wifi_ssid').value=v.wifi_ssid||'';
 $('wifi_pass').value=v.wifi_pass||'';
 $('device_name').value=v.device_name||'';
-$('resolution').value=v.resolution!=null?v.resolution:'6';
+$('resolution').value=v.resolution!=null?v.resolution:'0';
 $('jpeg_quality').value=v.jpeg_quality||10;$('qVal').textContent=$('jpeg_quality').value;
 $('web_password').value='';
-$('motion_enabled').checked=!!v.motion_enabled;
+$('motion_enabled').checked=(v.motion_threshold>0);
 $('motion_threshold').value=v.motion_threshold||30;$('mtVal').textContent=$('motion_threshold').value;
+$('vflip').checked=!!v.vflip;
 $('motion_cooldown').value=v.motion_cooldown||5;$('mcVal').textContent=$('motion_cooldown').value;
-$('nas_protocol').value=v.nas_protocol||'http';
+$('nas_protocol').value=v.nas_protocol!=null?v.nas_protocol:'0';
 $('nas_host').value=v.nas_host||'';
 $('nas_port').value=v.nas_port||80;
 $('nas_user').value=v.nas_user||'';
@@ -177,16 +179,17 @@ jpeg_quality:parseInt($('jpeg_quality').value),
 motion_enabled:$('motion_enabled').checked,
 motion_threshold:parseInt($('motion_threshold').value),
 motion_cooldown:parseInt($('motion_cooldown').value),
-nas_protocol:$('nas_protocol').value,
+nas_protocol:parseInt($('nas_protocol').value),
 nas_host:$('nas_host').value,
 nas_port:parseInt($('nas_port').value)||80,
 nas_user:$('nas_user').value,
 nas_pass:$('nas_pass').value,
-nas_path:$('nas_path').value
+nas_path:$('nas_path').value,
+vflip:$('vflip').checked?1:0,
 };
 if(pw)cfg.web_password=pw;
 authFetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}).then(function(r){return r.json()}).then(function(d){
-if(d&&d.ok){showToast('配置已保存');$('web_password_confirm').value='';loadConfig()}
+if(d&&d.ok){showToast('配置已保存');$('web_password_confirm').value=''}
 else showToast('保存失败: '+(d.error||'未知错误'),true);
 }).catch(function(e){showToast('保存失败',true);console.error(e)});
 });

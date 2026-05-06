@@ -79,4 +79,24 @@ camera_resolution_t camera_get_resolution(void);
  */
 void camera_release_sd_bus(void);
 
+/**
+ * Apply vertical flip setting immediately without camera reinit.
+ *
+ * @param vflip  Non-zero to enable, 0 to disable
+ * @return ESP_OK on success, ESP_ERR_NOT_SUPPORTED if camera not initialized
+ */
+esp_err_t camera_apply_vflip(uint8_t vflip);
+
+/**
+ * Reinitialize camera with new resolution, fps, and jpeg quality.
+ * Locks the camera mutex to prevent concurrent capture during reinit.
+ * Re-applies vflip from config after reinit.
+ *
+ * @param resolution   New resolution
+ * @param fps          New frame rate
+ * @param jpeg_quality New JPEG quality (0-63)
+ * @return ESP_OK on success
+ */
+esp_err_t camera_apply_settings(camera_resolution_t resolution, uint8_t fps, uint8_t jpeg_quality);
+
 #endif /* CAMERA_DRIVER_H */

@@ -93,11 +93,18 @@ static void handle_motion_event(void)
         return;
     }
 
-    /* Generate timestamped filename */
+    /* Generate timestamped filename (FAT-safe: no colons) */
     const char *timestamp = time_sync_get_str();
     char filename[64];
-    snprintf(filename, sizeof(filename), "motion_%s.jpg",
-             (timestamp != NULL) ? timestamp : "unknown");
+    if (timestamp != NULL) {
+        snprintf(filename, sizeof(filename), "motion_%s.jpg", timestamp);
+        /* Replace spaces and colons with underscores for FAT compatibility */
+        for (char *p = filename; *p; p++) {
+            if (*p == ' ' || *p == ':') *p = '_';
+        }
+    } else {
+        snprintf(filename, sizeof(filename), "motion_unknown.jpg");
+    }
 
     esp_err_t err = storage_save_photo(fb, filename);
     camera_return_fb(fb);

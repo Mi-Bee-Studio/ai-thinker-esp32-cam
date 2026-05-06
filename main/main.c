@@ -41,58 +41,97 @@ static bool s_nas_started = false;
 /* ---------------------------------------------------------------------------
  * WiFi state callback - triggers post-connection services
  * --------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------ */
+/* STA services init task — runs in its own task context to avoid      */
+/* stack overflow in the event callback. Camera init, MJPEG, web      */
+/* server, motion detection all run here after WiFi STA connects.      */
+/* ------------------------------------------------------------------ */
+static void sta_services_task(void *arg)
+{
+    ESP_LOGI(TAG, "STA services task started");
+
+    /* Initialize camera AFTER WiFi STA start.
+     * ESP32 known issue: WiFi STA start freezes camera I2S DMA.
+     * Retry up to 3 times with delay - SCCB writes can fail intermittently.
+     * See esp32-camera issue #620 (workaround for S3 only). */
+    if (!camera_is_initialized()) {
+        const cam_config_t *cam_cfg = config_get();
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            esp_err_t cam_ret = camera_init(
+                (camera_resolution_t)cam_cfg->resolution,
+                cam_cfg->fps, cam_cfg->jpeg_quality);
+            if (cam_ret == ESP_OK) {
+                ESP_LOGI(TAG, "Camera initialized after WiFi connect (attempt %d)", attempt);
+                break;
+            }
+            ESP_LOGW(TAG, "Camera init attempt %d failed: %s", attempt, esp_err_to_name(cam_ret));
+            if (attempt < 3) {
+                camera_deinit();
+                vTaskDelay(pdMS_TO_TICKS(500));
+            }
+        }
+    }
+
+    /* Start MJPEG streamer (once) */
+    if (!s_mjpeg_started) {
+        esp_err_t ret = mjpeg_streamer_init();
+        if (ret == ESP_OK) {
+            s_mjpeg_started = true;
+            ESP_LOGI(TAG, "MJPEG streamer initialized");
+        } else {
+            ESP_LOGW(TAG, "MJPEG streamer init failed: %s", esp_err_to_name(ret));
+        }
+    }
+
+    /* Start time sync (once) */
+    if (!s_time_sync_started) {
+        const cam_config_t *cfg = config_get();
+        esp_err_t ret = time_sync_init(cfg->timezone[0] ? cfg->timezone : CONFIG_DEFAULT_TIMEZONE);
+        if (ret == ESP_OK) {
+            s_time_sync_started = true;
+        } else {
+            ESP_LOGW(TAG, "Time sync init failed: %s", esp_err_to_name(ret));
+        }
+    }
+
+    /* Start web server (once) */
+    if (!s_web_server_started) {
+        esp_err_t ret = web_server_start(80);
+        if (ret == ESP_OK) {
+            s_web_server_started = true;
+            ESP_LOGI(TAG, "Web server started on port 80");
+        } else {
+            ESP_LOGE(TAG, "Web server start failed: %s", esp_err_to_name(ret));
+        }
+    }
+
+    /* Start motion detection (once) */
+    if (!s_motion_started) {
+        esp_err_t ret = motion_detect_start();
+        if (ret == ESP_OK) {
+            s_motion_started = true;
+            ESP_LOGI(TAG, "Motion detection started");
+        } else {
+            ESP_LOGE(TAG, "Motion detection start failed: %s", esp_err_to_name(ret));
+        }
+    }
+
+    /* System is fully up */
+    led_set_status(LED_RUNNING);
+
+    /* Task self-destructs after initialization */
+    vTaskDelete(NULL);
+}
+
 static void wifi_state_cb(wifi_state_t state, void *user_data)
 {
     switch (state) {
     case WIFI_STATE_STA_CONNECTED:
         ESP_LOGI(TAG, "WiFi connected, IP: %s", wifi_get_ip_str());
 
-        /* Start MJPEG streamer (once) */
-        if (!s_mjpeg_started) {
-            esp_err_t ret = mjpeg_streamer_init();
-            if (ret == ESP_OK) {
-                s_mjpeg_started = true;
-                ESP_LOGI(TAG, "MJPEG streamer initialized");
-            } else {
-                ESP_LOGW(TAG, "MJPEG streamer init failed: %s", esp_err_to_name(ret));
-            }
-        }
-
-        /* Start time sync (once) */
-        if (!s_time_sync_started) {
-            const cam_config_t *cfg = config_get();
-            esp_err_t ret = time_sync_init(cfg->timezone[0] ? cfg->timezone : CONFIG_DEFAULT_TIMEZONE);
-            if (ret == ESP_OK) {
-                s_time_sync_started = true;
-            } else {
-                ESP_LOGW(TAG, "Time sync init failed: %s", esp_err_to_name(ret));
-            }
-        }
-
-        /* Start web server (once) */
-        if (!s_web_server_started) {
-            esp_err_t ret = web_server_start(80);
-            if (ret == ESP_OK) {
-                s_web_server_started = true;
-                ESP_LOGI(TAG, "Web server started on port 80");
-            } else {
-                ESP_LOGE(TAG, "Web server start failed: %s", esp_err_to_name(ret));
-            }
-        }
-
-        /* Start motion detection (once) */
-        if (!s_motion_started) {
-            esp_err_t ret = motion_detect_start();
-            if (ret == ESP_OK) {
-                s_motion_started = true;
-                ESP_LOGI(TAG, "Motion detection started");
-            } else {
-                ESP_LOGE(TAG, "Motion detection start failed: %s", esp_err_to_name(ret));
-            }
-        }
-
-        /* System is fully up */
-        led_set_status(LED_RUNNING);
+        /* Spawn a task for heavy initialization (camera, web server, etc.)
+         * to avoid stack overflow in this event callback. */
+        xTaskCreate(sta_services_task, "sta_init", 8192, NULL, 5, NULL);
         break;
 
     case WIFI_STATE_STA_DISCONNECTED:
@@ -117,6 +156,12 @@ static void boot_btn_task(void *arg)
 {
     gpio_num_t boot_gpio = BOOT_BTN_GPIO;
 
+    /*
+     * IMPORTANT: GPIO 0 is shared with camera XCLK on AI_Thinker boards.
+     * Once the camera starts driving XCLK, we cannot monitor GPIO 0 as a button.
+     * So we only check the button state ONCE at boot, before camera init.
+     * For runtime factory reset, use POST /api/reset instead.
+     */
     gpio_config_t btn_conf = {
         .pin_bit_mask = (1ULL << boot_gpio),
         .mode = GPIO_MODE_INPUT,
@@ -125,23 +170,20 @@ static void boot_btn_task(void *arg)
     };
     gpio_config(&btn_conf);
 
-    ESP_LOGI(TAG, "BOOT button monitor started (GPIO%d, 5s hold = factory reset)", BOOT_BTN_GPIO);
-
-    while (1) {
+    /* Check if BOOT button was held during boot (before camera takes GPIO 0) */
+    if (gpio_get_level(boot_gpio) == 0) {
+        ESP_LOGW(TAG, "BOOT button held at startup, waiting 3s...");
+        vTaskDelay(pdMS_TO_TICKS(3000));
         if (gpio_get_level(boot_gpio) == 0) {
-            ESP_LOGW(TAG, "BOOT button pressed, waiting for long press...");
-            vTaskDelay(pdMS_TO_TICKS(5000));
-
-            if (gpio_get_level(boot_gpio) == 0) {
-                ESP_LOGW(TAG, "Factory reset triggered!");
-                config_reset();
-                esp_restart();
-            } else {
-                ESP_LOGI(TAG, "BOOT button released before 5s, no reset");
-            }
+            ESP_LOGW(TAG, "Factory reset triggered (BOOT held at startup)!");
+            config_reset();
+            esp_restart();
         }
-        vTaskDelay(pdMS_TO_TICKS(50));
     }
+
+    ESP_LOGI(TAG, "BOOT button monitor: check complete (GPIO%d not held)", boot_gpio);
+    /* Task self-terminates — GPIO 0 is needed for camera XCLK */
+    vTaskDelete(NULL);
 }
 
 /* ---------------------------------------------------------------------------
@@ -191,21 +233,11 @@ void app_main(void)
                  total / 1024, used / 1024);
     }
 
-    /* Step 5/16: Camera init (BEFORE WiFi - I2C bus conflict)
-     *          Also BEFORE SD card - GPIO14 shared with SD CLK */
+    /* Step 5/16: Release SD SPI bus (must precede camera and WiFi)
+     * Camera init DEFERRED to after WiFi connect (ESP32 DMA freeze fix).
+     * WiFi STA start freezes camera I2S DMA - init camera AFTER WiFi. */
     camera_release_sd_bus();
-    {
-        const cam_config_t *cam_cfg = config_get();
-        ret = camera_init((camera_resolution_t)cam_cfg->resolution,
-                         cam_cfg->fps, cam_cfg->jpeg_quality);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Camera init failed: %s", esp_err_to_name(ret));
-            led_set_status(LED_ERROR);
-        } else {
-            ESP_LOGI(TAG, "=== Step 5/16: Camera initialized (%s, %d fps, quality %d) ===",
-                     camera_get_sensor_name(), cam_cfg->fps, cam_cfg->jpeg_quality);
-        }
-    }
+    ESP_LOGI(TAG, "=== Step 5/16: SD SPI bus released (camera deferred to after WiFi) ===");
 
     /* Step 6/16: WiFi init (netif + event loop) */
     ret = wifi_init();
@@ -251,7 +283,19 @@ void app_main(void)
         ESP_LOGI(TAG, "  Config page: http://192.168.4.1");
         ESP_LOGI(TAG, "========================================");
 
-        /* In AP mode: start minimal services for config page */
+        /* In AP mode: init camera (no DMA freeze risk without STA) */
+        {
+            const cam_config_t *cam_cfg = config_get();
+            esp_err_t cam_ret = camera_init(
+                (camera_resolution_t)cam_cfg->resolution,
+                cam_cfg->fps, cam_cfg->jpeg_quality);
+            if (cam_ret == ESP_OK) {
+                ESP_LOGI(TAG, "Camera initialized (AP mode)");
+            } else {
+                ESP_LOGW(TAG, "Camera init failed in AP mode: %s", esp_err_to_name(cam_ret));
+            }
+        }
+
         ret = mjpeg_streamer_init();
         if (ret == ESP_OK) {
             s_mjpeg_started = true;

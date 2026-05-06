@@ -81,4 +81,12 @@ esp_err_t config_set_jpeg_quality(uint8_t quality);
  */
 esp_err_t config_set_timezone(const char *tz);
 
+/**
+ * @brief Set vertical flip, save immediately
+ */
+esp_err_t config_set_vflip(uint8_t vflip);
+esp_err_t config_set_motion_saved_threshold(uint8_t threshold);
+
+
+
 #endif // CONFIG_MANAGER_H
