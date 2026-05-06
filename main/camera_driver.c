@@ -12,6 +12,7 @@
 #include "driver/gpio.h"
 #include "sensor.h"
 #include "config_manager.h"
+#include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
 static const char *TAG = "camera_driver";
