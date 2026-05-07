@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include <unistd.h>
 #include "config_manager.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
@@ -26,6 +28,8 @@ static void apply_defaults(cam_config_t *cfg)
     cfg->nas_protocol = NAS_PROTOCOL_HTTP;
     cfg->nas_port = 8080;
     strncpy(cfg->nas_path, "/upload", sizeof(cfg->nas_path) - 1);
+    cfg->wifi_tx_power = 80;   /* 20dBm max */
+    cfg->wifi_power_save = 0;  /* disabled for streaming */
     cfg->magic = CONFIG_MAGIC;
     cfg->version = CONFIG_VERSION;
 }
@@ -55,35 +59,51 @@ esp_err_t config_init(void)
         ret = nvs_get_blob(handle, NVS_CONFIG_KEY, &s_config, &len);
         nvs_close(handle);
 
-        // V1 -> V2 migration: old blob is smaller by 2 uint8_t fields
+        // Handle config version migrations (blob size mismatch)
         if (ret == ESP_ERR_NVS_INVALID_LENGTH) {
-            ESP_LOGW(TAG, "V1 config detected, migrating to V2");
-            // Re-open for read-write since we'll save after migration
+            ESP_LOGW(TAG, "Config blob size mismatch, attempting migration");
             ret = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
             if (ret == ESP_OK) {
-                // Read old V1 blob into temporary buffer
-                size_t old_size = sizeof(cam_config_t) - 2 * sizeof(uint8_t);
-                uint8_t tmp[old_size];
-                len = old_size;
-                ret = nvs_get_blob(handle, NVS_CONFIG_KEY, tmp, &len);
-                nvs_close(handle);
-                if (ret == ESP_OK) {
-                    // Copy V1 fields (struct layout is identical up to the new fields)
-                    memcpy(&s_config, tmp, old_size);
-                    s_config.vflip = 0;
-                    s_config.motion_saved_threshold = 30;
-                    s_config.version = 2;
-                    ESP_LOGI(TAG, "V1->V2 migration done, saving upgraded config");
-                    config_save();
-                    ret = ESP_OK;
+                // Try reading with current size to get the blob
+                size_t cur_len = 0;
+                nvs_get_blob(handle, NVS_CONFIG_KEY, NULL, &cur_len);
+                uint8_t *tmp = malloc(cur_len);
+                if (tmp) {
+                    ret = nvs_get_blob(handle, NVS_CONFIG_KEY, tmp, &cur_len);
+                    nvs_close(handle);
+                    if (ret == ESP_OK) {
+                        // Copy old fields into new struct
+                        memset(&s_config, 0, sizeof(s_config));
+                        memcpy(&s_config, tmp, cur_len);
+                        // Fill new fields with defaults
+                        if (cur_len < sizeof(cam_config_t) - 2) {
+                            /* V1: missing vflip + motion_saved_threshold + wifi fields */
+                            s_config.vflip = 0;
+                            s_config.motion_saved_threshold = 30;
+                        }
+                        if (cur_len < sizeof(cam_config_t)) {
+                            /* V2: missing wifi_tx_power + wifi_power_save */
+                            s_config.wifi_tx_power = 80;
+                            s_config.wifi_power_save = 0;
+                        }
+                        s_config.magic = CONFIG_MAGIC;
+                        s_config.version = CONFIG_VERSION;
+                        ESP_LOGI(TAG, "Config migrated V%d->V%d (blob %u->%u), saving",
+                                 s_config.version, CONFIG_VERSION, (unsigned)cur_len, (unsigned)sizeof(cam_config_t));
+                        config_save();
+                        ret = ESP_OK;
+                    }
+                    free(tmp);
+                } else {
+                    nvs_close(handle);
                 }
-            }
         }
+    }
     }
 
     if (ret == ESP_OK && s_config.magic == CONFIG_MAGIC && s_config.version == CONFIG_VERSION) {
-        ESP_LOGI(TAG, "Config loaded from NVS (device=%s, wifi_ssid='%s', ssid[0]=0x%02x)",
-                 s_config.device_name, s_config.wifi_ssid, s_config.wifi_ssid[0]);
+        ESP_LOGI(TAG, "Config loaded from NVS (device=%s, wifi_ssid='%s', pass[0]=0x%02x, pass_len=%u)",
+                 s_config.device_name, s_config.wifi_ssid, s_config.wifi_pass[0], (unsigned)strlen(s_config.wifi_pass));
         return ESP_OK;
     }
 
@@ -209,9 +229,9 @@ esp_err_t config_set_nas(nas_protocol_t protocol, const char *host,
         s_config.nas_pass[0] = '\0';
     }
     strncpy(s_config.nas_path, path, sizeof(s_config.nas_path) - 1);
-    s_config.nas_path[sizeof(s_config.nas_path) - 1] = '\0';
-    ESP_LOGI(TAG, "NAS set (proto=%d, host=%s, port=%u, path=%s, user=%s, pass=***)",
-             protocol, host, port, path, s_config.nas_user);
+    s_config.nas_path[sizeof(s_config.nas_path) - 1] = '\0'; 
+    ESP_LOGI(TAG, "NAS set (host=%s, port=%u, path=%s, user=%s, pass=***)",
+             host, port, path, s_config.nas_user);
     return config_save();
 }
 
@@ -249,6 +269,17 @@ esp_err_t config_set_vflip(uint8_t vflip)
     ESP_LOGI(TAG, "Vflip set to %u", s_config.vflip);
     return config_save();
 }
+
+esp_err_t config_set_wifi_power(uint8_t tx_power, uint8_t power_save)
+{
+    if (tx_power < 8) tx_power = 8;
+    if (tx_power > 84) tx_power = 84;  /* ESP32 max 21dBm */
+    s_config.wifi_tx_power = tx_power;
+    s_config.wifi_power_save = power_save ? 1 : 0;
+    ESP_LOGI(TAG, "WiFi power set (tx=%u=%.1fdBm, ps=%s)",
+             tx_power, tx_power * 0.25f, power_save ? "on" : "off");
+    return config_save();
+}
 esp_err_t config_set_motion_saved_threshold(uint8_t threshold)
 {
     s_config.motion_saved_threshold = threshold;
@@ -276,4 +307,73 @@ esp_err_t config_set_timezone(const char *tz)
     s_config.timezone[sizeof(s_config.timezone) - 1] = '\0';
     ESP_LOGI(TAG, "Timezone set to %s", s_config.timezone);
     return config_save();
+}
+
+/*
+ * Load WiFi config from /sdcard/config.txt
+ * Format: simple key=value, one per line
+ *   wifi.ssid=MyNetwork
+ *   wifi.password=MyPassword123
+ *   password=MyPassword123
+ * Lines starting with # are comments. Empty lines ignored.
+ * After successful load, file is renamed to config.txt.bak.
+ */
+esp_err_t config_load_from_sd(void)
+{
+    FILE *fp;
+    char line[128];
+    char new_ssid[33] = {0};
+    char new_pass[65] = {0};
+    bool ssid_found = false;
+    bool pass_found = false;
+
+    fp = fopen("/sdcard/config.txt", "r");
+    if (!fp) {
+        ESP_LOGD(TAG, "No config.txt on SD card");
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    while (fgets(line, sizeof(line), fp)) {
+        // Trim trailing whitespace
+        char *end = line + strlen(line) - 1;
+        while (end >= line && (*end == '\r' || *end == '\n' || *end == ' ')) {
+            *end = '\0'; end--;
+        }
+        if (line[0] == '\0' || line[0] == '#') continue;
+
+        // Parse key=value
+        char *eq = strchr(line, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        char *key = line;
+        char *value = eq + 1;
+
+        if (strcmp(key, "wifi.ssid") == 0) {
+            strncpy(new_ssid, value, sizeof(new_ssid) - 1);
+            ssid_found = true;
+        } else if (strcmp(key, "wifi.password") == 0) {
+            strncpy(new_pass, value, sizeof(new_pass) - 1);
+            pass_found = true;
+        }
+    }
+    fclose(fp);
+
+    if (!ssid_found || !pass_found) {
+        ESP_LOGW(TAG, "config.txt incomplete (ssid=%d, password=%d)", ssid_found, pass_found);
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    // Skip if unchanged
+    if (strcmp(new_ssid, s_config.wifi_ssid) == 0 &&
+        strcmp(new_pass, s_config.wifi_pass) == 0) {
+        ESP_LOGI(TAG, "WiFi config unchanged");
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    ESP_LOGI(TAG, "WiFi from SD: ssid='%s'", new_ssid);
+    esp_err_t ret = config_set_wifi(new_ssid, new_pass);
+    if (ret != ESP_OK) return ret;
+
+    rename("/sdcard/config.txt", "/sdcard/config.txt.bak");
+    return ESP_OK;
 }

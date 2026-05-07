@@ -85,8 +85,20 @@ esp_err_t config_set_timezone(const char *tz);
  * @brief Set vertical flip, save immediately
  */
 esp_err_t config_set_vflip(uint8_t vflip);
+
+/**
+ * @brief Set WiFi TX power and power save mode, save immediately
+ * @param tx_power TX power in 0.25dBm units (80=20dBm)
+ * @param power_save 0=WIFI_PS_NONE, 1=WIFI_PS_MIN_MODEM
+ */
+esp_err_t config_set_wifi_power(uint8_t tx_power, uint8_t power_save);
 esp_err_t config_set_motion_saved_threshold(uint8_t threshold);
 
-
+/**
+ * @brief Load WiFi config from /sdcard/config.txt (YAML format)
+ * Parses ssid and password, updates NVS if changed, renames file to .bak
+ * @return ESP_OK if config was updated, ESP_ERR_NOT_FOUND if no file/unchanged
+ */
+esp_err_t config_load_from_sd(void);
 
 #endif // CONFIG_MANAGER_H
