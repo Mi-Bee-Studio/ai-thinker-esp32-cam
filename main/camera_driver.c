@@ -208,21 +208,27 @@ esp_err_t camera_deinit(void)
 esp_err_t camera_capture(camera_fb_t **fb)
 {
     if (!s_camera_initialized) {
-        ESP_LOGE(TAG, "Camera not initialized");
         return ESP_ERR_NOT_SUPPORTED;
     }
-
     if (fb == NULL) {
-        ESP_LOGE(TAG, "Null frame buffer pointer");
         return ESP_ERR_INVALID_ARG;
     }
 
-    *fb = esp_camera_fb_get();
-    if (*fb == NULL) {
-        ESP_LOGE(TAG, "Failed to capture frame");
-        return ESP_FAIL;
+    // Lock mutex with timeout — MJPEG stream and /capture compete for frame buffer
+    if (s_camera_mutex && xSemaphoreTake(s_camera_mutex, pdMS_TO_TICKS(3000)) != pdTRUE) {
+        ESP_LOGW(TAG, "Camera capture timeout (mutex busy)");
+        return ESP_ERR_TIMEOUT;
     }
 
+    *fb = esp_camera_fb_get();
+
+    if (s_camera_mutex) {
+        xSemaphoreGive(s_camera_mutex);
+    }
+
+    if (*fb == NULL) {
+        return ESP_FAIL;
+    }
     return ESP_OK;
 }
 

@@ -258,7 +258,7 @@ void app_main(void)
 
     /* Step 9/16: WiFi mode selection (STA or AP) */
     const cam_config_t *cfg = config_get();
-    bool has_wifi = cfg->wifi_ssid[0] != '\0';
+    bool has_wifi = cfg->wifi_ssid[0] != '\0' && cfg->wifi_pass[0] != '\0';
 
     if (has_wifi) {
         ESP_LOGI(TAG, "=== Step 9/16: Starting STA mode (SSID: %s) ===", cfg->wifi_ssid);
@@ -346,6 +346,17 @@ void app_main(void)
     } else {
         s_sd_init_done = true;
         ESP_LOGI(TAG, "=== Step 14/16: SD card initialized ===");
+
+        // Check /sdcard/config.txt for WiFi credentials
+        esp_err_t sd_cfg_ret = config_load_from_sd();
+        if (sd_cfg_ret == ESP_OK) {
+            ESP_LOGI(TAG, "=== WiFi config loaded from SD card, reconnecting ===");
+            wifi_stop();
+            const cam_config_t *new_cfg = config_get();
+            wifi_start_sta(new_cfg->wifi_ssid, new_cfg->wifi_pass);
+        } else {
+            ESP_LOGD(TAG, "=== SD config: no update ===");
+        }
     }
 
     /* Step 15/16: NAS uploader init */
