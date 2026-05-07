@@ -65,4 +65,10 @@ uint32_t storage_get_free_space(void);
  */
 uint32_t storage_get_photo_count(void);
 
+/**
+ * @brief Get total space on SD card
+ * @return Total space in MB
+ */
+uint32_t storage_get_total_space(void);
+
 #endif // STORAGE_MANAGER_H

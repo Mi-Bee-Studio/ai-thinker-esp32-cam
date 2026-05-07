@@ -3,6 +3,7 @@
 #include "storage_manager.h"
 #include "camera_driver.h"
 #include "mjpeg_streamer.h"
+#include "esp_spiffs.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_system.h"
@@ -14,7 +15,7 @@
 
 static const char *TAG = "health_monitor";
 
-#define HEALTH_UPDATE_INTERVAL_US (30 * 1000000) // 30 seconds
+#define HEALTH_UPDATE_INTERVAL_US (10 * 1000000) // 10 seconds
 #define PROMETHEUS_BUF_SIZE 512
 
 static health_metrics_t s_metrics;
@@ -49,6 +50,12 @@ static void health_collect_metrics(void)
     s_metrics.sd_mounted = storage_is_available();
     s_metrics.photo_count = s_metrics.sd_mounted ? storage_get_photo_count() : 0;
     s_metrics.sd_free_mb = s_metrics.sd_mounted ? storage_get_free_space() : 0;
+    s_metrics.sd_total_mb = s_metrics.sd_mounted ? storage_get_total_space() : 0;
+
+    // SPIFFS (cached — very rarely changes)
+    size_t spiffs_used = 0;
+    esp_spiffs_info("spiffs", &s_metrics.spiffs_total, &spiffs_used);
+    s_metrics.spiffs_free = s_metrics.spiffs_total - spiffs_used;
 
     // Camera
     s_metrics.camera_initialized = camera_is_initialized();
@@ -56,9 +63,9 @@ static void health_collect_metrics(void)
     // MJPEG stream clients
     s_metrics.stream_clients = (uint32_t)mjpeg_streamer_get_client_count();
 
-    // Motion events and NAS pending — no public API yet
-    s_metrics.motion_events = 0;
-    s_metrics.nas_pending = 0;
+    // Motion events and NAS pending — updated by their respective modules
+    // (motion_events incremented via health_monitor_incr_motion_events)
+    // NAS pending left as 0 until uploader module implements counter
 }
 
 static void health_timer_callback(void *arg)
@@ -162,4 +169,9 @@ const char *health_monitor_get_prometheus_str(void)
 #undef PROM_LINE
 
     return s_prometheus_str;
+}
+
+void health_monitor_incr_motion_events(void)
+{
+    s_metrics.motion_events++;
 }

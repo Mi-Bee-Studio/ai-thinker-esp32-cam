@@ -47,12 +47,14 @@ static bool s_mounted = false;
 static SemaphoreHandle_t s_mutex = NULL;
 static sdmmc_card_t *s_card = NULL;
 static TaskHandle_t s_hotplug_task = NULL;
+static uint32_t s_cached_total_mb = 0;  /* Cached SD total capacity, set on mount */
 
 /* ---- Forward declarations ---- */
 static void hotplug_monitor_task(void *arg);
 static esp_err_t sdspi_mount_internal(bool format_if_failed);
 static void sdspi_unmount_internal(void);
 static uint32_t count_photos_recursive(const char *dirpath);
+static void cache_sd_total_mb(void);
 
 /* ---- Internal helpers ---- */
 
@@ -119,6 +121,7 @@ static void sdspi_unmount_internal(void)
     spi_bus_free(SD_SPI_HOST);
     s_card = NULL;
     s_mounted = false;
+    s_cached_total_mb = 0;
 }
 
 /**
@@ -288,7 +291,8 @@ static void hotplug_monitor_task(void *arg)
             esp_err_t err = sdspi_mount_internal(false);
             if (err == ESP_OK) {
                 s_mounted = true;
-                ESP_LOGI(TAG, "SD card auto-mounted");
+                cache_sd_total_mb();
+                ESP_LOGI(TAG, "SD card auto-mounted (%luMB)", (unsigned long)s_cached_total_mb);
                 /* Re-create photos base directory */
                 struct stat st;
                 if (stat(PHOTOS_BASE_PATH, &st) != 0) {
@@ -338,6 +342,9 @@ esp_err_t storage_init(void)
     }
 
     s_mounted = true;
+
+    /* Cache total SD capacity (never changes) */
+    cache_sd_total_mb();
 
     /* Print card info */
     ESP_LOGI(TAG, "SD card mounted OK");
@@ -393,6 +400,7 @@ esp_err_t storage_check(void)
         return ESP_OK;
     }
     s_mounted = false;
+    s_cached_total_mb = 0;
     return ESP_FAIL;
 }
 
@@ -438,6 +446,59 @@ esp_err_t storage_save_photo(camera_fb_t *fb, const char *filename)
     return ESP_OK;
 }
 
+static int list_photos_recursive(const char *dirpath, const char *base, char *buf, size_t buf_size, size_t *offset)
+{
+    DIR *dir = opendir(dirpath);
+    if (!dir) {
+        ESP_LOGE(TAG, "Cannot open directory %s: %s", dirpath, strerror(errno));
+        return 0;
+    }
+
+    int count = 0;
+    struct dirent *entry;
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+
+        char fullpath[512];
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", dirpath, entry->d_name);
+
+        if (entry->d_type == DT_DIR) {
+            /* Recurse into subdirectory (e.g. YYYY-MM) */
+            const char *rel = (base[0] == '\0') ? entry->d_name : NULL;
+            char subrel[512];
+            if (rel) {
+                snprintf(subrel, sizeof(subrel), "%s", entry->d_name);
+            } else {
+                snprintf(subrel, sizeof(subrel), "%s/%s", base, entry->d_name);
+            }
+            count += list_photos_recursive(fullpath, subrel, buf, buf_size, offset);
+        } else if (entry->d_type == DT_REG) {
+            /* Get file size */
+            struct stat st;
+            long fsize = 0;
+            if (stat(fullpath, &st) == 0) fsize = st.st_size;
+
+            const char *rel = (base[0] == '\0') ? entry->d_name : NULL;
+            int needed;
+            if (rel) {
+                needed = snprintf(buf + *offset, buf_size - *offset, "%s\t%ld\n", entry->d_name, fsize);
+            } else {
+                needed = snprintf(buf + *offset, buf_size - *offset, "%s/%s\t%ld\n", base, entry->d_name, fsize);
+            }
+            if (*offset + needed >= buf_size) {
+                ESP_LOGW(TAG, "Photo list buffer full after %d entries", count);
+                break;
+            }
+            *offset += needed;
+            count++;
+        }
+    }
+
+    closedir(dir);
+    return count;
+}
+
 int storage_list_photos(const char *path, char *buf, size_t buf_size)
 {
     if (!s_mounted || !path || !buf || buf_size == 0) {
@@ -445,35 +506,8 @@ int storage_list_photos(const char *path, char *buf, size_t buf_size)
     }
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-
-    DIR *dir = opendir(path);
-    if (!dir) {
-        ESP_LOGE(TAG, "Cannot open directory %s: %s", path, strerror(errno));
-        xSemaphoreGive(s_mutex);
-        return -1;
-    }
-
-    int count = 0;
     size_t offset = 0;
-    struct dirent *entry;
-
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_name[0] == '.') continue;
-
-        /* Only list regular files */
-        if (entry->d_type != DT_REG) continue;
-
-        int needed = snprintf(buf + offset, buf_size - offset, "%s/%s\n", path, entry->d_name);
-        if (offset + needed >= buf_size) {
-            /* Buffer full — stop listing */
-            ESP_LOGW(TAG, "Photo list buffer full after %d entries", count);
-            break;
-        }
-        offset += needed;
-        count++;
-    }
-
-    closedir(dir);
+    int count = list_photos_recursive(path, "", buf, buf_size, &offset);
     xSemaphoreGive(s_mutex);
     return count;
 }
@@ -546,4 +580,25 @@ uint32_t storage_get_photo_count(void)
     uint32_t count = count_photos_recursive(PHOTOS_BASE_PATH);
     xSemaphoreGive(s_mutex);
     return count;
+}
+
+uint32_t storage_get_total_space(void)
+{
+    /* Total capacity never changes — return cached value */
+    return s_cached_total_mb;
+}
+
+static void cache_sd_total_mb(void)
+{
+    DWORD free_clusters = 0;
+    FATFS *fs = NULL;
+    FRESULT res = f_getfree("0:", &free_clusters, &fs);
+    if (res != FR_OK || !fs) {
+        s_cached_total_mb = 0;
+        return;
+    }
+    uint64_t total_sectors = (uint64_t)(fs->n_fatent - 2) * fs->csize;
+    uint64_t sector_size = (uint64_t)fs->ssize;
+    uint64_t total_bytes = total_sectors * sector_size;
+    s_cached_total_mb = (uint32_t)(total_bytes / (1024 * 1024));
 }

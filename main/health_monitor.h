@@ -17,6 +17,9 @@ typedef struct {
     uint8_t cpu_usage_pct;        // Estimated CPU usage (0-100%)
     uint32_t photo_count;         // Total photos on SD card
     uint32_t sd_free_mb;          // SD card free space in MB
+    uint32_t sd_total_mb;         // SD card total space in MB (cached)
+    size_t   spiffs_total;        // SPIFFS total bytes
+    size_t   spiffs_free;         // SPIFFS free bytes
     bool camera_initialized;      // Camera status
     bool sd_mounted;              // SD card status
     uint32_t stream_clients;      // Active MJPEG stream clients
@@ -33,6 +36,11 @@ esp_err_t health_monitor_init(void);
  * @brief Get pointer to current health metrics (static struct, do not free)
  */
 const health_metrics_t *health_monitor_get_metrics(void);
+
+/**
+ * @brief Increment motion event counter (called from motion_detect task)
+ */
+void health_monitor_incr_motion_events(void);
 
 /**
  * @brief Get uptime as human-readable string "Xd Xh Xm Xs" (static buffer)
