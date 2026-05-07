@@ -1,3 +1,5 @@
+> 🌐 [English Documentation](../en/user-guide.md)
+
 # 用户指南
 
 本指南说明如何使用 AI_Thinker ESP32-CAM 固件，包括配置、Web 界面使用和功能设置。
@@ -87,7 +89,7 @@
 
 | 设置 | 描述 | 默认值 | 范围 |
 |---------|-------------|---------|-------|
-| **上传协议** | HTTP、FTP 或 WebDAV | HTTP | HTTP/FTP/WebDAV |
+| **上传协议** | HTTP 或 WebDAV | HTTP | HTTP/WebDAV |
 | **服务器 URL** | NAS 服务器地址 | 空 | 字符串 |
 | **端口** | 服务器端口 | 80/21/5005 | 1-65535 |
 | **用户名** | 认证用户名 | 空 | 32 字符 |
@@ -172,12 +174,6 @@
 - **标头**：`Content-Type: image/jpeg`，`X-Device-ID: <设备名称>`
 - **主体**：JPEG 二进制数据
 - **最适用于**：像 iot-server-base 这样的 Web 服务器
-
-#### FTP
-- **命令**：STOR 用于上传
-- **模式**：被动模式
-- **认证**：用户名/密码
-- **最适用于**：传统 NAS 服务器
 
 #### WebDAV
 - **方法**：PUT 带认证

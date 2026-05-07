@@ -1,3 +1,5 @@
+> 🌐 [中文文档](../zh/architecture.md)
+
 # Architecture
 
 This document provides a comprehensive overview of the AI_Thinker ESP32-CAM firmware architecture, including module organization, boot sequence, data flow, and system design.
@@ -103,16 +105,10 @@ The firmware consists of 14 interconnected modules, each with specific responsib
 
 ### 9. NAS Uploader (`nas_uploader.c/h`)
 **Responsibility**: Background file upload
-- **Protocols**: HTTP/FTP/WebDAV
+- **Protocols**: HTTP/WebDAV
 - **Queue**: Asynchronous upload processing
 - **Retry**: 3 attempts with exponential backoff
 - **Integration**: Works with motion detection
-
-### 10. FTP Client (`ftp_client.c/h`)
-**Responsibility**: FTP protocol implementation
-- **Commands**: Connect, login, STOR upload
-- **Mode**: Passive mode for NAT traversal
-- **Error**: Connection and retry handling
 
 ### 11. WebDAV Client (`webdav_client.c/h`)
 **Responsibility**: WebDAV protocol implementation

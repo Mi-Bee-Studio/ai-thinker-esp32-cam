@@ -1,3 +1,5 @@
+> 🌐 [中文文档](../zh/getting-started.md)
+
 # Getting Started
 
 This guide will help you get the AI_Thinker ESP32-CAM firmware up and running. Follow these steps to build, flash, and configure your device.
@@ -22,7 +24,7 @@ This guide will help you get the AI_Thinker ESP32-CAM firmware up and running. F
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-username/AI_Thinker-ESP32-cam.git
+git clone https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam.git
 cd AI_Thinker-ESP32-cam
 ```
 

@@ -10,7 +10,7 @@
 - **MJPEG 流传输** — 通过 `/stream` 端点实现最多 15 FPS 的实时视频
 - **运动检测** — 帧差算法，可配置阈值和冷却时间
 - **SD 卡存储** — 自动将 JPEG 照片保存到 TF 卡（仅照片存储）
-- **NAS 上传** — 运动触发时自动上传（FTP/WebDAV/HTTP POST）
+- **NAS 上传** — 运动触发时自动上传（WebDAV/HTTP POST）
 - **REST API** — 完整的状态、配置、文件管理和捕获 API
 - **健康监控** — 兼容 Prometheus 的 `/metrics` 端点
 - **状态 LED** — GPIO33 LED 指示系统状态
@@ -119,10 +119,8 @@ AI_Thinker-ESP32-cam/
 │   ├── storage_manager.c/h # SD 卡存储管理
 │   ├── motion_detect.c/h   # 运动检测
 │   ├── nas_uploader.c/h   # NAS 上传调度器
-│   ├── ftp_client.c/h     # FTP 协议客户端
 │   ├── webdav_client.c/h  # WebDAV 协议客户端
 │   ├── status_led.c/h     # 状态 LED 驱动
-│   ├── time_sync.c/h      # 时间同步
 │   ├── health_monitor.c/h # 系统健康监控
 │   └── web_ui/            # Web 界面文件
 ├── CMakeLists.txt
@@ -161,7 +159,7 @@ AI_Thinker-ESP32-cam/
 - 设备名称
 - 摄像头分辨率和质量
 - 运动检测阈值和冷却时间
-- NAS 服务器设置（FTP/WebDAV/HTTP）
+- NAS 服务器设置（WebDAV/HTTP）
 - 时区
 - Web 密码（可选）
 

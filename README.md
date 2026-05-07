@@ -1,3 +1,5 @@
+> 🌐 [中文文档](README.zh.md)
+
 # AI_Thinker ESP32-CAM Firmware
 
 Open-source ESP32-CAM firmware with web UI, MJPEG streaming, motion detection, and NAS upload support.

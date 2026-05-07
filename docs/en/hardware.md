@@ -1,3 +1,5 @@
+> 🌐 [中文文档](../zh/hardware.md)
+
 # Hardware
 
 This document provides detailed hardware specifications, pin mappings, and technical information for the AI_Thinker ESP32-CAM firmware.

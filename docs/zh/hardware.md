@@ -1,3 +1,5 @@
+> 🌐 [English Documentation](../en/hardware.md)
+
 # 硬件说明
 
 本文档提供 AI_Thinker ESP32-CAM 固件的详细硬件规格、引脚映射和技术信息。

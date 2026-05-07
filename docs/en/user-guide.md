@@ -1,3 +1,5 @@
+> 🌐 [中文文档](../zh/user-guide.md)
+
 # User Guide
 
 This guide explains how to use the AI_Thinker ESP32-CAM firmware, including configuration, web interface usage, and feature settings.
@@ -87,7 +89,7 @@ Photo file management:
 
 | Setting | Description | Default | Range |
 |---------|-------------|---------|-------|
-| **Upload Protocol** | HTTP, FTP, or WebDAV | HTTP | HTTP/FTP/WebDAV |
+| **Upload Protocol** | HTTP or WebDAV | HTTP | HTTP/WebDAV |
 | **Server URL** | NAS server address | Empty | String |
 | **Port** | Server port | 80/21/5005 | 1-65535 |
 | **Username** | Authentication username | Empty | 32 chars |
@@ -172,12 +174,6 @@ When motion is detected:
 - **Headers**: `Content-Type: image/jpeg`, `X-Device-ID: <device-name>`
 - **Body**: JPEG binary data
 - **Best For**: Web servers like iot-server-base
-
-#### FTP
-- **Commands**: STOR for upload
-- **Mode**: Passive mode
-- **Authentication**: Username/password
-- **Best For**: Traditional NAS servers
 
 #### WebDAV
 - **Method**: PUT

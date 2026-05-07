@@ -1,3 +1,5 @@
+> 🌐 [English Documentation](../en/troubleshooting.md)
+
 # 故障排除指南
 
 本指南提供 AI_Thinker ESP32-CAM 固件的常见问题诊断和解决方案。按照分步说明解决连接、摄像头、存储和网络问题。

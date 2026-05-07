@@ -1,3 +1,5 @@
+> 🌐 [中文文档](../zh/troubleshooting.md)
+
 # Troubleshooting
 
 This guide provides solutions for common issues encountered with the AI_Thinker ESP32-CAM firmware. Follow the systematic approach to diagnose and resolve problems.
@@ -521,7 +523,7 @@ When reporting issues, include:
 ## Contact Support
 
 If you continue to experience issues:
-1. Check [GitHub Issues](https://github.com/your-repo/issues) for similar problems
+1. Check [GitHub Issues](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/issues) for similar problems
 2. Search [Documentation](../) for additional troubleshooting guides
 3. Create a new issue with detailed information as above
 4. Include serial logs and configuration dumps if possible

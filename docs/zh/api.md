@@ -1,3 +1,5 @@
+> 🌐 [English Documentation](../en/api.md)
+
 # API 参考文档
 
 本文档提供 AI_Thinker ESP32-CAM 固件 REST API 的完整参考，包括所有端点、参数和示例。

@@ -1,3 +1,5 @@
+> 🌐 [中文文档](../zh/api.md)
+
 # API Reference
 
 This document provides a complete reference for the AI_Thinker ESP32-CAM REST API. All endpoints are available via HTTP and return JSON responses where applicable.

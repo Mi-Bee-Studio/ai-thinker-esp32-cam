@@ -5,28 +5,60 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
     container: espressif/idf:v6.0
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Build firmware
         run: |
           . ${IDF_PATH}/export.sh
           idf.py set-target esp32
           idf.py build
-      
+
       - name: Package firmware
         run: |
           mkdir -p firmware
           cp build/ai_thinker_cam.bin firmware/
           cp build/bootloader/bootloader.bin firmware/
           cp build/partition_table/partition-table.bin firmware/
-          echo "Flash command: idf.py -p COMx -b 460800 flash" > firmware/FLASH_INSTRUCTIONS.txt
-      
+
+          # Generate merged binary for easy single-command flash
+          . ${IDF_PATH}/export.sh
+          esptool.py --chip esp32 merge_bin \
+            --flash_mode dio \
+            --flash_size 4MB \
+            --flash_freq 40m \
+            -o firmware/ai_thinker_cam_merged.bin \
+            0x0 build/bootloader/bootloader.bin \
+            0x8000 build/partition_table/partition-table.bin \
+            0x10000 build/ai_thinker_cam.bin
+
+          cat > firmware/FLASH_INSTRUCTIONS.txt << 'EOF'
+          AI-Thinker ESP32-CAM Firmware - Flash Instructions
+          ==================================================
+
+          Option 1: Flash merged binary (recommended)
+            esptool.py --chip esp32 -p COMx -b 460800 write_flash 0x0 ai_thinker_cam_merged.bin
+
+          Option 2: Flash individual binaries
+            esptool.py --chip esp32 -p COMx -b 460800 write_flash \
+              0x0 bootloader.bin \
+              0x8000 partition-table.bin \
+              0x10000 ai_thinker_cam.bin
+
+          Option 3: Using ESP-IDF
+            idf.py -p COMx -b 460800 flash
+
+          Replace COMx with your actual serial port (e.g., COM8 on Windows, /dev/ttyUSB0 on Linux).
+          EOF
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:

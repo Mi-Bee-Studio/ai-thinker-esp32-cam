@@ -1,3 +1,5 @@
+> 🌐 [English Documentation](../en/getting-started.md)
+
 # 入门指南
 
 本指南将帮助您快速上手 AI_Thinker ESP32-CAM 固件。请按照以下步骤构建、烧录和配置您的设备。
