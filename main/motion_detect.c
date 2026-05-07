@@ -19,7 +19,7 @@
 #include <stdio.h>
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "driver/gpio.h"
+#include "driver/ledc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "motion_detect.h"
@@ -33,7 +33,8 @@ static const char *TAG = "motion_detect";
 
 /* ---- Tuning constants ---- */
 #define SAMPLE_STEP            10    /* Sample every 10th JPEG byte */
-#define PIXEL_DELTA            20    /* Byte difference threshold for "changed" */
+#define PIXEL_DELTA            20    /* Byte difference threshold for "changed" (bright scene) */
+#define PIXEL_DELTA_DARK       180   /* Higher threshold for dark scenes — filters JPEG noise */
 
 #define MOTION_TASK_PRIORITY   5
 #define MOTION_TASK_STACK_SIZE 8192
@@ -41,10 +42,15 @@ static const char *TAG = "motion_detect";
 #define CAPTURE_INTERVAL_MS    500   /* ~2 FPS detection loop */
 #define STOP_WAIT_MS           2000  /* Max wait for task exit on stop */
 
-/* Auto flash constants */
+/* Auto flash constants — LEDC PWM driven */
 #define FLASH_GPIO             4     /* AI-Thinker CAM flash LED */
-#define DARK_JPEG_SIZE_THRESH  8000  /* JPEG smaller than this = dark scene (SVGA at quality 12) */
 #define FLASH_WARMUP_MS        200   /* Wait for camera to adapt after flash on */
+#define FLASH_LEDC_TIMER       LEDC_TIMER_1   /* Timer 0 used by camera XCLK */
+#define FLASH_LEDC_CHANNEL     LEDC_CHANNEL_1 /* Channel 0 used by camera XCLK */
+#define FLASH_LEDC_SPEED       LEDC_LOW_SPEED_MODE
+#define FLASH_PWM_FREQ         2000  /* 2 kHz */
+#define FLASH_PWM_RES          LEDC_TIMER_8_BIT /* 0-255 duty range */
+#define FLASH_PWM_DUTY         205   /* ~80% — safe for AI-Thinker (no current-limit resistor) */
 
 /* ---- Static state ---- */
 static TaskHandle_t s_motion_task_handle = NULL;
@@ -53,40 +59,88 @@ static bool s_in_cooldown = false;
 static int64_t s_cooldown_start_us = 0;
 static bool s_flash_initialized = false;
 
+/* Adaptive brightness baseline (EMA)
+ * Tracks average bright-scene frame size using signed arithmetic.
+ * Dark = current frame < baseline * DARK_RATIO_THRESH.
+ * Baseline only updates on bright frames to avoid dark-scene drift. */
+#define DARK_RATIO_THRESH        0.70  /* Frame < 70% of baseline = dark */
+#define BASELINE_EMA_ALPHA       8     /* EMA smoothing factor */
+static int32_t s_brightness_baseline = 0;  /* 0 = not calibrated yet */
+
 /* ---- Internal helpers ---- */
 
 /**
- * @brief Initialize flash LED GPIO
+ * @brief Initialize flash LED using LEDC PWM
+ *
+ * AI-Thinker ESP32-CAM flash LED has no current-limiting resistor.
+ * Using PWM at ~80% duty prevents burnout (Prusa production firmware approach).
+ * Uses Timer 1 / Channel 1 to avoid conflict with camera XCLK (Timer 0 / Channel 0).
  */
 static void flash_led_init(void)
 {
     if (s_flash_initialized) return;
-    gpio_config_t io_conf = {
-        .pin_bit_mask = (1ULL << FLASH_GPIO),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
+
+    /* Configure LEDC timer */
+    ledc_timer_config_t timer_conf = {
+        .speed_mode      = FLASH_LEDC_SPEED,
+        .duty_resolution = FLASH_PWM_RES,
+        .timer_num       = FLASH_LEDC_TIMER,
+        .freq_hz         = FLASH_PWM_FREQ,
+        .clk_cfg         = LEDC_AUTO_CLK,
     };
-    gpio_config(&io_conf);
-    gpio_set_level(FLASH_GPIO, 0);
+    esp_err_t ret = ledc_timer_config(&timer_conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Flash LEDC timer config failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    /* Configure LEDC channel on GPIO4 */
+    ledc_channel_config_t ch_conf = {
+        .gpio_num   = FLASH_GPIO,
+        .speed_mode = FLASH_LEDC_SPEED,
+        .channel    = FLASH_LEDC_CHANNEL,
+        .intr_type  = LEDC_INTR_DISABLE,
+        .timer_sel  = FLASH_LEDC_TIMER,
+        .duty       = 0,
+        .hpoint     = 0,
+    };
+    ret = ledc_channel_config(&ch_conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Flash LEDC channel config failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
     s_flash_initialized = true;
-    ESP_LOGI(TAG, "Flash LED initialized on GPIO%d", FLASH_GPIO);
+    ESP_LOGI(TAG, "Flash LED initialized (LEDC PWM on GPIO%d, %d%% duty)", FLASH_GPIO,
+             (FLASH_PWM_DUTY * 100 + 127) / 255);
 }
 
 /**
- * @brief Check if scene is dark based on JPEG size
- * @param jpeg_len  JPEG frame buffer length
- * @return true if scene appears dark
+ * @brief Check if scene is dark based on JPEG frame size vs EMA baseline
+ * @param jpeg_len Current frame JPEG size in bytes
+ * @return true if frame is significantly smaller than running baseline
  *
- * Rationale: Dark scenes compress much smaller than bright ones.
- * A typical SVGA JPEG at quality 12 in good light is 20-60KB;
- * in darkness it's often < 5KB. This is a reliable heuristic
- * that doesn't require JPEG decoding.
+ * Uses int32_t signed arithmetic for EMA to avoid unsigned underflow.
+ * Baseline only updates on bright frames to avoid dark-scene drift.
  */
 static bool is_scene_dark(size_t jpeg_len)
 {
-    return jpeg_len < DARK_JPEG_SIZE_THRESH;
+    if (s_brightness_baseline <= 0) {
+        s_brightness_baseline = (int32_t)jpeg_len;
+        ESP_LOGI(TAG, "Brightness baseline initialized: %d bytes", s_brightness_baseline);
+        return false;
+    }
+
+    int32_t thresh = (int32_t)(s_brightness_baseline * DARK_RATIO_THRESH);
+    bool dark = (int32_t)jpeg_len < thresh;
+
+    if (!dark) {
+        /* Signed EMA: baseline += (frame - baseline) / alpha
+         * Using int32_t ensures no unsigned underflow. */
+        s_brightness_baseline += ((int32_t)jpeg_len - s_brightness_baseline) / BASELINE_EMA_ALPHA;
+    }
+
+    return dark;
 }
 
 /**
@@ -134,12 +188,14 @@ static void handle_motion_event(bool dark_scene)
     camera_fb_t *fb = NULL;
     if (dark_scene) {
         ESP_LOGI(TAG, "Dark scene detected, enabling flash for photo");
-        gpio_set_level(FLASH_GPIO, 1);
+        ledc_set_duty(FLASH_LEDC_SPEED, FLASH_LEDC_CHANNEL, FLASH_PWM_DUTY);
+        ledc_update_duty(FLASH_LEDC_SPEED, FLASH_LEDC_CHANNEL);
         vTaskDelay(pdMS_TO_TICKS(FLASH_WARMUP_MS));
         if (camera_capture(&fb) != ESP_OK || fb == NULL) {
             ESP_LOGW(TAG, "Failed to capture with flash");
         }
-        gpio_set_level(FLASH_GPIO, 0);
+        ledc_set_duty(FLASH_LEDC_SPEED, FLASH_LEDC_CHANNEL, 0);
+        ledc_update_duty(FLASH_LEDC_SPEED, FLASH_LEDC_CHANNEL);
         ESP_LOGI(TAG, "Flash OFF");
     }
 
@@ -228,8 +284,14 @@ static void motion_detection_task(void *arg)
             samples_a[j] = fb_a->buf[i];
         }
 
-        /* Check scene brightness for auto flash in handle_motion_event */
+        /* Check scene brightness via JPEG size ratio to baseline */
         bool dark_scene = is_scene_dark(fb_a->len);
+        {
+            ESP_LOGI(TAG, "[DBG] ref_frame len=%zu, dark=%s, baseline=%d, thresh=%d",
+                     fb_a->len, dark_scene ? "YES" : "no",
+                     s_brightness_baseline,
+                     s_brightness_baseline > 0 ? (int32_t)(s_brightness_baseline * DARK_RATIO_THRESH) : 0);
+        }
 
         /* Return fb_a immediately — free the frame buffer */
         camera_return_fb(fb_a);
@@ -238,7 +300,9 @@ static void motion_detection_task(void *arg)
         /* Wait between captures for detectable scene change */
         vTaskDelay(pdMS_TO_TICKS(CAPTURE_INTERVAL_MS));
 
-        /* Capture comparison frame (possibly with flash illumination) */
+        /* Capture comparison frame — no flash during detection.
+         * Flash between ref/comp frames creates false 80%+ diffs.
+         * Flash is used ONLY for the final photo capture in handle_motion_event(). */
         camera_fb_t *fb_b = NULL;
         if (camera_capture(&fb_b) != ESP_OK || fb_b == NULL) {
             ESP_LOGW(TAG, "Failed to capture comparison frame");
@@ -246,16 +310,15 @@ static void motion_detection_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-
-        /* Compare saved samples against fb_b */
         size_t min_len = (a_len < fb_b->len) ? a_len : fb_b->len;
         size_t total = 0;
         size_t changed = 0;
+        int delta_thresh = dark_scene ? PIXEL_DELTA_DARK : PIXEL_DELTA;
         for (size_t i = 0, j = 0; i < min_len && j < sample_count; i += SAMPLE_STEP, j++) {
             total++;
             int diff = (int)samples_a[j] - (int)fb_b->buf[i];
             if (diff < 0) diff = -diff;
-            if (diff > PIXEL_DELTA) {
+            if (diff > delta_thresh) {
                 changed++;
             }
         }
@@ -264,9 +327,10 @@ static void motion_detection_task(void *arg)
         if (total > 0) {
             uint8_t percent = (uint8_t)((changed * 100) / total);
             motion = (percent >= cfg->motion_threshold);
-            ESP_LOGD(TAG, "Frame diff: %u/%u = %u%% (threshold=%u%%)",
+            ESP_LOGI(TAG, "[DBG] diff: %u/%u = %u%% (thresh=%u%%, delta=%d, motion=%s, cooldown=%s)",
                      (unsigned)changed, (unsigned)total, percent,
-                     cfg->motion_threshold);
+                     cfg->motion_threshold, delta_thresh, motion ? "YES" : "no",
+                     is_in_cooldown() ? "YES" : "no");
         }
 
         /* Free fb_b and sample buffer */
@@ -295,6 +359,7 @@ esp_err_t motion_detect_init(void)
     s_in_cooldown = false;
     s_cooldown_start_us = 0;
     s_motion_task_handle = NULL;
+    s_brightness_baseline = 0;
     ESP_LOGI(TAG, "Motion detection module initialized");
     return ESP_OK;
 }
@@ -309,6 +374,7 @@ esp_err_t motion_detect_start(void)
     s_running = true;
     s_in_cooldown = false;
     s_cooldown_start_us = 0;
+    s_brightness_baseline = 0;
 
     BaseType_t ret = xTaskCreate(
         motion_detection_task,
