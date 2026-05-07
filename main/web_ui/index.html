@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI-Thinker CAM 仪表盘</title>
+<title>Mi&amp;Bee CAM 仪表盘</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--c:#0D9488;--cd:#0F766E;--bg:#F8FAFB;--card:#fff;--t:#1E293B;--t2:#64748B;--bdr:#E2E8F0;--red:#DC2626;--yel:#D97706;--grn:#059669}
@@ -44,7 +44,7 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 </head>
 <body>
 <div class="hdr">
-<h1>AI-Thinker CAM</h1>
+<h1>Mi&amp;Bee CAM</h1>
 <span class="sub" id="devName">--</span>
 </div>
 <div class="nav">
@@ -101,7 +101,7 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 <script>
 function $(s){return document.getElementById(s)}
 function fmtT(s){var h=Math.floor(s/3600),m=Math.floor(s%3600/60);if(h>0)return h+'小时'+m+'分钟';return m+'分钟'}
-function fmtB(b){if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';return(b/1048576).toFixed(1)+'MB'}
+function fmtB(b){if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';if(b<1073741824)return(b/1048576).toFixed(1)+'MB';return(b/1073741824).toFixed(2)+'GB'}
 function dot(c,pls){return '<span class="dot '+c+(pls?' pulse':'')+'"></span>'}
 function badge(c,t){return '<span class="badge '+c+'">'+t+'</span>'}
 function rssiInfo(v){if(v==null)return '--';if(v>-50)return dot('g')+' '+v+'dBm 极好';if(v>-70)return dot('g')+' '+v+'dBm 良好';if(v>-80)return dot('y')+' '+v+'dBm 一般';return dot('r')+' '+v+'dBm 较差'}
@@ -109,7 +109,7 @@ function rssiInfo(v){if(v==null)return '--';if(v>-50)return dot('g')+' '+v+'dBm 
 function refresh(){
 fetch('/api/status').then(function(r){return r.json()}).then(function(d){
 if(!d||!d.ok)return;var v=d.data;
-$('dName').textContent=v.device_name||'AI-Thinker CAM';
+$('dName').textContent=v.device_name||'Mi&Bee CAM';
 $('devName').textContent=v.device_name||'';
 $('dUp').textContent=v.uptime!=null?fmtT(v.uptime):'--';
 $('dVer').textContent=v.firmware_version||'v1.0';
@@ -123,13 +123,15 @@ $('wMode').textContent=v.wifi_mode||'--';
 $('wIp').textContent=v.ip||'--';
 $('wRssi').innerHTML=rssiInfo(v.wifi_rssi);
 
-if(v.spiffs_total!=null&&v.spiffs_free!=null){
-var used=v.spiffs_total-v.spiffs_free;
-var pct=Math.round(used*100/v.spiffs_total);
+/* SD card storage */
+if(v.sd_free_mb!=null){
+var sdTotal=v.sd_total_mb||32000;var sdUsed=sdTotal-v.sd_free_mb;
+var pct=Math.round(sdUsed*100/sdTotal);
+if(pct<0)pct=0;if(pct>100)pct=100;
 $('sBar').style.width=pct+'%';
 $('sBar').className='bar-f '+(pct>90?'r':pct>70?'y':'g');
-$('sTxt').textContent='已用 '+fmtB(used)+' / '+fmtB(v.spiffs_total)+' ('+pct+'%)';
-}else{$('sBar').style.width='0%';$('sTxt').textContent='--';}
+$('sTxt').textContent='已用 '+fmtB(sdUsed*1048576)+' / '+fmtB(sdTotal*1048576)+' ('+pct+'%)';
+}else{$('sBar').style.width='0%';$('sTxt').textContent='SD卡未挂载';}
 $('sCnt').textContent=(v.photo_count!=null?v.photo_count:'--')+' 张';
 
 var men=v.motion_enabled;
@@ -140,7 +142,7 @@ $('hFree').textContent=v.free_heap!=null?fmtB(v.free_heap):'--';
 $('hMin').textContent=v.min_heap!=null?fmtB(v.min_heap):'--';
 }).catch(function(e){console.error('Status fetch failed:',e)});
 }
-setInterval(refresh,5000);
+setInterval(refresh,10000);
 window.onload=refresh;
 </script>
 </body>

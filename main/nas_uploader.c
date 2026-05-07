@@ -1,7 +1,6 @@
 #include "nas_uploader.h"
-#include "ftp_client.h"
-#include "webdav_client.h"
 #include "config_manager.h"
+#include "webdav_client.h"
 #include "esp_log.h"
 #include "esp_http_client.h"
 #include "esp_system.h"
@@ -171,9 +170,8 @@ static void upload_task(void *arg)
         }
 #pragma GCC diagnostic pop
 
-        ESP_LOGI(TAG, "Uploading %s via %s", entry.filepath,
-                 cfg->nas_protocol == NAS_PROTOCOL_HTTP ? "HTTP" :
-                 cfg->nas_protocol == NAS_PROTOCOL_FTP  ? "FTP" : "WebDAV");
+        const char *proto_name = (cfg->nas_protocol == NAS_PROTOCOL_WEBDAV) ? "WebDAV" : "HTTP";
+        ESP_LOGI(TAG, "Uploading %s via %s", entry.filepath, proto_name);
 
         bool success = false;
 
@@ -183,24 +181,14 @@ static void upload_task(void *arg)
                 vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
             }
 
-            switch (cfg->nas_protocol) {
-            case NAS_PROTOCOL_HTTP:
-                success = (http_upload(cfg->nas_host, cfg->nas_port,
-                                       cfg->device_name,
-                                       remote_path, entry.filepath) == ESP_OK);
-                break;
-
-            case NAS_PROTOCOL_FTP:
-                success = (ftp_upload(cfg->nas_host, cfg->nas_port,
-                                      cfg->nas_user, cfg->nas_pass,
-                                      remote_path, entry.filepath) == ESP_OK);
-                break;
-
-            case NAS_PROTOCOL_WEBDAV:
+            if (cfg->nas_protocol == NAS_PROTOCOL_WEBDAV) {
                 success = (webdav_upload(cfg->nas_host, cfg->nas_port,
                                          cfg->nas_user, cfg->nas_pass,
                                          remote_path, entry.filepath) == ESP_OK);
-                break;
+            } else {
+                success = (http_upload(cfg->nas_host, cfg->nas_port,
+                                       cfg->device_name,
+                                       remote_path, entry.filepath) == ESP_OK);
             }
         }
 

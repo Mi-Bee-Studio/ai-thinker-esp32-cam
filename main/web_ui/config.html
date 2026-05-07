@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI-Thinker CAM 配置</title>
+<title>Mi&amp;Bee CAM 配置</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--c:#0D9488;--cd:#0F766E;--bg:#F8FAFB;--card:#fff;--t:#1E293B;--t2:#64748B;--bdr:#E2E8F0}
@@ -51,7 +51,7 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 </head>
 <body>
 <div class="hdr">
-<h1>AI-Thinker CAM</h1>
+<h1>Mi&amp;Bee CAM</h1>
 <span class="sub">配置</span>
 </div>
 <div class="nav">
@@ -66,6 +66,15 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 <div class="ct">WiFi 设置</div>
 <div class="fld"><label>SSID</label><input type="text" id="wifi_ssid" placeholder="WiFi名称"></div>
 <div class="fld"><label>密码</label><div class="pw-w"><input type="password" id="wifi_pass" placeholder="WiFi密码"><span class="eye" onclick="togPw(this)">&#128065;</span></div></div>
+</div>
+
+<div class="card">
+<div class="ct">WiFi 高级</div>
+<div class="fld"><label>发射功率</label>
+<div class="range-r"><input type="range" id="wifi_tx_power" min="8" max="80" step="4" value="80"><span class="range-v" id="txVal">20dBm</span></div></div>
+<div class="fld" style="font-size:12px;color:var(--t2)">范围 2~20dBm，外置天线建议 20dBm</div>
+<div class="chk-r" style="margin-top:8px"><input type="checkbox" id="wifi_power_save"><label for="wifi_power_save">启用WiFi省电模式</label></div>
+<div class="fld" style="font-size:12px;color:var(--t2)">关闭可降低视频流延迟，建议常供电设备关闭</div>
 </div>
 
 <div class="card">
@@ -84,7 +93,7 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 
 <div class="card">
 <div class="ct">设备</div>
-<div class="fld"><label>设备名称</label><input type="text" id="device_name" placeholder="AI-Thinker CAM"></div>
+<div class="fld"><label>设备名称</label><input type="text" id="device_name" placeholder="Mi&Bee CAM"></div>
 <div class="fld"><label>Web 管理密码</label><div class="pw-w"><input type="password" id="web_password" placeholder="留空则不修改"><span class="eye" onclick="togPw(this)">&#128065;</span></div></div>
 <div class="fld"><label>确认密码</label><div class="pw-w"><input type="password" id="web_password_confirm" placeholder="再次输入新密码"><span class="eye" onclick="togPw(this)">&#128065;</span></div></div>
 </div>
@@ -100,13 +109,8 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 
 <div class="card">
 <div class="ct">NAS 上传</div>
-<div class="fld"><label>协议</label>
-<select id="nas_protocol">
-<option value="0">HTTP</option>
-<option value="1">FTP</option>
-<option value="2">WebDAV</option>
-</select></div>
-<div class="fld"><div class="inline"><div><label>服务器地址</label><input type="text" id="nas_host" placeholder="192.168.1.100"></div><div class="port-f"><label>端口</label><input type="number" id="nas_port" value="80" min="1" max="65535"></div></div></div>
+<div class="fld"><label>协议</label><select id="nas_protocol"><option value="0">HTTP POST</option><option value="1">WebDAV</option></select></div>
+<div class="inline"><div class="fld"><label>服务器地址</label><input type="text" id="nas_host" placeholder="192.168.1.100"></div><div class="fld port-f"><label>端口</label><input type="number" id="nas_port" placeholder="80"></div></div>
 <div class="fld"><label>用户名</label><input type="text" id="nas_user" placeholder="用户名"></div>
 <div class="fld"><label>密码</label><div class="pw-w"><input type="password" id="nas_pass" placeholder="密码"><span class="eye" onclick="togPw(this)">&#128065;</span></div></div>
 <div class="fld"><label>远程路径</label><input type="text" id="nas_path" placeholder="/photos"></div>
@@ -138,11 +142,8 @@ function togPw(el){var i=el.previousElementSibling;if(i.type==='password'){i.typ
 $('jpeg_quality').oninput=function(){$('qVal').textContent=this.value};
 $('motion_threshold').oninput=function(){$('mtVal').textContent=this.value};
 $('motion_cooldown').oninput=function(){$('mcVal').textContent=this.value};
+$('wifi_tx_power').oninput=function(){$('txVal').textContent=(this.value*0.25).toFixed(1)+'dBm'};
 
-$('nas_protocol').onchange=function(){
-var v=parseInt(this.value);
-$('nas_port').value=v===1?21:v===2?80:80;
-};
 
 function loadConfig(){
 fetch('/api/config').then(function(r){return r.json()}).then(function(d){
@@ -157,12 +158,14 @@ $('motion_enabled').checked=(v.motion_threshold>0);
 $('motion_threshold').value=v.motion_threshold||30;$('mtVal').textContent=$('motion_threshold').value;
 $('vflip').checked=!!v.vflip;
 $('motion_cooldown').value=v.motion_cooldown||5;$('mcVal').textContent=$('motion_cooldown').value;
-$('nas_protocol').value=v.nas_protocol!=null?v.nas_protocol:'0';
 $('nas_host').value=v.nas_host||'';
 $('nas_port').value=v.nas_port||80;
+$('nas_protocol').value=v.nas_protocol||0;
 $('nas_user').value=v.nas_user||'';
 $('nas_pass').value=v.nas_pass||'';
 $('nas_path').value=v.nas_path||'/photos';
+$('wifi_tx_power').value=v.wifi_tx_power||80;$('txVal').textContent=(($('wifi_tx_power').value*0.25).toFixed(1))+'dBm';
+$('wifi_power_save').checked=!!(v.wifi_power_save);
 }).catch(function(e){console.error('Load config failed:',e)});
 }
 
@@ -178,14 +181,15 @@ resolution:parseInt($('resolution').value),
 jpeg_quality:parseInt($('jpeg_quality').value),
 motion_enabled:$('motion_enabled').checked,
 motion_threshold:parseInt($('motion_threshold').value),
-motion_cooldown:parseInt($('motion_cooldown').value),
-nas_protocol:parseInt($('nas_protocol').value),
+nas_protocol:parseInt($('nas_protocol').value)||0,
 nas_host:$('nas_host').value,
 nas_port:parseInt($('nas_port').value)||80,
 nas_user:$('nas_user').value,
 nas_pass:$('nas_pass').value,
 nas_path:$('nas_path').value,
 vflip:$('vflip').checked?1:0,
+wifi_tx_power:parseInt($('wifi_tx_power').value)||80,
+wifi_power_save:$('wifi_power_save').checked?1:0
 };
 if(pw)cfg.web_password=pw;
 authFetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}).then(function(r){return r.json()}).then(function(d){

@@ -30,7 +30,7 @@
 #include "storage_manager.h"
 #include "mjpeg_streamer.h"
 #include "health_monitor.h"
-#include "nas_uploader.h"
+#include "motion_detect.h"
 #include "time_sync.h"
 #include "esp_spiffs.h"
 
@@ -41,6 +41,8 @@
 #include <stdlib.h>
 #include <time.h>
 #include <sys/stat.h>
+#include <errno.h>
+#include <unistd.h>
 
 static const char *TAG = "web_server";
 static httpd_handle_t s_server = NULL;
@@ -171,20 +173,25 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddStringToObject(data, "ip", wifi_get_ip_str());
     cJSON_AddNumberToObject(data, "wifi_rssi", (double)m->wifi_rssi);
 
-    /* SPIFFS storage */
-    size_t spiffs_total = 0, spiffs_used = 0;
-    esp_spiffs_info("spiffs", &spiffs_total, &spiffs_used);
-    cJSON_AddNumberToObject(data, "spiffs_total", (double)spiffs_total);
-    cJSON_AddNumberToObject(data, "spiffs_free", (double)(spiffs_total - spiffs_used));
+    /* SPIFFS storage (cached in health metrics, updated every 30s) */
+    cJSON_AddNumberToObject(data, "spiffs_total", (double)m->spiffs_total);
+    cJSON_AddNumberToObject(data, "spiffs_free", (double)m->spiffs_free);
 
-    /* Photos & motion */
+    /* SD card storage (cached in health metrics) */
+    cJSON_AddNumberToObject(data, "sd_free_mb", (double)m->sd_free_mb);
+    cJSON_AddNumberToObject(data, "sd_total_mb", (double)m->sd_total_mb);
     cJSON_AddNumberToObject(data, "photo_count", (double)m->photo_count);
-    cJSON_AddBoolToObject(data, "motion_enabled", cfg->motion_threshold > 0);
+
+    /* Motion */
+    cJSON_AddBoolToObject(data, "motion_enabled", motion_detect_is_running());
     cJSON_AddNumberToObject(data, "motion_events", (double)m->motion_events);
 
     /* Heap */
     cJSON_AddNumberToObject(data, "free_heap", (double)m->free_heap);
     cJSON_AddNumberToObject(data, "min_heap", (double)m->min_free_heap);
+
+    /* Stream clients */
+    cJSON_AddNumberToObject(data, "stream_clients", (double)mjpeg_streamer_get_client_count());
 
     return send_json_ok(req, data);
 }
@@ -206,11 +213,13 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON_AddStringToObject(data, "timezone", cfg->timezone);
     cJSON_AddNumberToObject(data, "motion_threshold", (double)cfg->motion_threshold);
     cJSON_AddNumberToObject(data, "motion_cooldown", (double)cfg->motion_cooldown);
-    cJSON_AddNumberToObject(data, "nas_protocol", (double)cfg->nas_protocol);
     cJSON_AddStringToObject(data, "nas_host", cfg->nas_host);
     cJSON_AddNumberToObject(data, "nas_port", (double)cfg->nas_port);
+    cJSON_AddNumberToObject(data, "nas_protocol", (double)cfg->nas_protocol);
     cJSON_AddStringToObject(data, "nas_path", cfg->nas_path);
     cJSON_AddNumberToObject(data, "vflip", (double)cfg->vflip);
+    cJSON_AddNumberToObject(data, "wifi_tx_power", (double)cfg->wifi_tx_power);
+    cJSON_AddNumberToObject(data, "wifi_power_save", (double)cfg->wifi_power_save);
 
     return send_json_ok(req, data);
 }
@@ -261,16 +270,25 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
         }
         ESP_LOGI(TAG, "WiFi save request: ssid='%s' pass_len=%d",
                  ssid ? ssid : "(null)", pass ? (int)strlen(pass) : -1);
-        /* Only update WiFi if ssid is non-empty.
-         * Frontend wifi_pass field is always empty (GET never returns password),
-         * so only save WiFi when user explicitly fills in the SSID field. */
         if (ssid && strlen(ssid) > 0) {
-            esp_err_t wret = config_set_wifi(ssid, pass ? pass : "");
-            wifi_changed = (wret == ESP_OK);
-            ESP_LOGI(TAG, "config_set_wifi result: %s", esp_err_to_name(wret));
-        }
+            /* Only update WiFi if ssid is non-empty.
+             * Frontend wifi_pass field is always empty (GET never returns password),
+             * so only save WiFi when user explicitly fills in the SSID field.
+             * If pass is empty but ssid matches current, skip WiFi save to preserve password. */
+            if (pass && strlen(pass) > 0) {
+                esp_err_t wret = config_set_wifi(ssid, pass);
+                wifi_changed = (wret == ESP_OK);
+                ESP_LOGI(TAG, "config_set_wifi (with pass) result: %s", esp_err_to_name(wret));
+            } else if (strcmp(ssid, config_get()->wifi_ssid) != 0) {
+                /* SSID changed but no password provided — save anyway (user must re-enter) */
+                esp_err_t wret = config_set_wifi(ssid, "");
+                wifi_changed = (wret == ESP_OK);
+                ESP_LOGI(TAG, "config_set_wifi (SSID changed, no pass) result: %s", esp_err_to_name(wret));
+            } else {
+                ESP_LOGI(TAG, "WiFi unchanged (same SSID, no new password)");
+            }
     }
-
+    }
     /* Camera settings (resolution/fps/quality) — also apply live */
     bool camera_changed = false;
     if ((item = cJSON_GetObjectItem(json, "resolution")) && cJSON_IsNumber(item)) {
@@ -355,6 +373,15 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
         uint8_t new_vflip = (uint8_t)item->valueint;
         config_set_vflip(new_vflip);
         camera_apply_vflip(new_vflip);
+    }
+
+    /* WiFi power settings */
+    if ((item = cJSON_GetObjectItem(json, "wifi_tx_power")) && cJSON_IsNumber(item)) {
+        uint8_t tx = (uint8_t)item->valueint;
+        uint8_t ps = 0;
+        cJSON *ps_item = cJSON_GetObjectItem(json, "wifi_power_save");
+        if (ps_item && cJSON_IsNumber(ps_item)) ps = (uint8_t)ps_item->valueint;
+        config_set_wifi_power(tx, ps);
     }
 
     /* NAS settings (has dedicated setter — merge with current values) */
@@ -483,27 +510,77 @@ static esp_err_t handler_api_files(httpd_req_t *req)
         return send_json_error(req, "SD card not available", 503);
     }
 
-    char *buf = malloc(4096);
+    /* Parse pagination params */
+    int offset = 0, limit = 10;
+    char query[128] = {0};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        char val[16] = {0};
+        if (httpd_query_key_value(query, "offset", val, sizeof(val)) == ESP_OK)
+            offset = atoi(val);
+        memset(val, 0, sizeof(val));
+        if (httpd_query_key_value(query, "limit", val, sizeof(val)) == ESP_OK)
+            limit = atoi(val);
+        if (limit <= 0) limit = 10;
+        if (limit > 100) limit = 100;
+        if (offset < 0) offset = 0;
+    }
+
+    char *buf = malloc(32768);
     if (!buf) {
         return send_json_error(req, "out of memory", 500);
     }
 
-    int count = storage_list_photos("/sdcard/photos", buf, 4096);
-    if (count <= 0) {
+    int raw_count = storage_list_photos("/sdcard/photos", buf, 32768);
+    if (raw_count <= 0) {
         free(buf);
         cJSON *arr = cJSON_CreateArray();
         cJSON *data = cJSON_CreateObject();
         cJSON_AddItemToObject(data, "files", arr);
+        cJSON_AddNumberToObject(data, "total", 0);
+        cJSON_AddNumberToObject(data, "offset", 0);
+        cJSON_AddNumberToObject(data, "limit", limit);
+        cJSON_AddNumberToObject(data, "sd_free_mb", (double)storage_get_free_space());
+ cJSON_AddNumberToObject(data, "sd_total_mb", (double)storage_get_total_space());
         return send_json_ok(req, data);
     }
 
-    /* Parse newline-separated paths into JSON array */
+    /* Count valid entries and collect page slice in one pass */
     cJSON *arr = cJSON_CreateArray();
+    int total = 0;
     char *saveptr = NULL;
     char *line = strtok_r(buf, "\n", &saveptr);
     while (line != NULL) {
         if (strlen(line) > 0) {
-            cJSON_AddItemToArray(arr, cJSON_CreateString(line));
+            char *tab = strchr(line, '\t');
+            if (tab) {
+                *tab = '\0';
+                double size = atof(tab + 1);
+                /* Filter corrupted entries: 0-byte with no extension */
+                if (size == 0 && !strchr(line, '.')) {
+                    line = strtok_r(NULL, "\n", &saveptr);
+                    continue;
+                }
+                if (total >= offset && total < offset + limit) {
+                    cJSON *obj = cJSON_CreateObject();
+                    cJSON_AddStringToObject(obj, "name", line);
+                    cJSON_AddNumberToObject(obj, "size", size);
+                    cJSON_AddItemToArray(arr, obj);
+                }
+                total++;
+            } else {
+                /* No size info — skip if no extension */
+                if (!strchr(line, '.')) {
+                    line = strtok_r(NULL, "\n", &saveptr);
+                    continue;
+                }
+                if (total >= offset && total < offset + limit) {
+                    cJSON *obj = cJSON_CreateObject();
+                    cJSON_AddStringToObject(obj, "name", line);
+                    cJSON_AddNumberToObject(obj, "size", 0);
+                    cJSON_AddItemToArray(arr, obj);
+                }
+                total++;
+            }
         }
         line = strtok_r(NULL, "\n", &saveptr);
     }
@@ -511,8 +588,65 @@ static esp_err_t handler_api_files(httpd_req_t *req)
 
     cJSON *data = cJSON_CreateObject();
     cJSON_AddItemToObject(data, "files", arr);
-    cJSON_AddNumberToObject(data, "count", (double)count);
+    cJSON_AddNumberToObject(data, "total", total);
+    cJSON_AddNumberToObject(data, "offset", offset);
+    cJSON_AddNumberToObject(data, "limit", limit);
+    cJSON_AddNumberToObject(data, "sd_free_mb", (double)storage_get_free_space());
+ cJSON_AddNumberToObject(data, "sd_total_mb", (double)storage_get_total_space());
     return send_json_ok(req, data);
+}
+
+/* ------------------------------------------------------------------ */
+/*  DELETE /api/files?name=xxx                                         */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handler_api_files_delete(httpd_req_t *req)
+{
+    if (!check_auth(req)) {
+        return send_unauthorized(req);
+    }
+
+    char query[256] = {0};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+        return send_json_error(req, "missing query parameter", 400);
+    }
+
+    char name[192] = {0};
+    if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK) {
+        return send_json_error(req, "missing name parameter", 400);
+    }
+
+    /* Path traversal protection */
+    if (strstr(name, "..") != NULL) {
+        return send_json_error(req, "invalid file name", 400);
+    }
+
+    if (!storage_is_available()) {
+        return send_json_error(req, "SD card not available", 503);
+    }
+
+    /* Build full path */
+    char filepath[280];
+    snprintf(filepath, sizeof(filepath), "/sdcard/photos/%s", name);
+
+    /* Try remove() first (files), then rmdir() (empty dirs) */
+    if (remove(filepath) != 0 && rmdir(filepath) != 0) {
+        ESP_LOGW(TAG, "Failed to delete %s: %s", filepath, strerror(errno));
+        return send_json_error(req, "delete failed", 500);
+    }
+
+    ESP_LOGI(TAG, "Deleted: %s", filepath);
+
+    /* Clean up empty parent directory (e.g. 1970-01/) */
+    char *slash = strrchr(name, '/');
+    if (slash) {
+        char dirpath[280];
+        int dlen = snprintf(dirpath, sizeof(dirpath), "/sdcard/photos/");
+        strncat(dirpath + dlen, name, slash - name);
+        rmdir(dirpath);  /* ignore error — dir may not be empty */
+    }
+
+    return send_json_ok(req, NULL);
 }
 
 /* ------------------------------------------------------------------ */
@@ -582,51 +716,6 @@ static esp_err_t handler_api_download(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------ */
-/*  POST /api/upload  (trigger manual NAS upload)                      */
-/* ------------------------------------------------------------------ */
-
-static esp_err_t handler_api_upload(httpd_req_t *req)
-{
-    if (!check_auth(req)) {
-        return send_unauthorized(req);
-    }
-
-    char *body = read_body(req, 512);
-    if (!body) {
-        return send_json_error(req, "empty or invalid body", 400);
-    }
-
-    cJSON *json = cJSON_Parse(body);
-    free(body);
-    if (!json) {
-        return send_json_error(req, "invalid JSON", 400);
-    }
-
-    cJSON *file_item = cJSON_GetObjectItem(json, "file");
-    if (!file_item || !cJSON_IsString(file_item)) {
-        cJSON_Delete(json);
-        return send_json_error(req, "missing 'file' field", 400);
-    }
-
-    const char *filepath = file_item->valuestring;
-
-    /* Path traversal protection */
-    if (strstr(filepath, "..") != NULL) {
-        cJSON_Delete(json);
-        return send_json_error(req, "invalid file path", 400);
-    }
-
-    esp_err_t ret = nas_uploader_enqueue(filepath);
-    cJSON_Delete(json);
-
-    if (ret != ESP_OK) {
-        return send_json_error(req, "failed to enqueue upload", 500);
-    }
-
-    cJSON *data = cJSON_CreateObject();
-    cJSON_AddStringToObject(data, "message", "upload queued");
-    return send_json_ok(req, data);
-}
 
 /* ------------------------------------------------------------------ */
 /*  GET /api/auth  - Validate password (returns 200 or 401)            */
@@ -732,8 +821,8 @@ static const uri_entry_t s_uris[] = {
     { "/capture",      HTTP_GET,    handler_capture          },
     { "/metrics",      HTTP_GET,    handler_metrics          },
     { "/api/files",    HTTP_GET,    handler_api_files        },
+    { "/api/files",    HTTP_DELETE, handler_api_files_delete  },
     { "/api/download", HTTP_GET,    handler_api_download     },
-    { "/api/upload",   HTTP_POST,   handler_api_upload       },
     { "/api/auth",     HTTP_GET,    handler_api_auth         },
 
     { "/*",             HTTP_OPTIONS, handler_options         },
@@ -763,9 +852,9 @@ esp_err_t web_server_start(uint16_t port)
     config.server_port = port;
     config.max_uri_handlers = 20;
     config.stack_size = 8192;
-    config.recv_wait_timeout = 30;
-    config.send_wait_timeout = 30;
-    config.lru_purge_enable = true;
+    config.recv_wait_timeout = 10;    /* longer tolerance for slow WiFi */
+    config.send_wait_timeout = 30;    /* prevent premature stream disconnects */
+    config.lru_purge_enable = true;   /* clean up stale connections */
     config.uri_match_fn = httpd_uri_match_wildcard;
 
     esp_err_t ret = httpd_start(&s_server, &config);

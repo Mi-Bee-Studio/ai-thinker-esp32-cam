@@ -20,7 +20,7 @@ esp_err_t nas_uploader_init(void);
  *
  * Copies the filepath into a queue entry and sends it non-blocking.
  * The background task will read NAS settings from config and upload
- * using the configured protocol (HTTP/FTP/WebDAV).
+ * using HTTP POST.
  *
  * @param filepath  Absolute path to the local file
  * @return ESP_OK on success, ESP_ERR_INVALID_STATE if not initialized,

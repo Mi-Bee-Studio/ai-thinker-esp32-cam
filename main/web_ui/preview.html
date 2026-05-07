@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI-Thinker CAM 实时预览</title>
+<title>Mi&amp;Bee CAM 实时预览</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--c:#0D9488;--cd:#0F766E;--bg:#F8FAFB;--card:#fff;--t:#1E293B;--t2:#64748B;--bdr:#E2E8F0}
@@ -46,7 +46,7 @@ select,button{font-family:inherit}
 </head>
 <body>
 <div class="hdr">
-<h1>AI-Thinker CAM</h1>
+<h1>Mi&amp;Bee CAM</h1>
 <span class="sub">实时预览</span>
 </div>
 <div class="nav">
@@ -86,8 +86,6 @@ select,button{font-family:inherit}
 </div>
 </div>
 <script>
-function getPw(){return localStorage.getItem('cam_password')||''}
-function setPw(p){localStorage.setItem('cam_password',p)}
 var img=document.getElementById('stream');
 var ph=document.getElementById('placeholder');
 var sDot=document.getElementById('sDot');
@@ -95,66 +93,86 @@ var sTxt=document.getElementById('sTxt');
 var fpsEl=document.getElementById('fps');
 var clientsEl=document.getElementById('clients');
 var connected=false;
-var fc=0,lt=Date.now(),retryT=null;
+var retryT=null;
+var capturing=false;
 
 function onConn(){
 connected=true;clearTimeout(retryT);
 ph.style.display='none';img.style.display='block';
 sDot.className='dot g';sTxt.textContent='已连接';sTxt.style.color='#059669';
+fpsEl.textContent='实时';fpsEl.style.color='#059669';
 }
+
 function onDisconn(msg){
 connected=false;
 sDot.className='dot r';sTxt.textContent=msg||'连接断开';sTxt.style.color='#DC2626';
+fpsEl.textContent='--';fpsEl.style.color='';
 if(retryT)clearTimeout(retryT);
 retryT=setTimeout(function(){
-sDot.className='dot y';sTxt.textContent='重新连接中';sTxt.style.color='#D97706';
-img.src='/stream';
+  sDot.className='dot y';sTxt.textContent='重新连接中';sTxt.style.color='#D97706';
+  img.src='/stream?t='+Date.now();
 },3000);
 }
 
-img.onload=function(){fc++;onConn()};
+img.onload=function(){onConn()};
 img.onerror=function(){onDisconn('连接断开')};
 img.src='/stream';
 
-setInterval(function(){
-if(!connected)return;
-var now=Date.now(),el=now-lt;
-if(el>0)fpsEl.textContent=Math.round(fc*1000/el)+' fps';
-fc=0;lt=now;
-},1000);
-
+// Status polling — only update client count, do NOT trigger reconnect from here
+// (let img.onerror handle reconnection to avoid duplicate stream connections)
 setInterval(function(){
 fetch('/api/status').then(function(r){return r.json()}).then(function(d){
-if(d&&d.ok)clientsEl.textContent=(d.data.stream_clients!=null?d.data.stream_clients:'--');
+if(d&&d.data){
+var sc=d.data.stream_clients!=null?d.data.stream_clients:'--';
+clientsEl.textContent=sc;
+if(sc>0&&connected){fpsEl.textContent='实时';fpsEl.style.color='#059669'}
+}
 }).catch(function(){});
-},5000);
+},10000);
 
 function changeRes(){
 var v=document.getElementById('resSel').value;
 var h={'Content-Type':'application/json'};
-var pw=getPw();
+var pw=localStorage.getItem('cam_password')||'';
 if(pw)h['X-Password']=pw;
 fetch('/api/config',{method:'POST',headers:h,body:JSON.stringify({resolution:parseInt(v)})})
-  .then(function(r){if(r.status===401){setPw('');var p=prompt('请输入管理密码 (默认: admin):');if(p){setPw(p);changeRes()}}})
+  .then(function(r){if(r.status===401){localStorage.setItem('cam_password','');var p=prompt('请输入管理密码 (默认: admin):');if(p){localStorage.setItem('cam_password',p);changeRes()}}})
   .catch(function(){});
 }
 function changeQuality(){
 var v=document.getElementById('qSlider').value;
 document.getElementById('qVal').textContent=v;
 var h={'Content-Type':'application/json'};
-var pw=getPw();
+var pw=localStorage.getItem('cam_password')||'';
 if(pw)h['X-Password']=pw;
 fetch('/api/config',{method:'POST',headers:h,body:JSON.stringify({jpeg_quality:parseInt(v)})})
-  .then(function(r){if(r.status===401){setPw('');var p=prompt('请输入管理密码 (默认: admin):');if(p){setPw(p);changeQuality()}}})
+  .then(function(r){if(r.status===401){localStorage.setItem('cam_password','');var p=prompt('请输入管理密码 (默认: admin):');if(p){localStorage.setItem('cam_password',p);changeQuality()}}})
   .catch(function(){});
 }
 function capture(){
-window.open('/capture','_blank');
+if(capturing)return;
+capturing=true;
+var btn=document.querySelector('.btn-cap');
+if(btn)btn.disabled=true;
+fetch('/capture').then(function(r){
+  if(!r.ok)throw new Error('HTTP '+r.status);
+  return r.blob();
+}).then(function(b){
+  var url=URL.createObjectURL(b);
+  var a=document.createElement('a');
+  a.href=url;
+  a.download='capture_'+Date.now()+'.jpg';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Delay revocation so browser can finish reading the blob
+  setTimeout(function(){URL.revokeObjectURL(url)},1000);
+}).catch(function(){alert('拍照失败')})
+.finally(function(){capturing=false;if(btn)btn.disabled=false});
 }
 function stopStream(){
 if(retryT)clearTimeout(retryT);
 img.onload=null;img.onerror=null;
-// Force abort by setting to a tiny data URI, then empty
 img.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 connected=false;
 }
