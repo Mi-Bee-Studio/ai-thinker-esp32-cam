@@ -149,42 +149,6 @@ static void wifi_state_cb(wifi_state_t state, void *user_data)
     }
 }
 
-/* ---------------------------------------------------------------------------
- * BOOT button (GPIO0) long-press 5s - factory reset
- * --------------------------------------------------------------------------- */
-static void boot_btn_task(void *arg)
-{
-    gpio_num_t boot_gpio = BOOT_BTN_GPIO;
-
-    /*
-     * IMPORTANT: GPIO 0 is shared with camera XCLK on AI_Thinker boards.
-     * Once the camera starts driving XCLK, we cannot monitor GPIO 0 as a button.
-     * So we only check the button state ONCE at boot, before camera init.
-     * For runtime factory reset, use POST /api/reset instead.
-     */
-    gpio_config_t btn_conf = {
-        .pin_bit_mask = (1ULL << boot_gpio),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&btn_conf);
-
-    /* Check if BOOT button was held during boot (before camera takes GPIO 0) */
-    if (gpio_get_level(boot_gpio) == 0) {
-        ESP_LOGW(TAG, "BOOT button held at startup, waiting 3s...");
-        vTaskDelay(pdMS_TO_TICKS(3000));
-        if (gpio_get_level(boot_gpio) == 0) {
-            ESP_LOGW(TAG, "Factory reset triggered (BOOT held at startup)!");
-            config_reset();
-            esp_restart();
-        }
-    }
-
-    ESP_LOGI(TAG, "BOOT button monitor: check complete (GPIO%d not held)", boot_gpio);
-    /* Task self-terminates — GPIO 0 is needed for camera XCLK */
-    vTaskDelete(NULL);
-}
 
 /* ---------------------------------------------------------------------------
  * app_main - system entry point, 16-step boot sequence
@@ -204,6 +168,10 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
     ESP_LOGI(TAG, "=== Step 1/16: NVS initialized ===");
+
+    /* NOTE: BOOT button factory reset DISABLED on AI-Thinker ESP32-CAM.
+     * GPIO 0 is the camera XCLK pin and reads LOW even before camera init,
+     * making it unreliable as a button input. Use POST /api/reset instead. */
 
     /* Step 2/16: Config manager init */
     ret = config_init();
@@ -369,9 +337,8 @@ void app_main(void)
         ESP_LOGI(TAG, "=== Step 15/16: NAS uploader initialized ===");
     }
 
-    /* Step 16/16: Boot button monitor task */
-    xTaskCreate(boot_btn_task, "boot_btn", 4096, NULL, 5, NULL);
-    ESP_LOGI(TAG, "=== Step 16/16: BOOT button monitor started ===");
+    /* Step 16/16: Boot button factory reset disabled (GPIO0 = camera XCLK) */
+    ESP_LOGI(TAG, "=== Step 16/16: BOOT button check disabled (GPIO0 = XCLK) ===");
 
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, "  System startup complete");
