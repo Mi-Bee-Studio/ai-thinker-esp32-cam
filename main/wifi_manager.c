@@ -10,6 +10,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 #include <string.h>
+#include "config_manager.h"
 
 static const char *TAG = "wifi_manager";
 
@@ -176,6 +177,8 @@ esp_err_t wifi_init(void)
         return ret;
     }
 
+    /* TX power and power save will be applied after wifi_start() */
+
     ret = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                               &wifi_event_handler, NULL, &s_wifi_handler);
     if (ret != ESP_OK) {
@@ -216,6 +219,9 @@ esp_err_t wifi_start_sta(const char *ssid, const char *pass)
     strncpy((char *)wifi_config.sta.ssid, ssid, sizeof(wifi_config.sta.ssid) - 1);
     if (pass) {
         strncpy((char *)wifi_config.sta.password, pass, sizeof(wifi_config.sta.password) - 1);
+        ESP_LOGI(TAG, "STA config: SSID='%s', pass_len=%u", ssid, (unsigned)strlen(pass));
+    } else {
+        ESP_LOGW(TAG, "STA config: SSID='%s', NO PASSWORD", ssid);
     }
 
     ret = esp_wifi_stop();
@@ -245,6 +251,24 @@ esp_err_t wifi_start_sta(const char *ssid, const char *pass)
         ESP_LOGE(TAG, "Failed to start STA: %s", esp_err_to_name(ret));
         s_sta_active = false;
         return ret;
+    }
+
+    /* Apply TX power from config (must be after wifi_start) */
+    const cam_config_t *cam_cfg = config_get();
+    int8_t tx_pwr = (cam_cfg->wifi_tx_power >= 8 && cam_cfg->wifi_tx_power <= 84) ? (int8_t)cam_cfg->wifi_tx_power : 80;
+    ret = esp_wifi_set_max_tx_power(tx_pwr);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "set_max_tx_power(%d/%.1fdBm) failed: %s", tx_pwr, tx_pwr * 0.25f, esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "WiFi TX power set to %d (%.1fdBm)", tx_pwr, tx_pwr * 0.25f);
+    }
+
+    wifi_ps_type_t ps = cam_cfg->wifi_power_save ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE;
+    ret = esp_wifi_set_ps(ps);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "set_ps failed: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "WiFi power save: %s", cam_cfg->wifi_power_save ? "MIN_MODEM" : "NONE");
     }
 
     ESP_LOGI(TAG, "STA starting, connecting to %s", ssid);
