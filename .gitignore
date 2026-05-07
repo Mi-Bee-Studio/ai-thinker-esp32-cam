@@ -78,3 +78,9 @@ build3/
 
 # Copilot instructions (local only)
 .github/copilot-instructions.md
+
+# WiFi config with real credentials
+config.txt
+
+# Agent knowledge base (local only)
+AGENTS.md
