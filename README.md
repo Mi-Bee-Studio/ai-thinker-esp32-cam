@@ -10,7 +10,7 @@ Open-source ESP32-CAM firmware with web UI, MJPEG streaming, motion detection, a
 - **MJPEG Streaming** — Real-time video at up to 15 FPS via `/stream` endpoint
 - **Motion Detection** — Frame-difference algorithm with configurable threshold and cooldown
 - **SD Card Storage** — Automatic JPEG photo saving to TF card (photo storage only)
-- **NAS Upload** — Automatic upload on motion trigger (FTP/WebDAV/HTTP POST)
+- **NAS Upload** — Automatic upload on motion trigger (WebDAV/HTTP POST)
 - **REST API** — Full API for status, configuration, file management, and capture
 - **Health Monitoring** — Prometheus-compatible `/metrics` endpoint
 - **Status LED** — GPIO33 LED indicates system state
@@ -119,8 +119,7 @@ AI_Thinker-ESP32-cam/
 │   ├── storage_manager.c/h # SD card storage manager
 │   ├── motion_detect.c/h   # Motion detection
 │   ├── nas_uploader.c/h   # NAS upload scheduler
-│   ├── ftp_client.c/h     # FTP protocol client
-│   ├── webdav_client.c/h  # WebDAV protocol client
+│   │   ├── webdav_client.c/h  # WebDAV protocol client
 │   ├── status_led.c/h     # Status LED driver
 │   ├── time_sync.c/h      # Time synchronization
 │   ├── health_monitor.c/h # System health monitoring
@@ -161,7 +160,7 @@ All settings are stored in NVS and accessible via web UI or REST API:
 - Device name
 - Camera resolution and quality
 - Motion detection threshold and cooldown
-- NAS server settings (FTP/WebDAV/HTTP)
+- NAS server settings (WebDAV/HTTP)
 - Timezone
 - Web password (optional)
 
