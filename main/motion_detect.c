@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "motion_detect.h"
@@ -26,6 +27,7 @@
 #include "config_manager.h"
 #include "storage_manager.h"
 #include "time_sync.h"
+#include "health_monitor.h"
 
 static const char *TAG = "motion_detect";
 
@@ -39,13 +41,53 @@ static const char *TAG = "motion_detect";
 #define CAPTURE_INTERVAL_MS    500   /* ~2 FPS detection loop */
 #define STOP_WAIT_MS           2000  /* Max wait for task exit on stop */
 
+/* Auto flash constants */
+#define FLASH_GPIO             4     /* AI-Thinker CAM flash LED */
+#define DARK_JPEG_SIZE_THRESH  8000  /* JPEG smaller than this = dark scene (SVGA at quality 12) */
+#define FLASH_WARMUP_MS        200   /* Wait for camera to adapt after flash on */
+
 /* ---- Static state ---- */
 static TaskHandle_t s_motion_task_handle = NULL;
 static volatile bool s_running = false;
 static bool s_in_cooldown = false;
 static int64_t s_cooldown_start_us = 0;
+static bool s_flash_initialized = false;
 
 /* ---- Internal helpers ---- */
+
+/**
+ * @brief Initialize flash LED GPIO
+ */
+static void flash_led_init(void)
+{
+    if (s_flash_initialized) return;
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << FLASH_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&io_conf);
+    gpio_set_level(FLASH_GPIO, 0);
+    s_flash_initialized = true;
+    ESP_LOGI(TAG, "Flash LED initialized on GPIO%d", FLASH_GPIO);
+}
+
+/**
+ * @brief Check if scene is dark based on JPEG size
+ * @param jpeg_len  JPEG frame buffer length
+ * @return true if scene appears dark
+ *
+ * Rationale: Dark scenes compress much smaller than bright ones.
+ * A typical SVGA JPEG at quality 12 in good light is 20-60KB;
+ * in darkness it's often < 5KB. This is a reliable heuristic
+ * that doesn't require JPEG decoding.
+ */
+static bool is_scene_dark(size_t jpeg_len)
+{
+    return jpeg_len < DARK_JPEG_SIZE_THRESH;
+}
 
 /**
  * @brief Check if cooldown period has expired
@@ -76,21 +118,37 @@ static bool is_in_cooldown(void)
  *
  * Captures a fresh frame, generates a timestamped filename, and saves
  * via storage_save_photo(). Only saves if SD card is available.
+ * If flash was used for detection, recaptures with flash for a clean photo.
  */
-static void handle_motion_event(void)
+static void handle_motion_event(bool dark_scene)
 {
-    ESP_LOGI(TAG, "Motion detected!");
+    ESP_LOGI(TAG, "Motion detected!%s (scene %s)", dark_scene ? " (auto-flash)" : "", dark_scene ? "DARK" : "bright");
+    health_monitor_incr_motion_events();
 
     if (!storage_is_available()) {
         ESP_LOGW(TAG, "SD card not available, skipping photo save");
         return;
     }
 
-    /* Capture a fresh frame for saving */
+    /* If scene is dark, capture with flash ON for a usable photo */
     camera_fb_t *fb = NULL;
-    if (camera_capture(&fb) != ESP_OK || fb == NULL) {
-        ESP_LOGW(TAG, "Failed to capture frame for photo save");
-        return;
+    if (dark_scene) {
+        ESP_LOGI(TAG, "Dark scene detected, enabling flash for photo");
+        gpio_set_level(FLASH_GPIO, 1);
+        vTaskDelay(pdMS_TO_TICKS(FLASH_WARMUP_MS));
+        if (camera_capture(&fb) != ESP_OK || fb == NULL) {
+            ESP_LOGW(TAG, "Failed to capture with flash");
+        }
+        gpio_set_level(FLASH_GPIO, 0);
+        ESP_LOGI(TAG, "Flash OFF");
+    }
+
+    /* If no flash or flash recapture failed, capture normally */
+    if (fb == NULL) {
+        if (camera_capture(&fb) != ESP_OK || fb == NULL) {
+            ESP_LOGW(TAG, "Failed to capture frame for photo save");
+            return;
+        }
     }
 
     /* Generate timestamped filename (FAT-safe: no colons) */
@@ -135,6 +193,8 @@ static void motion_detection_task(void *arg)
             continue;
         }
 
+        flash_led_init();
+
         const cam_config_t *cfg = config_get();
 
         /*
@@ -152,7 +212,7 @@ static void motion_detection_task(void *arg)
             continue;
         }
 
-        /* Sample bytes from fb_a for later comparison */
+        /* Sample bytes from fb_a for later comparison AND compute brightness */
         size_t a_len = fb_a->len;
         size_t sample_count = (a_len + SAMPLE_STEP - 1) / SAMPLE_STEP;
         uint8_t *samples_a = (uint8_t *)malloc(sample_count);
@@ -168,6 +228,9 @@ static void motion_detection_task(void *arg)
             samples_a[j] = fb_a->buf[i];
         }
 
+        /* Check scene brightness for auto flash in handle_motion_event */
+        bool dark_scene = is_scene_dark(fb_a->len);
+
         /* Return fb_a immediately — free the frame buffer */
         camera_return_fb(fb_a);
         fb_a = NULL;
@@ -175,7 +238,7 @@ static void motion_detection_task(void *arg)
         /* Wait between captures for detectable scene change */
         vTaskDelay(pdMS_TO_TICKS(CAPTURE_INTERVAL_MS));
 
-        /* Capture comparison frame */
+        /* Capture comparison frame (possibly with flash illumination) */
         camera_fb_t *fb_b = NULL;
         if (camera_capture(&fb_b) != ESP_OK || fb_b == NULL) {
             ESP_LOGW(TAG, "Failed to capture comparison frame");
@@ -212,7 +275,7 @@ static void motion_detection_task(void *arg)
 
         /* Trigger action on motion (if not in cooldown) */
         if (motion && !is_in_cooldown()) {
-            handle_motion_event();
+            handle_motion_event(dark_scene);
         }
 
         /* Brief yield to prevent watchdog trigger */
