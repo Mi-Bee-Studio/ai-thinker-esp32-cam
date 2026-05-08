@@ -97,11 +97,12 @@ The firmware consists of 14 interconnected modules, each with specific responsib
 - **Cleanup**: Circular when free space < 20%
 
 ### 8. Motion Detection (`motion_detect.c/h`)
-**Responsibility**: Motion detection and response
-- **Algorithm**: Frame-difference based
+**Responsibility**: Motion detection, brightness sensing, and auto-flash
+- **Algorithm**: JPEG frame-difference with configurable threshold
+- **Brightness**: Grayscale pixel probing (primary) + JPEG size fallback
+- **Auto Flash**: LEDC PWM on GPIO4 (~80% duty, safe for AI-Thinker hardware)
 - **Trigger**: Save photo + upload to NAS
-- **Performance**: Grayscale region comparison
-- **Configurable**: Threshold and cooldown period
+- **Configurable**: Threshold, cooldown, flash_threshold (brightness %)
 
 ### 9. NAS Uploader (`nas_uploader.c/h`)
 **Responsibility**: Background file upload

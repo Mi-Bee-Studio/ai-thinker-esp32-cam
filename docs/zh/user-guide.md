@@ -144,6 +144,97 @@
 - **手动清理**：使用 Web 界面删除特定照片
 - **监控**：在仪表板上显示存储状态
 
+## 亮度检测与智能闪光
+
+固件使用**灰度像素探测**来检测场景亮度——这是 OV2640 传感器在 AI-Thinker 开发板上最可靠的方法。
+
+### 工作原理
+
+1. **灰度探测（主要方法）**：每 30 秒，摄像头临时切换到 GRAYSCALE+QQVGA（160×120）模式并捕获一帧。所有像素亮度值取平均，生成准确的亮度读数（0-100%）。模式切换后丢弃 2 帧预热帧以确保曝光稳定。然后摄像头恢复 JPEG 模式。整个探测过程约 1.5 秒。
+
+2. **JPEG 回退**：当灰度探测不可用时（例如 MJPEG 流客户端已连接，摄像头模式切换会中断流），系统回退到 JPEG 帧大小启发式——较小的 JPEG 文件表示较暗的场景。精度较低但始终可用。
+
+3. **自动闪光**：当在暗场景中检测到运动事件（`brightness_pct < flash_threshold`）时，闪光灯 LED（GPIO4）会以 ~80% PWM 占空比自动开启（AI-Thinker 板没有限流电阻，~80% 是安全上限），拍照后立即关闭。
+
+4. **暗场景运动灵敏度**：在暗场景中，JPEG 帧的字节差异非常小，运动更难被检测到。固件会在检测到暗场景时自动将有效运动阈值降低为配置值的 1/4（最低 5%）。
+
+### 为什么不用传感器寄存器？
+
+OV2640 的 AEC（自动曝光控制）寄存器曾被测试作为亮度来源，但在连续 JPEG 捕获模式下不可靠——`aec_value` 稳定在最大值（671）且不随实际光照条件变化。灰度像素采样是该传感器唯一可靠的方法。
+
+### 算法与公式
+
+**灰度探测（主要方法）：**
+
+```
+avg = sum(所有像素字节) / 总像素数        // 0-255 灰度平均值
+pct = avg × 100 / 255                       // 归一化到 0-100%
+is_dark = (pct < flash_threshold)
+```
+
+实测值（AI-Thinker 板，SVGA，quality=10）：
+- 暗室（无灯光）：avg=32, pct=12%
+- 对着天花板灯光：avg=136, pct=53%
+
+**JPEG 帧大小回退：**
+
+```
+jpeg_kb = 帧大小 / 1024
+if jpeg_kb >= 22:   pct = 100%      // 明亮
+elif jpeg_kb <= 12: pct = 0%        // 非常暗
+else:               pct = (jpeg_kb - 12) × 100 / 10   // 12-22 KB 线性映射
+is_dark = (pct < flash_threshold)
+```
+
+实测 JPEG 大小（SVGA，quality=10）：
+- 暗室：~12-14 KB
+- 室内昏暗：~14-17 KB
+- 对着灯光：~17-25 KB
+
+**闪光灯 LED PWM 控制：**
+
+```
+// GPIO4，LEDC Timer 1 / Channel 1（Timer 0 被摄像头 XCLK 占用）
+// PWM：2 kHz，8 位分辨率（0-255 占空比）
+// 占空比 = 205（~80%）— AI-Thinker 安全上限（无限流电阻）
+
+开灯：ledc_set_duty(205) → 等待 200ms 预热 → 拍照 → ledc_set_duty(0)
+关灯：ledc_set_duty(0)
+```
+
+闪光灯仅在 `handle_motion_event()` 中用于最终拍照。运动检测期间**不会**在参考帧/比较帧之间开灯——这样做会产生虚假的 80%+ 帧差异。
+
+**暗场景运动阈值降低：**
+
+```
+if 暗场景:
+    effective_thresh = max(motion_threshold / 4, 5)   // 配置值的 1/4，最低 5%
+else:
+    effective_thresh = motion_threshold               // 使用配置值
+```
+
+### 配置参数
+
+| 设置 | 描述 | 默认值 | 范围 |
+|------|------|--------|------|
+| **flash_threshold** | 触发闪光的亮度百分比阈值 | 40 | 0-100 |
+
+阈值参考：
+- **0** = 永不触发闪光（闪光禁用）
+- **20-30** = 仅在非常暗的场景触发闪光
+- **34-40**（推荐）= 在中等偏暗的室内环境触发闪光
+- **60-80** = 在较暗的光线下触发闪光（走廊、黄昏等）
+- **100** = 每次运动事件都触发闪光
+
+### 亮度监控
+
+亮度数据可通过以下渠道查看：
+
+- **仪表板**（`/index.html`）：每 10 秒自动刷新，显示 `scene_dark` 状态
+- **状态 API**（`GET /api/status`）：返回 `brightness_pct`（亮度百分比）、`brightness_method`（"grayscale" 或 "jpeg-fallback"）、`scene_dark`（是否暗场景）
+- **Prometheus 指标**（`GET /metrics`）：`esp32_brightness_value`、`esp32_brightness_method{method="grayscale|jpeg-fallback"}`、`esp32_scene_dark`
+- **串口日志**：`Grayscale probe: avg=32, pct=12%, dark=YES (probe took 1490 ms)`
+
 ## 运动检测
 
 ### 工作原理
