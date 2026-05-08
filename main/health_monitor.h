@@ -25,6 +25,9 @@ typedef struct {
     uint32_t stream_clients;      // Active MJPEG stream clients
     uint32_t motion_events;       // Total motion events detected
     uint32_t nas_pending;         // NAS upload queue pending
+    uint8_t  brightness_pct;      // 0-100 brightness percentage
+    uint8_t  brightness_method;   // 0=uninitialized, 1=register, 2=grayscale
+    bool     scene_dark;          // Current scene is dark
 } health_metrics_t;
 
 /**

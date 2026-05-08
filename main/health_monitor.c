@@ -1,3 +1,5 @@
+#include "motion_detect.h"
+
 #include "health_monitor.h"
 #include "wifi_manager.h"
 #include "storage_manager.h"
@@ -16,7 +18,7 @@
 static const char *TAG = "health_monitor";
 
 #define HEALTH_UPDATE_INTERVAL_US (10 * 1000000) // 10 seconds
-#define PROMETHEUS_BUF_SIZE 512
+#define PROMETHEUS_BUF_SIZE 1536
 
 static health_metrics_t s_metrics;
 static esp_timer_handle_t s_timer;
@@ -66,6 +68,11 @@ static void health_collect_metrics(void)
     // Motion events and NAS pending — updated by their respective modules
     // (motion_events incremented via health_monitor_incr_motion_events)
     // NAS pending left as 0 until uploader module implements counter
+    
+    // Brightness metrics (populated by motion_detect module)
+    s_metrics.brightness_pct = motion_detect_get_brightness_pct();
+    s_metrics.brightness_method = motion_detect_get_brightness_method();
+    s_metrics.scene_dark = motion_detect_is_scene_dark();
 }
 
 static void health_timer_callback(void *arg)
@@ -164,7 +171,21 @@ const char *health_monitor_get_prometheus_str(void)
 
     PROM_LINE("# HELP esp32_stream_clients Active MJPEG stream clients");
     PROM_LINE("# TYPE esp32_stream_clients gauge");
-    PROM_LINE("esp32_stream_clients %" PRIu32, s_metrics.stream_clients);
+    PROM_LINE("esp32_stream_clients %" PRIu32 "", s_metrics.stream_clients);
+
+    PROM_LINE("# HELP esp32_brightness_value Scene brightness percentage (0-100)");
+    PROM_LINE("# TYPE esp32_brightness_value gauge");
+    PROM_LINE("esp32_brightness_value %u", s_metrics.brightness_pct);
+
+    PROM_LINE("# HELP esp32_brightness_method Brightness detection method (0=init, 1=register, 2=grayscale)");
+    PROM_LINE("# TYPE esp32_brightness_method gauge");
+    PROM_LINE("esp32_brightness_method{method=\"%s\"} %u",
+            s_metrics.brightness_method == 1 ? "register" : (s_metrics.brightness_method == 2 ? "grayscale" : "init"),
+            s_metrics.brightness_method);
+
+    PROM_LINE("# HELP esp32_scene_dark Whether scene is detected as dark (1=yes, 0=no)");
+    PROM_LINE("# TYPE esp32_scene_dark gauge");
+    PROM_LINE("esp32_scene_dark %u", s_metrics.scene_dark ? 1 : 0);
 
 #undef PROM_LINE
 

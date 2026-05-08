@@ -193,6 +193,12 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     /* Stream clients */
     cJSON_AddNumberToObject(data, "stream_clients", (double)mjpeg_streamer_get_client_count());
 
+    /* Brightness */
+    cJSON_AddNumberToObject(data, "brightness_pct", (double)m->brightness_pct);
+    cJSON_AddStringToObject(data, "brightness_method",
+        m->brightness_method == 1 ? "register" : (m->brightness_method == 2 ? "grayscale" : "init"));
+    cJSON_AddBoolToObject(data, "scene_dark", m->scene_dark);
+
     return send_json_ok(req, data);
 }
 
@@ -220,7 +226,7 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "vflip", (double)cfg->vflip);
     cJSON_AddNumberToObject(data, "wifi_tx_power", (double)cfg->wifi_tx_power);
     cJSON_AddNumberToObject(data, "wifi_power_save", (double)cfg->wifi_power_save);
-
+    cJSON_AddNumberToObject(data, "flash_threshold", (double)cfg->flash_threshold);
     return send_json_ok(req, data);
 }
 
@@ -384,7 +390,11 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
         config_set_wifi_power(tx, ps);
     }
 
-    /* NAS settings (has dedicated setter — merge with current values) */
+    /* Flash threshold setting */
+    item = cJSON_GetObjectItem(json, "flash_threshold");
+    if (item && cJSON_IsNumber(item)) {
+        config_set_flash_threshold((uint8_t)item->valueint);
+    }
     {
         const cam_config_t *cur = config_get();
         nas_protocol_t protocol = cur->nas_protocol;

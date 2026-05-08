@@ -43,4 +43,22 @@ esp_err_t motion_detect_stop(void);
  */
 bool motion_detect_is_running(void);
 
+/**
+ * @brief Get current brightness percentage (0-100)
+ * @return brightness percentage, 0 if not yet measured
+ */
+uint8_t motion_detect_get_brightness_pct(void);
+
+/**
+ * @brief Get current brightness detection method
+ * @return 0=uninitialized, 1=register-based, 2=grayscale fallback
+ */
+uint8_t motion_detect_get_brightness_method(void);
+
+/**
+ * @brief Check if scene is currently dark
+ * @return true if scene brightness below flash_threshold
+ */
+bool motion_detect_is_scene_dark(void);
+
 #endif // MOTION_DETECT_H

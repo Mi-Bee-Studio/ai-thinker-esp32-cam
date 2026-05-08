@@ -28,6 +28,7 @@
 #include "storage_manager.h"
 #include "time_sync.h"
 #include "health_monitor.h"
+#include "mjpeg_streamer.h"
 
 static const char *TAG = "motion_detect";
 
@@ -59,13 +60,16 @@ static bool s_in_cooldown = false;
 static int64_t s_cooldown_start_us = 0;
 static bool s_flash_initialized = false;
 
-/* Adaptive brightness baseline (EMA)
- * Tracks average bright-scene frame size using signed arithmetic.
- * Dark = current frame < baseline * DARK_RATIO_THRESH.
- * Baseline only updates on bright frames to avoid dark-scene drift. */
-#define DARK_RATIO_THRESH        0.70  /* Frame < 70% of baseline = dark */
-#define BASELINE_EMA_ALPHA       8     /* EMA smoothing factor */
-static int32_t s_brightness_baseline = 0;  /* 0 = not calibrated yet */
+/* Brightness detection state (register-based, reads OV2640 AEC/AGC) */
+typedef struct {
+    uint8_t method;         /* 0=uninitialized, 1=register, 2=grayscale fallback */
+    uint8_t brightness_pct; /* 0-100 */
+    bool is_dark;
+    int fail_count;         /* consecutive register failures or stale reads */
+} brightness_state_t;
+static brightness_state_t s_brightness = {0};
+static int64_t s_last_grayscale_probe_us = 0;
+#define GRAYSCALE_PROBE_INTERVAL_US (30LL * 1000000LL)  /* 30 seconds */
 
 /* ---- Internal helpers ---- */
 
@@ -116,31 +120,70 @@ static void flash_led_init(void)
 }
 
 /**
- * @brief Check if scene is dark based on JPEG frame size vs EMA baseline
- * @param jpeg_len Current frame JPEG size in bytes
- * @return true if frame is significantly smaller than running baseline
+ * @brief Probe brightness by switching camera to grayscale mode
  *
- * Uses int32_t signed arithmetic for EMA to avoid unsigned underflow.
- * Baseline only updates on bright frames to avoid dark-scene drift.
+ * Temporarily reinitializes camera in GRAYSCALE+QQVGA mode to capture
+ * raw pixel data, computes average brightness, then restores JPEG mode.
+ * Skipped if MJPEG streaming clients are connected.
+ * Called every 60 seconds when method=2 (grayscale fallback).
  */
-static bool is_scene_dark(size_t jpeg_len)
+static void brightness_probe_grayscale(void)
 {
-    if (s_brightness_baseline <= 0) {
-        s_brightness_baseline = (int32_t)jpeg_len;
-        ESP_LOGI(TAG, "Brightness baseline initialized: %d bytes", s_brightness_baseline);
-        return false;
+    /* Skip if MJPEG clients are watching — reinit would disrupt stream */
+    if (mjpeg_streamer_get_client_count() > 0) {
+            ESP_LOGI(TAG, "Grayscale probe skipped: MJPEG clients connected");
+        return;
     }
 
-    int32_t thresh = (int32_t)(s_brightness_baseline * DARK_RATIO_THRESH);
-    bool dark = (int32_t)jpeg_len < thresh;
+    int64_t start_us = esp_timer_get_time();
 
-    if (!dark) {
-        /* Signed EMA: baseline += (frame - baseline) / alpha
-         * Using int32_t ensures no unsigned underflow. */
-        s_brightness_baseline += ((int32_t)jpeg_len - s_brightness_baseline) / BASELINE_EMA_ALPHA;
+    /* Switch to grayscale mode */
+    esp_err_t ret = camera_init_grayscale();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Grayscale probe: init failed, keeping method=2");
+        return;
     }
 
-    return dark;
+    /* Discard 2 warmup frames after mode switch */
+    for (int i = 0; i < 2; i++) {
+        camera_fb_t *fb = esp_camera_fb_get();
+        if (fb) esp_camera_fb_return(fb);
+    }
+
+    /* Capture one frame for brightness measurement */
+    camera_fb_t *fb = NULL;
+    if (camera_capture(&fb) != ESP_OK || fb == NULL) {
+        ESP_LOGE(TAG, "Grayscale probe: capture failed");
+        camera_restore_jpeg();
+        return;
+    }
+
+    /* Average all pixel bytes (grayscale = one byte per pixel) */
+    uint32_t sum = 0;
+    for (size_t i = 0; i < fb->len; i++) {
+        sum += fb->buf[i];
+    }
+    size_t fb_len = fb->len;
+    camera_return_fb(fb);
+
+    uint8_t avg = (uint8_t)(sum / fb_len);
+    uint8_t pct = (uint8_t)((uint32_t)avg * 100 / 255);
+    const cam_config_t *cfg = config_get();
+    bool is_dark = (pct < cfg->flash_threshold);
+
+    /* Restore JPEG mode */
+    camera_restore_jpeg();
+
+    /* Update brightness state */
+    s_brightness.method = 2;
+    s_brightness.brightness_pct = pct;
+    s_brightness.is_dark = is_dark;
+
+    int64_t elapsed_ms = (esp_timer_get_time() - start_us) / 1000;
+    ESP_LOGI(TAG, "Grayscale probe: avg=%u, pct=%u%%, dark=%s (probe took %lld ms)",
+             avg, pct, is_dark ? "YES" : "no", (long long)elapsed_ms);
+
+    s_last_grayscale_probe_us = esp_timer_get_time();
 }
 
 /**
@@ -284,14 +327,67 @@ static void motion_detection_task(void *arg)
             samples_a[j] = fb_a->buf[i];
         }
 
-        /* Check scene brightness via JPEG size ratio to baseline */
-        bool dark_scene = is_scene_dark(fb_a->len);
+        /*
+         * Brightness detection — grayscale probe (primary) + JPEG fallback.
+         *
+         * The OV2640 AEC registers (init_status) do not reliably reflect
+         * real-time lighting in continuous JPEG capture mode — values stabilize
+         * at max (671) regardless of actual brightness.
+         *
+         * Primary method: Grayscale probe every 30 seconds.
+         *   Temporarily switches camera to GRAYSCALE+QQVGA, samples actual
+         *   pixel luminance. Accurate but disrupts MJPEG stream — skipped
+         *   when MJPEG clients are connected.
+         *
+         * Fallback: JPEG frame size heuristic.
+         *   Dark scenes produce smaller JPEGs due to compression of uniform
+         *   dark pixels. Less accurate but always available.
+         */
         {
-            ESP_LOGI(TAG, "[DBG] ref_frame len=%zu, dark=%s, baseline=%d, thresh=%d",
-                     fb_a->len, dark_scene ? "YES" : "no",
-                     s_brightness_baseline,
-                     s_brightness_baseline > 0 ? (int32_t)(s_brightness_baseline * DARK_RATIO_THRESH) : 0);
+            int64_t now = esp_timer_get_time();
+            int mjpeg_clients = mjpeg_streamer_get_client_count();
+            bool do_probe = (now - s_last_grayscale_probe_us >= GRAYSCALE_PROBE_INTERVAL_US)
+                         && (mjpeg_clients == 0);
+            if (!do_probe && (now - s_last_grayscale_probe_us >= GRAYSCALE_PROBE_INTERVAL_US)) {
+                ESP_LOGI(TAG, "Probe due but %d MJPEG client(s), using JPEG fallback", mjpeg_clients);
+            }
+
+            if (do_probe) {
+                /* Run grayscale probe — this takes ~1 second */
+                brightness_probe_grayscale();
+                /* brightness_probe_grayscale() updates s_brightness directly */
+            }
+
+            if (s_brightness.method != 2) {
+                /* No recent grayscale data — use JPEG size fallback */
+                const cam_config_t *cfg = config_get();
+                uint32_t jpeg_kb = (uint32_t)a_len / 1024;
+                uint8_t pct;
+
+                /* JPEG size heuristic:
+                 * Real SVGA JPEG sizes with quality=10:
+                 *   Dark (no light): ~12-14 KB
+                 *   Dim (indoor ambient): ~14-17 KB
+                 *   Bright (facing light): ~17-25 KB
+                 * Map: 12KB=0%, 22KB=100% */
+                if (jpeg_kb >= 22) {
+                    pct = 100;
+                } else if (jpeg_kb <= 12) {
+                    pct = 0;
+                } else {
+                    pct = (uint8_t)((jpeg_kb - 12) * 100 / 10);
+                }
+
+                s_brightness.method = 1;
+                s_brightness.brightness_pct = pct;
+                s_brightness.is_dark = (pct < cfg->flash_threshold);
+                ESP_LOGI(TAG, "Brightness: jpeg=%uKB, pct=%u%%, dark=%s, method=jpeg-fallback",
+                         (unsigned)jpeg_kb, pct,
+                         s_brightness.is_dark ? "YES" : "no");
+            }
         }
+
+        bool dark_scene = s_brightness.is_dark;
 
         /* Return fb_a immediately — free the frame buffer */
         camera_return_fb(fb_a);
@@ -323,13 +419,20 @@ static void motion_detection_task(void *arg)
             }
         }
 
+        /*
+         * Motion threshold: in dark scenes, JPEG frames have low byte variance
+         * so we lower the effective threshold to remain sensitive.
+         */
+        uint8_t effective_thresh = dark_scene
+            ? (cfg->motion_threshold > 20 ? cfg->motion_threshold / 4 : 5)
+            : cfg->motion_threshold;
         bool motion = false;
         if (total > 0) {
             uint8_t percent = (uint8_t)((changed * 100) / total);
-            motion = (percent >= cfg->motion_threshold);
-            ESP_LOGI(TAG, "[DBG] diff: %u/%u = %u%% (thresh=%u%%, delta=%d, motion=%s, cooldown=%s)",
+            motion = (percent >= effective_thresh);
+            ESP_LOGI(TAG, "[DBG] diff: %u/%u = %u%% (thresh=%u%%%s, delta=%d, motion=%s, cooldown=%s)",
                      (unsigned)changed, (unsigned)total, percent,
-                     cfg->motion_threshold, delta_thresh, motion ? "YES" : "no",
+                     effective_thresh, dark_scene ? "-dark" : "", delta_thresh, motion ? "YES" : "no",
                      is_in_cooldown() ? "YES" : "no");
         }
 
@@ -359,7 +462,7 @@ esp_err_t motion_detect_init(void)
     s_in_cooldown = false;
     s_cooldown_start_us = 0;
     s_motion_task_handle = NULL;
-    s_brightness_baseline = 0;
+    s_brightness = (brightness_state_t){0};
     ESP_LOGI(TAG, "Motion detection module initialized");
     return ESP_OK;
 }
@@ -374,7 +477,7 @@ esp_err_t motion_detect_start(void)
     s_running = true;
     s_in_cooldown = false;
     s_cooldown_start_us = 0;
-    s_brightness_baseline = 0;
+    s_brightness = (brightness_state_t){0};
 
     BaseType_t ret = xTaskCreate(
         motion_detection_task,
@@ -426,4 +529,21 @@ esp_err_t motion_detect_stop(void)
 bool motion_detect_is_running(void)
 {
     return s_running;
+}
+
+/* ---- Brightness public API ---- */
+
+uint8_t motion_detect_get_brightness_pct(void)
+{
+    return s_brightness.brightness_pct;
+}
+
+uint8_t motion_detect_get_brightness_method(void)
+{
+    return s_brightness.method;
+}
+
+bool motion_detect_is_scene_dark(void)
+{
+    return s_brightness.is_dark;
 }

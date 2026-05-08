@@ -105,6 +105,8 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 <div class="range-r"><input type="range" id="motion_threshold" min="1" max="100" value="30"><span class="range-v" id="mtVal">30</span></div></div>
 <div class="fld"><label>冷却时间 (秒)</label>
 <div class="range-r"><input type="range" id="motion_cooldown" min="1" max="60" value="5"><span class="range-v" id="mcVal">5</span></div></div>
+<div class="fld"><label>闪光阈值 (暗场景触发闪光，0=永不 100=总是)</label>
+<div class="range-r"><input type="range" id="flash_threshold" min="0" max="100" value="40"><span class="range-v" id="ftVal">40</span></div></div>
 </div>
 
 <div class="card">
@@ -143,6 +145,7 @@ $('jpeg_quality').oninput=function(){$('qVal').textContent=this.value};
 $('motion_threshold').oninput=function(){$('mtVal').textContent=this.value};
 $('motion_cooldown').oninput=function(){$('mcVal').textContent=this.value};
 $('wifi_tx_power').oninput=function(){$('txVal').textContent=(this.value*0.25).toFixed(1)+'dBm'};
+$('flash_threshold').oninput=function(){$('ftVal').textContent=this.value};
 
 
 function loadConfig(){
@@ -166,6 +169,7 @@ $('nas_pass').value=v.nas_pass||'';
 $('nas_path').value=v.nas_path||'/photos';
 $('wifi_tx_power').value=v.wifi_tx_power||80;$('txVal').textContent=(($('wifi_tx_power').value*0.25).toFixed(1))+'dBm';
 $('wifi_power_save').checked=!!(v.wifi_power_save);
+$('flash_threshold').value=v.flash_threshold!=null?v.flash_threshold:40;$('ftVal').textContent=$('flash_threshold').value;
 }).catch(function(e){console.error('Load config failed:',e)});
 }
 
@@ -190,6 +194,7 @@ nas_path:$('nas_path').value,
 vflip:$('vflip').checked?1:0,
 wifi_tx_power:parseInt($('wifi_tx_power').value)||80,
 wifi_power_save:$('wifi_power_save').checked?1:0
+,flash_threshold:parseInt($('flash_threshold').value)||40
 };
 if(pw)cfg.web_password=pw;
 authFetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}).then(function(r){return r.json()}).then(function(d){

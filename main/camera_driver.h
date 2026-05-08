@@ -99,4 +99,21 @@ esp_err_t camera_apply_vflip(uint8_t vflip);
  */
 esp_err_t camera_apply_settings(camera_resolution_t resolution, uint8_t fps, uint8_t jpeg_quality);
 
+/**
+ * Initialize camera in grayscale mode for brightness probing.
+ * Deinitializes current camera, reinitializes with GRAYSCALE+QQVGA.
+ * Must be followed by camera_restore_jpeg() to resume normal operation.
+ *
+ * @return ESP_OK on success
+ */
+esp_err_t camera_init_grayscale(void);
+
+/**
+ * Restore camera to normal JPEG mode after grayscale probing.
+ * Reads current user config to restore resolution/quality settings.
+ *
+ * @return ESP_OK on success
+ */
+esp_err_t camera_restore_jpeg(void);
+
 #endif /* CAMERA_DRIVER_H */

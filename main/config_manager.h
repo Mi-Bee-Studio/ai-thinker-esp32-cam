@@ -95,6 +95,11 @@ esp_err_t config_set_wifi_power(uint8_t tx_power, uint8_t power_save);
 esp_err_t config_set_motion_saved_threshold(uint8_t threshold);
 
 /**
+ * @brief Set flash threshold, save immediately
+ */
+esp_err_t config_set_flash_threshold(uint8_t threshold);
+
+/**
  * @brief Load WiFi config from /sdcard/config.txt (YAML format)
  * Parses ssid and password, updates NVS if changed, renames file to .bak
  * @return ESP_OK if config was updated, ESP_ERR_NOT_FOUND if no file/unchanged

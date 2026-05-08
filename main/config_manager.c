@@ -30,6 +30,7 @@ static void apply_defaults(cam_config_t *cfg)
     strncpy(cfg->nas_path, "/upload", sizeof(cfg->nas_path) - 1);
     cfg->wifi_tx_power = 80;   /* 20dBm max */
     cfg->wifi_power_save = 0;  /* disabled for streaming */
+    cfg->flash_threshold = 40;  /* default brightness threshold */
     cfg->magic = CONFIG_MAGIC;
     cfg->version = CONFIG_VERSION;
 }
@@ -85,8 +86,9 @@ esp_err_t config_init(void)
                             /* V2: missing wifi_tx_power + wifi_power_save */
                             s_config.wifi_tx_power = 80;
                             s_config.wifi_power_save = 0;
+                            /* V3→V4: missing flash_threshold */
+                            s_config.flash_threshold = 40;
                         }
-                        s_config.magic = CONFIG_MAGIC;
                         s_config.version = CONFIG_VERSION;
                         ESP_LOGI(TAG, "Config migrated V%d->V%d (blob %u->%u), saving",
                                  s_config.version, CONFIG_VERSION, (unsigned)cur_len, (unsigned)sizeof(cam_config_t));
@@ -295,6 +297,14 @@ esp_err_t config_set_jpeg_quality(uint8_t quality)
     if (quality > 63) quality = 63;
     s_config.jpeg_quality = quality;
     ESP_LOGI(TAG, "JPEG quality set to %u", quality);
+    return config_save();
+}
+
+
+esp_err_t config_set_flash_threshold(uint8_t threshold)
+{
+    s_config.flash_threshold = threshold;
+    ESP_LOGI(TAG, "Flash threshold set to %u", threshold);
     return config_save();
 }
 
