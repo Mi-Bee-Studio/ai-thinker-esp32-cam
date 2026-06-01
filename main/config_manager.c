@@ -25,9 +25,6 @@ static void apply_defaults(cam_config_t *cfg)
     cfg->motion_cooldown = 10;
     cfg->vflip = 0;
     cfg->motion_saved_threshold = 30;
-    cfg->nas_protocol = NAS_PROTOCOL_HTTP;
-    cfg->nas_port = 8080;
-    strncpy(cfg->nas_path, "/upload", sizeof(cfg->nas_path) - 1);
     cfg->wifi_tx_power = 80;   /* 20dBm max */
     cfg->wifi_power_save = 0;  /* disabled for streaming */
     cfg->flash_threshold = 40;  /* default brightness threshold */
@@ -211,36 +208,6 @@ esp_err_t config_set_web_password(const char *pass)
     strncpy(s_config.web_password, pass, sizeof(s_config.web_password) - 1);
     s_config.web_password[sizeof(s_config.web_password) - 1] = '\0';
     ESP_LOGI(TAG, "Web password set (pass=***)");
-    return config_save();
-}
-
-esp_err_t config_set_nas(nas_protocol_t protocol, const char *host,
-                         uint16_t port, const char *user,
-                         const char *pass, const char *path)
-{
-    if (!host || !path) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    s_config.nas_protocol = protocol;
-    strncpy(s_config.nas_host, host, sizeof(s_config.nas_host) - 1);
-    s_config.nas_host[sizeof(s_config.nas_host) - 1] = '\0';
-    s_config.nas_port = port;
-    if (user) {
-        strncpy(s_config.nas_user, user, sizeof(s_config.nas_user) - 1);
-        s_config.nas_user[sizeof(s_config.nas_user) - 1] = '\0';
-    } else {
-        s_config.nas_user[0] = '\0';
-    }
-    if (pass) {
-        strncpy(s_config.nas_pass, pass, sizeof(s_config.nas_pass) - 1);
-        s_config.nas_pass[sizeof(s_config.nas_pass) - 1] = '\0';
-    } else {
-        s_config.nas_pass[0] = '\0';
-    }
-    strncpy(s_config.nas_path, path, sizeof(s_config.nas_path) - 1);
-    s_config.nas_path[sizeof(s_config.nas_path) - 1] = '\0'; 
-    ESP_LOGI(TAG, "NAS set (host=%s, port=%u, path=%s, user=%s, pass=***)",
-             host, port, path, s_config.nas_user);
     return config_save();
 }
 

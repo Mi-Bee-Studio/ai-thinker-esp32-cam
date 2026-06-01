@@ -6,7 +6,7 @@
 #include "esp_err.h"
 
 // Config version and magic
-#define CONFIG_VERSION  5
+#define CONFIG_VERSION  6
 #define CONFIG_MAGIC    0xA5B6C7D8
 
 // Default values
@@ -40,12 +40,6 @@ typedef enum {
     LED_ERROR,
     LED_AP_MODE,
 } led_status_t;
-
-// NAS upload protocol
-typedef enum {
-    NAS_PROTOCOL_HTTP = 0,
-    NAS_PROTOCOL_WEBDAV = 1,
-} nas_protocol_t;
 
 // AI_Thinker ESP32-CAM pin mapping (ESP32, NOT ESP32-S3!)
 #define CAM_PIN_PWDN    32
@@ -90,13 +84,6 @@ typedef struct {
     char timezone[33];
     uint8_t motion_threshold;
     uint8_t motion_cooldown;
-    // NAS upload settings
-    nas_protocol_t nas_protocol;
-    char nas_host[65];
-    uint16_t nas_port;
-    char nas_user[33];
-    char nas_pass[65];
-    char nas_path[65];
     uint8_t vflip;
     uint8_t motion_saved_threshold;
     uint8_t wifi_tx_power;      /* TX power in 0.25dBm units (80=20dBm) */

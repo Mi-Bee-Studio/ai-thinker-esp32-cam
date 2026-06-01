@@ -51,13 +51,6 @@ esp_err_t config_set_resolution(camera_resolution_t res);
 esp_err_t config_set_web_password(const char *pass);
 
 /**
- * @brief Set NAS upload settings, save immediately
- */
-esp_err_t config_set_nas(nas_protocol_t protocol, const char *host,
-                         uint16_t port, const char *user,
-                         const char *pass, const char *path);
-
-/**
  * @brief Set motion detection settings, save immediately
  */
 esp_err_t config_set_motion(uint8_t threshold, uint8_t cooldown);

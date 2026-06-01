@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include <sys/stat.h>
 #include "esp_log.h"
-#include "driver/ledc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "timelapse.h"
@@ -11,6 +10,7 @@
 #include "storage_manager.h"
 #include "time_sync.h"
 #include "health_monitor.h"
+#include "flash_led.h"
 
 static const char *TAG = "timelapse";
 
@@ -25,57 +25,10 @@ static const char *TAG = "timelapse";
 #define COMPARE_INTERVAL_MS    500
 #define STOP_WAIT_MS           2000
 
-#define FLASH_GPIO             4
-#define FLASH_WARMUP_MS        200
-#define FLASH_LEDC_TIMER       LEDC_TIMER_1
-#define FLASH_LEDC_CHANNEL     LEDC_CHANNEL_1
-#define FLASH_LEDC_SPEED       LEDC_LOW_SPEED_MODE
-#define FLASH_PWM_FREQ         2000
-#define FLASH_PWM_RES          LEDC_TIMER_8_BIT
-#define FLASH_PWM_DUTY         205
-
 static TaskHandle_t s_task_handle = NULL;
 static volatile bool s_running = false;
-static bool s_flash_initialized = false;
 static uint32_t s_photo_count = 0;
 static uint32_t s_burst_photo_count = 0;
-
-static void flash_led_init(void)
-{
-    if (s_flash_initialized) return;
-
-    ledc_timer_config_t timer_conf = {
-        .speed_mode      = FLASH_LEDC_SPEED,
-        .duty_resolution = FLASH_PWM_RES,
-        .timer_num       = FLASH_LEDC_TIMER,
-        .freq_hz         = FLASH_PWM_FREQ,
-        .clk_cfg         = LEDC_AUTO_CLK,
-    };
-    esp_err_t ret = ledc_timer_config(&timer_conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Flash LEDC timer config failed: %s", esp_err_to_name(ret));
-        return;
-    }
-
-    ledc_channel_config_t ch_conf = {
-        .gpio_num   = FLASH_GPIO,
-        .speed_mode = FLASH_LEDC_SPEED,
-        .channel    = FLASH_LEDC_CHANNEL,
-        .intr_type  = LEDC_INTR_DISABLE,
-        .timer_sel  = FLASH_LEDC_TIMER,
-        .duty       = 0,
-        .hpoint     = 0,
-    };
-    ret = ledc_channel_config(&ch_conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Flash LEDC channel config failed: %s", esp_err_to_name(ret));
-        return;
-    }
-
-    s_flash_initialized = true;
-    ESP_LOGI(TAG, "Flash LED initialized (LEDC PWM on GPIO%d, %d%% duty)", FLASH_GPIO,
-             (FLASH_PWM_DUTY * 100 + 127) / 255);
-}
 
 static void resolve_filename_conflict(char *filename, size_t filename_size, const char *base_name)
 {
@@ -100,12 +53,10 @@ static void do_burst_capture(const char *base_name, bool dark_scene, uint8_t bur
 
         camera_fb_t *fb_burst = NULL;
         if (dark_scene) {
-            ledc_set_duty(FLASH_LEDC_SPEED, FLASH_LEDC_CHANNEL, FLASH_PWM_DUTY);
-            ledc_update_duty(FLASH_LEDC_SPEED, FLASH_LEDC_CHANNEL);
-            vTaskDelay(pdMS_TO_TICKS(FLASH_WARMUP_MS));
+            flash_led_on();
+            vTaskDelay(pdMS_TO_TICKS(200));
             camera_capture(&fb_burst);
-            ledc_set_duty(FLASH_LEDC_SPEED, FLASH_LEDC_CHANNEL, 0);
-            ledc_update_duty(FLASH_LEDC_SPEED, FLASH_LEDC_CHANNEL);
+            flash_led_off();
         } else {
             camera_capture(&fb_burst);
         }
@@ -162,21 +113,11 @@ static void timelapse_task(void *arg)
             continue;
         }
 
-        uint32_t jpeg_kb = (uint32_t)fb_test->len / 1024;
-        uint8_t brightness_pct;
-        if (jpeg_kb >= 22) {
-            brightness_pct = 100;
-        } else if (jpeg_kb <= 12) {
-            brightness_pct = 0;
-        } else {
-            brightness_pct = (uint8_t)((jpeg_kb - 12) * 100 / 10);
-        }
-
-        cfg = config_get();
-        bool dark_scene = (brightness_pct < cfg->flash_threshold);
+        uint8_t brightness_pct = flash_brightness_detect(fb_test);
+        bool dark_scene = flash_is_dark(brightness_pct);
 
         ESP_LOGI(TAG, "Brightness: jpeg=%uKB, pct=%u%%, dark=%s",
-                 (unsigned)jpeg_kb, brightness_pct, dark_scene ? "YES" : "no");
+                 (unsigned)(fb_test->len / 1024), brightness_pct, dark_scene ? "YES" : "no");
 
         camera_return_fb(fb_test);
         fb_test = NULL;
@@ -184,14 +125,12 @@ static void timelapse_task(void *arg)
         camera_fb_t *fb = NULL;
         if (dark_scene) {
             ESP_LOGI(TAG, "Dark scene, enabling flash for photo");
-            ledc_set_duty(FLASH_LEDC_SPEED, FLASH_LEDC_CHANNEL, FLASH_PWM_DUTY);
-            ledc_update_duty(FLASH_LEDC_SPEED, FLASH_LEDC_CHANNEL);
-            vTaskDelay(pdMS_TO_TICKS(FLASH_WARMUP_MS));
+            flash_led_on();
+            vTaskDelay(pdMS_TO_TICKS(200));
             if (camera_capture(&fb) != ESP_OK || fb == NULL) {
                 ESP_LOGW(TAG, "Failed to capture with flash");
             }
-            ledc_set_duty(FLASH_LEDC_SPEED, FLASH_LEDC_CHANNEL, 0);
-            ledc_update_duty(FLASH_LEDC_SPEED, FLASH_LEDC_CHANNEL);
+            flash_led_off();
         }
 
         if (fb == NULL) {

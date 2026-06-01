@@ -128,15 +128,6 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 </div>
 
 <div class="card">
-<div class="ct">NAS 上传</div>
-<div class="fld"><label>协议</label><select id="nas_protocol"><option value="0">HTTP POST</option><option value="1">WebDAV</option></select></div>
-<div class="inline"><div class="fld"><label>服务器地址</label><input type="text" id="nas_host" placeholder="192.168.1.100"></div><div class="fld port-f"><label>端口</label><input type="number" id="nas_port" placeholder="80"></div></div>
-<div class="fld"><label>用户名</label><input type="text" id="nas_user" placeholder="用户名"></div>
-<div class="fld"><label>密码</label><div class="pw-w"><input type="password" id="nas_pass" placeholder="密码"><span class="eye" onclick="togPw(this)">&#128065;</span></div></div>
-<div class="fld"><label>远程路径</label><input type="text" id="nas_path" placeholder="/photos"></div>
-</div>
-
-<div class="card">
 <div class="ct">系统操作</div>
 <div class="btn-row">
 <button class="btn btn-sv" onclick="saveConfig()">保存配置</button>
@@ -179,12 +170,6 @@ $('motion_enabled').checked=(v.motion_threshold>0);
 $('motion_threshold').value=v.motion_threshold||30;$('mtVal').textContent=$('motion_threshold').value;
 $('vflip').checked=!!v.vflip;
 $('motion_cooldown').value=v.motion_cooldown||5;$('mcVal').textContent=$('motion_cooldown').value;
-$('nas_host').value=v.nas_host||'';
-$('nas_port').value=v.nas_port||80;
-$('nas_protocol').value=v.nas_protocol||0;
-$('nas_user').value=v.nas_user||'';
-$('nas_pass').value=v.nas_pass||'';
-$('nas_path').value=v.nas_path||'/photos';
 $('wifi_tx_power').value=v.wifi_tx_power||80;$('txVal').textContent=(($('wifi_tx_power').value*0.25).toFixed(1))+'dBm';
 $('wifi_power_save').checked=!!(v.wifi_power_save);
 $('flash_threshold').value=v.flash_threshold!=null?v.flash_threshold:40;$('ftVal').textContent=$('flash_threshold').value;
@@ -206,12 +191,6 @@ resolution:parseInt($('resolution').value),
 jpeg_quality:parseInt($('jpeg_quality').value),
 motion_enabled:$('motion_enabled').checked,
 motion_threshold:parseInt($('motion_threshold').value),
-nas_protocol:parseInt($('nas_protocol').value)||0,
-nas_host:$('nas_host').value,
-nas_port:parseInt($('nas_port').value)||80,
-nas_user:$('nas_user').value,
-nas_pass:$('nas_pass').value,
-nas_path:$('nas_path').value,
 vflip:$('vflip').checked?1:0,
 wifi_tx_power:parseInt($('wifi_tx_power').value)||80,
 wifi_power_save:$('wifi_power_save').checked?1:0

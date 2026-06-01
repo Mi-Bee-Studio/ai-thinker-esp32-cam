@@ -220,10 +220,6 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON_AddStringToObject(data, "timezone", cfg->timezone);
     cJSON_AddNumberToObject(data, "motion_threshold", (double)cfg->motion_threshold);
     cJSON_AddNumberToObject(data, "motion_cooldown", (double)cfg->motion_cooldown);
-    cJSON_AddStringToObject(data, "nas_host", cfg->nas_host);
-    cJSON_AddNumberToObject(data, "nas_port", (double)cfg->nas_port);
-    cJSON_AddNumberToObject(data, "nas_protocol", (double)cfg->nas_protocol);
-    cJSON_AddStringToObject(data, "nas_path", cfg->nas_path);
     cJSON_AddNumberToObject(data, "vflip", (double)cfg->vflip);
     cJSON_AddNumberToObject(data, "wifi_tx_power", (double)cfg->wifi_tx_power);
     cJSON_AddNumberToObject(data, "wifi_power_save", (double)cfg->wifi_power_save);
@@ -414,33 +410,6 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
 
         if (timelapse_changed) {
             config_set_timelapse(tl_enabled, tl_interval, tl_burst);
-        }
-    }
-    {
-        const cam_config_t *cur = config_get();
-        nas_protocol_t protocol = cur->nas_protocol;
-        const char *host = cur->nas_host;
-        uint16_t port = cur->nas_port;
-        const char *user = cur->nas_user;
-        const char *pass = cur->nas_pass;
-        const char *path = cur->nas_path;
-        bool nas_changed = false;
-
-        item = cJSON_GetObjectItem(json, "nas_protocol");
-        if (item && cJSON_IsNumber(item)) { protocol = (nas_protocol_t)item->valueint; nas_changed = true; }
-        item = cJSON_GetObjectItem(json, "nas_host");
-        if (item && cJSON_IsString(item)) { host = item->valuestring; nas_changed = true; }
-        item = cJSON_GetObjectItem(json, "nas_port");
-        if (item && cJSON_IsNumber(item)) { port = (uint16_t)item->valueint; nas_changed = true; }
-        item = cJSON_GetObjectItem(json, "nas_user");
-        if (item && cJSON_IsString(item)) { user = item->valuestring; nas_changed = true; }
-        item = cJSON_GetObjectItem(json, "nas_pass");
-        if (item && cJSON_IsString(item)) { pass = item->valuestring; nas_changed = true; }
-        item = cJSON_GetObjectItem(json, "nas_path");
-        if (item && cJSON_IsString(item)) { path = item->valuestring; nas_changed = true; }
-
-        if (nas_changed) {
-            config_set_nas(protocol, host, port, user, pass, path);
         }
     }
 

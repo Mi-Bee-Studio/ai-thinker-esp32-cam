@@ -26,7 +26,6 @@
 #include "web_server.h"
 #include "motion_detect.h"
 #include "storage_manager.h"
-#include "nas_uploader.h"
 #include "timelapse.h"
 
 static const char *TAG = "main";
@@ -37,7 +36,6 @@ static bool s_web_server_started = false;
 static bool s_motion_started = false;
 static bool s_time_sync_started = false;
 static bool s_sd_init_done = false;
-static bool s_nas_started = false;
 static bool s_timelapse_started = false;
 
 /* ---------------------------------------------------------------------------
@@ -367,15 +365,7 @@ void app_main(void)
         }
     }
 
-    /* Step 15/16: NAS uploader init */
-    ret = nas_uploader_init();
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "NAS uploader init failed: %s", esp_err_to_name(ret));
-        ESP_LOGI(TAG, "=== Step 15/16: NAS uploader init failed ===");
-    } else {
-        s_nas_started = true;
-        ESP_LOGI(TAG, "=== Step 15/16: NAS uploader initialized ===");
-    }
+    /* Step 15/16: NAS uploader removed */
 
     /* Step 16/16: Boot button factory reset disabled (GPIO0 = camera XCLK) */
     ESP_LOGI(TAG, "=== Step 16/16: BOOT button check disabled (GPIO0 = XCLK) ===");

@@ -65,10 +65,9 @@ static void health_collect_metrics(void)
     // MJPEG stream clients
     s_metrics.stream_clients = (uint32_t)mjpeg_streamer_get_client_count();
 
-    // Motion events and NAS pending — updated by their respective modules
+    // Motion events — updated by motion_detect module
     // (motion_events incremented via health_monitor_incr_motion_events)
-    // NAS pending left as 0 until uploader module implements counter
-    
+
     // Brightness metrics (populated by motion_detect module)
     s_metrics.brightness_pct = motion_detect_get_brightness_pct();
     s_metrics.brightness_method = motion_detect_get_brightness_method();
