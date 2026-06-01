@@ -66,6 +66,18 @@ uint32_t storage_get_free_space(void);
 uint32_t storage_get_photo_count(void);
 
 /**
+ * @brief Delete a photo file from SD card
+ * @param name  Relative path within /sdcard/photos/ (e.g. "2026-06/photo.jpg")
+ * @return ESP_OK on success, error code on failure
+ */
+esp_err_t storage_delete_photo(const char *name);
+
+/**
+ * @brief Invalidate the photo list cache (call after any photo save/delete from outside this module)
+ */
+void storage_invalidate_list_cache(void);
+
+/**
  * @brief Get total space on SD card
  * @return Total space in MB
  */

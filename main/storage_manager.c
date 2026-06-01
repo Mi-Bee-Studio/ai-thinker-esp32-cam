@@ -18,9 +18,11 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <errno.h>
+#include <unistd.h>
 #include <time.h>
 
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
 #include "ff.h"
@@ -48,6 +50,12 @@ static SemaphoreHandle_t s_mutex = NULL;
 static sdmmc_card_t *s_card = NULL;
 static TaskHandle_t s_hotplug_task = NULL;
 static uint32_t s_cached_total_mb = 0;  /* Cached SD total capacity, set on mount */
+
+/* Photo list cache — avoids traversing slow SPI SD on every request */
+static char *s_list_cache = NULL;
+static size_t s_list_cache_len = 0;
+static int64_t s_list_cache_time = 0;
+#define LIST_CACHE_TTL_MS  30000  /* 30 second cache TTL */
 
 /* ---- Forward declarations ---- */
 static void hotplug_monitor_task(void *arg);
@@ -442,6 +450,14 @@ esp_err_t storage_save_photo(camera_fb_t *fb, const char *filename)
     }
 
     ESP_LOGI(TAG, "Saved photo: %s (%zu bytes)", filepath, fb->len);
+
+    if (s_list_cache) {
+        free(s_list_cache);
+        s_list_cache = NULL;
+        s_list_cache_len = 0;
+        s_list_cache_time = 0;
+    }
+
     xSemaphoreGive(s_mutex);
     return ESP_OK;
 }
@@ -506,10 +522,84 @@ int storage_list_photos(const char *path, char *buf, size_t buf_size)
     }
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+    int64_t now = esp_timer_get_time();
+    int64_t cache_age_ms = (now - s_list_cache_time) / 1000;
+
+    if (s_list_cache && s_list_cache_len > 0 && cache_age_ms < LIST_CACHE_TTL_MS) {
+        size_t copy_len = s_list_cache_len < buf_size ? s_list_cache_len : buf_size - 1;
+        memcpy(buf, s_list_cache, copy_len);
+        buf[copy_len] = '\0';
+        int count = 0;
+        for (size_t i = 0; i < copy_len; i++) {
+            if (buf[i] == '\n') count++;
+        }
+        ESP_LOGD(TAG, "Photo list served from cache (%d entries, age %lldms)", count, cache_age_ms);
+        xSemaphoreGive(s_mutex);
+        return count;
+    }
+
+    if (s_list_cache) {
+        free(s_list_cache);
+        s_list_cache = NULL;
+    }
+
     size_t offset = 0;
     int count = list_photos_recursive(path, "", buf, buf_size, &offset);
+
+    s_list_cache_len = offset;
+    s_list_cache = malloc(s_list_cache_len + 1);
+    if (s_list_cache) {
+        memcpy(s_list_cache, buf, s_list_cache_len);
+        s_list_cache[s_list_cache_len] = '\0';
+        s_list_cache_time = now;
+        ESP_LOGI(TAG, "Photo list cached: %d entries, %zu bytes", count, s_list_cache_len);
+    }
+
     xSemaphoreGive(s_mutex);
     return count;
+}
+
+void storage_invalidate_list_cache(void)
+{
+    if (!s_mutex) return;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (s_list_cache) {
+        free(s_list_cache);
+        s_list_cache = NULL;
+        s_list_cache_len = 0;
+        s_list_cache_time = 0;
+        ESP_LOGD(TAG, "Photo list cache invalidated");
+    }
+    xSemaphoreGive(s_mutex);
+}
+
+esp_err_t storage_delete_photo(const char *name)
+{
+    if (!s_mounted || !name) return ESP_ERR_INVALID_STATE;
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+    char filepath[280];
+    snprintf(filepath, sizeof(filepath), "/sdcard/photos/%s", name);
+
+    if (remove(filepath) != 0 && rmdir(filepath) != 0) {
+        ESP_LOGW(TAG, "Failed to delete %s: %s", filepath, strerror(errno));
+        xSemaphoreGive(s_mutex);
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "Deleted: %s", filepath);
+
+    if (s_list_cache) {
+        free(s_list_cache);
+        s_list_cache = NULL;
+        s_list_cache_len = 0;
+        s_list_cache_time = 0;
+    }
+
+    xSemaphoreGive(s_mutex);
+    return ESP_OK;
 }
 
 esp_err_t storage_cleanup(void)

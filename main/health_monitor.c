@@ -187,6 +187,13 @@ const char *health_monitor_get_prometheus_str(void)
     PROM_LINE("# TYPE esp32_scene_dark gauge");
     PROM_LINE("esp32_scene_dark %u", s_metrics.scene_dark ? 1 : 0);
 
+    PROM_LINE("# HELP esp32_timelapse_photos Timelapse photos taken");
+    PROM_LINE("# TYPE esp32_timelapse_photos counter");
+    PROM_LINE("esp32_timelapse_photos %" PRIu32, s_metrics.timelapse_photos);
+    PROM_LINE("# HELP esp32_timelapse_burst_photos Timelapse burst photos taken");
+    PROM_LINE("# TYPE esp32_timelapse_burst_photos counter");
+    PROM_LINE("esp32_timelapse_burst_photos %" PRIu32, s_metrics.timelapse_burst_photos);
+
 #undef PROM_LINE
 
     return s_prometheus_str;
@@ -195,4 +202,24 @@ const char *health_monitor_get_prometheus_str(void)
 void health_monitor_incr_motion_events(void)
 {
     s_metrics.motion_events++;
+}
+
+void health_monitor_incr_timelapse_photos(void)
+{
+    s_metrics.timelapse_photos++;
+}
+
+void health_monitor_incr_timelapse_burst_photos(void)
+{
+    s_metrics.timelapse_burst_photos++;
+}
+
+uint32_t health_monitor_get_timelapse_photos(void)
+{
+    return s_metrics.timelapse_photos;
+}
+
+uint32_t health_monitor_get_timelapse_burst_photos(void)
+{
+    return s_metrics.timelapse_burst_photos;
 }

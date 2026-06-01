@@ -32,6 +32,7 @@
 #include "health_monitor.h"
 #include "motion_detect.h"
 #include "time_sync.h"
+#include "timelapse.h"
 #include "esp_spiffs.h"
 
 #define FIRMWARE_VERSION "v1.0"
@@ -227,6 +228,9 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "wifi_tx_power", (double)cfg->wifi_tx_power);
     cJSON_AddNumberToObject(data, "wifi_power_save", (double)cfg->wifi_power_save);
     cJSON_AddNumberToObject(data, "flash_threshold", (double)cfg->flash_threshold);
+    cJSON_AddNumberToObject(data, "timelapse_enabled", (double)cfg->timelapse_enabled);
+    cJSON_AddNumberToObject(data, "timelapse_interval_s", (double)cfg->timelapse_interval_s);
+    cJSON_AddNumberToObject(data, "timelapse_burst_count", (double)cfg->timelapse_burst_count);
     return send_json_ok(req, data);
 }
 
@@ -394,6 +398,23 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
     item = cJSON_GetObjectItem(json, "flash_threshold");
     if (item && cJSON_IsNumber(item)) {
         config_set_flash_threshold((uint8_t)item->valueint);
+    }
+    {
+        bool timelapse_changed = false;
+        uint8_t tl_enabled = config_get()->timelapse_enabled;
+        uint16_t tl_interval = config_get()->timelapse_interval_s;
+        uint8_t tl_burst = config_get()->timelapse_burst_count;
+
+        item = cJSON_GetObjectItem(json, "timelapse_enabled");
+        if (item && cJSON_IsNumber(item)) { tl_enabled = (uint8_t)item->valueint; timelapse_changed = true; }
+        item = cJSON_GetObjectItem(json, "timelapse_interval_s");
+        if (item && cJSON_IsNumber(item)) { tl_interval = (uint16_t)item->valueint; timelapse_changed = true; }
+        item = cJSON_GetObjectItem(json, "timelapse_burst_count");
+        if (item && cJSON_IsNumber(item)) { tl_burst = (uint8_t)item->valueint; timelapse_changed = true; }
+
+        if (timelapse_changed) {
+            config_set_timelapse(tl_enabled, tl_interval, tl_burst);
+        }
     }
     {
         const cam_config_t *cur = config_get();
@@ -635,24 +656,16 @@ static esp_err_t handler_api_files_delete(httpd_req_t *req)
         return send_json_error(req, "SD card not available", 503);
     }
 
-    /* Build full path */
-    char filepath[280];
-    snprintf(filepath, sizeof(filepath), "/sdcard/photos/%s", name);
-
-    /* Try remove() first (files), then rmdir() (empty dirs) */
-    if (remove(filepath) != 0 && rmdir(filepath) != 0) {
-        ESP_LOGW(TAG, "Failed to delete %s: %s", filepath, strerror(errno));
+    esp_err_t ret = storage_delete_photo(name);
+    if (ret != ESP_OK) {
         return send_json_error(req, "delete failed", 500);
     }
-
-    ESP_LOGI(TAG, "Deleted: %s", filepath);
 
     /* Clean up empty parent directory (e.g. 1970-01/) */
     char *slash = strrchr(name, '/');
     if (slash) {
         char dirpath[280];
-        int dlen = snprintf(dirpath, sizeof(dirpath), "/sdcard/photos/");
-        strncat(dirpath + dlen, name, slash - name);
+        snprintf(dirpath, sizeof(dirpath), "/sdcard/photos/%.*s", (int)(slash - name), name);
         rmdir(dirpath);  /* ignore error — dir may not be empty */
     }
 
@@ -739,6 +752,46 @@ static esp_err_t handler_api_auth(httpd_req_t *req)
     return send_unauthorized(req);
 }
 
+
+/* ------------------------------------------------------------------ */
+/*  GET /api/timelapse/start, /api/timelapse/stop, /api/timelapse/status */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handler_api_timelapse_start(httpd_req_t *req)
+{
+    if (!check_auth(req)) {
+        return send_unauthorized(req);
+    }
+    esp_err_t ret = timelapse_start();
+    if (ret != ESP_OK) {
+        return send_json_error(req, "timelapse start failed", 500);
+    }
+    return send_json_ok(req, NULL);
+}
+
+static esp_err_t handler_api_timelapse_stop(httpd_req_t *req)
+{
+    if (!check_auth(req)) {
+        return send_unauthorized(req);
+    }
+    esp_err_t ret = timelapse_stop();
+    if (ret != ESP_OK) {
+        return send_json_error(req, "timelapse stop failed", 500);
+    }
+    return send_json_ok(req, NULL);
+}
+
+static esp_err_t handler_api_timelapse_status(httpd_req_t *req)
+{
+    const cam_config_t *cfg = config_get();
+    cJSON *data = cJSON_CreateObject();
+    cJSON_AddBoolToObject(data, "running", timelapse_is_running());
+    cJSON_AddNumberToObject(data, "interval_s", (double)cfg->timelapse_interval_s);
+    cJSON_AddNumberToObject(data, "burst_count", (double)cfg->timelapse_burst_count);
+    cJSON_AddNumberToObject(data, "photo_count", (double)timelapse_get_photo_count());
+    cJSON_AddNumberToObject(data, "burst_photo_count", (double)timelapse_get_burst_photo_count());
+    return send_json_ok(req, data);
+}
 
 /* ------------------------------------------------------------------ */
 /*  OPTIONS *   - CORS preflight                                       */
@@ -834,6 +887,9 @@ static const uri_entry_t s_uris[] = {
     { "/api/files",    HTTP_DELETE, handler_api_files_delete  },
     { "/api/download", HTTP_GET,    handler_api_download     },
     { "/api/auth",     HTTP_GET,    handler_api_auth         },
+    { "/api/timelapse/start",  HTTP_POST, handler_api_timelapse_start  },
+    { "/api/timelapse/stop",   HTTP_POST, handler_api_timelapse_stop   },
+    { "/api/timelapse/status", HTTP_GET,  handler_api_timelapse_status },
 
     { "/*",             HTTP_OPTIONS, handler_options         },
     { "/*",             HTTP_GET,    handler_static          },

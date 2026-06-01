@@ -110,6 +110,24 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 </div>
 
 <div class="card">
+<div class="ct">延时拍摄</div>
+<div class="chk-r"><input type="checkbox" id="timelapse_enabled"><label for="timelapse_enabled">启用延时拍摄</label></div>
+<div class="fld"><label>拍摄间隔</label>
+<select id="timelapse_interval_s">
+<option value="5">5 秒</option>
+<option value="10">10 秒</option>
+<option value="30" selected>30 秒</option>
+<option value="60">60 秒</option>
+<option value="300">5 分钟</option>
+<option value="600">10 分钟</option>
+<option value="1800">30 分钟</option>
+<option value="3600">60 分钟</option>
+</select></div>
+<div class="fld"><label>运动连拍数量 (1-10)</label>
+<input type="number" id="timelapse_burst_count" min="1" max="10" value="3"></div>
+</div>
+
+<div class="card">
 <div class="ct">NAS 上传</div>
 <div class="fld"><label>协议</label><select id="nas_protocol"><option value="0">HTTP POST</option><option value="1">WebDAV</option></select></div>
 <div class="inline"><div class="fld"><label>服务器地址</label><input type="text" id="nas_host" placeholder="192.168.1.100"></div><div class="fld port-f"><label>端口</label><input type="number" id="nas_port" placeholder="80"></div></div>
@@ -170,6 +188,9 @@ $('nas_path').value=v.nas_path||'/photos';
 $('wifi_tx_power').value=v.wifi_tx_power||80;$('txVal').textContent=(($('wifi_tx_power').value*0.25).toFixed(1))+'dBm';
 $('wifi_power_save').checked=!!(v.wifi_power_save);
 $('flash_threshold').value=v.flash_threshold!=null?v.flash_threshold:40;$('ftVal').textContent=$('flash_threshold').value;
+$('timelapse_enabled').checked=!!(v.timelapse_enabled);
+$('timelapse_interval_s').value=v.timelapse_interval_s||30;
+$('timelapse_burst_count').value=v.timelapse_burst_count||3;
 }).catch(function(e){console.error('Load config failed:',e)});
 }
 
@@ -194,7 +215,10 @@ nas_path:$('nas_path').value,
 vflip:$('vflip').checked?1:0,
 wifi_tx_power:parseInt($('wifi_tx_power').value)||80,
 wifi_power_save:$('wifi_power_save').checked?1:0
-,flash_threshold:parseInt($('flash_threshold').value)||40
+,flash_threshold:parseInt($('flash_threshold').value)||40,
+timelapse_enabled:$('timelapse_enabled').checked?1:0,
+timelapse_interval_s:parseInt($('timelapse_interval_s').value)||30,
+timelapse_burst_count:parseInt($('timelapse_burst_count').value)||3
 };
 if(pw)cfg.web_password=pw;
 authFetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}).then(function(r){return r.json()}).then(function(d){

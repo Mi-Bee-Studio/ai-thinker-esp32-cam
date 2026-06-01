@@ -31,6 +31,9 @@ static void apply_defaults(cam_config_t *cfg)
     cfg->wifi_tx_power = 80;   /* 20dBm max */
     cfg->wifi_power_save = 0;  /* disabled for streaming */
     cfg->flash_threshold = 40;  /* default brightness threshold */
+    cfg->timelapse_enabled = 0;
+    cfg->timelapse_interval_s = 30;
+    cfg->timelapse_burst_count = 3;
     cfg->magic = CONFIG_MAGIC;
     cfg->version = CONFIG_VERSION;
 }
@@ -88,6 +91,10 @@ esp_err_t config_init(void)
                             s_config.wifi_power_save = 0;
                             /* V3→V4: missing flash_threshold */
                             s_config.flash_threshold = 40;
+                            /* V4→V5: missing timelapse fields */
+                            s_config.timelapse_enabled = 0;
+                            s_config.timelapse_interval_s = 30;
+                            s_config.timelapse_burst_count = 3;
                         }
                         s_config.version = CONFIG_VERSION;
                         ESP_LOGI(TAG, "Config migrated V%d->V%d (blob %u->%u), saving",
@@ -308,6 +315,18 @@ esp_err_t config_set_flash_threshold(uint8_t threshold)
     return config_save();
 }
 
+esp_err_t config_set_timelapse(uint8_t enabled, uint16_t interval_s, uint8_t burst_count)
+{
+    if (interval_s < 1) interval_s = 1;
+    if (burst_count < 1) burst_count = 1;
+    if (burst_count > 10) burst_count = 10;
+    s_config.timelapse_enabled = enabled ? 1 : 0;
+    s_config.timelapse_interval_s = interval_s;
+    s_config.timelapse_burst_count = burst_count;
+    ESP_LOGI(TAG, "Timelapse set (enabled=%u, interval=%us, burst=%u)", enabled, interval_s, burst_count);
+    return config_save();
+}
+
 esp_err_t config_set_timezone(const char *tz)
 {
     if (!tz || strlen(tz) == 0) {
@@ -324,9 +343,8 @@ esp_err_t config_set_timezone(const char *tz)
  * Format: simple key=value, one per line
  *   wifi.ssid=MyNetwork
  *   wifi.password=MyPassword123
- *   password=MyPassword123
  * Lines starting with # are comments. Empty lines ignored.
- * After successful load, file is renamed to config.txt.bak.
+ * The config file is preserved on SD card for persistent use.
  */
 esp_err_t config_load_from_sd(void)
 {
@@ -384,6 +402,6 @@ esp_err_t config_load_from_sd(void)
     esp_err_t ret = config_set_wifi(new_ssid, new_pass);
     if (ret != ESP_OK) return ret;
 
-    rename("/sdcard/config.txt", "/sdcard/config.txt.bak");
+    ESP_LOGI(TAG, "WiFi config saved to NVS (SD config preserved)");
     return ESP_OK;
 }

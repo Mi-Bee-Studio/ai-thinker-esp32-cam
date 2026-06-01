@@ -28,6 +28,8 @@ typedef struct {
     uint8_t  brightness_pct;      // 0-100 brightness percentage
     uint8_t  brightness_method;   // 0=uninitialized, 1=register, 2=grayscale
     bool     scene_dark;          // Current scene is dark
+    uint32_t timelapse_photos;
+    uint32_t timelapse_burst_photos;
 } health_metrics_t;
 
 /**
@@ -54,5 +56,10 @@ const char *health_monitor_get_uptime_str(void);
  * @brief Get Prometheus-format metrics string (static buffer)
  */
 const char *health_monitor_get_prometheus_str(void);
+
+void health_monitor_incr_timelapse_photos(void);
+void health_monitor_incr_timelapse_burst_photos(void);
+uint32_t health_monitor_get_timelapse_photos(void);
+uint32_t health_monitor_get_timelapse_burst_photos(void);
 
 #endif // HEALTH_MONITOR_H

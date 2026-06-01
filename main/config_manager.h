@@ -99,9 +99,12 @@ esp_err_t config_set_motion_saved_threshold(uint8_t threshold);
  */
 esp_err_t config_set_flash_threshold(uint8_t threshold);
 
+esp_err_t config_set_timelapse(uint8_t enabled, uint16_t interval_s, uint8_t burst_count);
+
 /**
- * @brief Load WiFi config from /sdcard/config.txt (YAML format)
- * Parses ssid and password, updates NVS if changed, renames file to .bak
+ * @brief Load WiFi config from /sdcard/config.txt (key=value format)
+ * Parses ssid and password, updates NVS if changed.
+ * The config file is preserved on SD card for persistent use.
  * @return ESP_OK if config was updated, ESP_ERR_NOT_FOUND if no file/unchanged
  */
 esp_err_t config_load_from_sd(void);

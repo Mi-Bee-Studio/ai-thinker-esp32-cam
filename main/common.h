@@ -6,7 +6,7 @@
 #include "esp_err.h"
 
 // Config version and magic
-#define CONFIG_VERSION  4
+#define CONFIG_VERSION  5
 #define CONFIG_MAGIC    0xA5B6C7D8
 
 // Default values
@@ -102,6 +102,9 @@ typedef struct {
     uint8_t wifi_tx_power;      /* TX power in 0.25dBm units (80=20dBm) */
     uint8_t wifi_power_save;    /* 0=WIFI_PS_NONE, 1=WIFI_PS_MIN_MODEM */
     uint8_t flash_threshold;     /* Motion detection brightness threshold */
+    uint8_t timelapse_enabled;
+    uint16_t timelapse_interval_s;
+    uint8_t timelapse_burst_count;
     uint32_t magic;
     uint32_t version;
 } cam_config_t;

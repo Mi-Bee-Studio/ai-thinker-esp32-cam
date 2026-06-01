@@ -27,6 +27,7 @@
 #include "motion_detect.h"
 #include "storage_manager.h"
 #include "nas_uploader.h"
+#include "timelapse.h"
 
 static const char *TAG = "main";
 
@@ -37,6 +38,7 @@ static bool s_motion_started = false;
 static bool s_time_sync_started = false;
 static bool s_sd_init_done = false;
 static bool s_nas_started = false;
+static bool s_timelapse_started = false;
 
 /* ---------------------------------------------------------------------------
  * WiFi state callback - triggers post-connection services
@@ -113,6 +115,25 @@ static void sta_services_task(void *arg)
             ESP_LOGI(TAG, "Motion detection started");
         } else {
             ESP_LOGE(TAG, "Motion detection start failed: %s", esp_err_to_name(ret));
+        }
+    }
+
+    /* Initialize timelapse */
+    if (!s_timelapse_started) {
+        timelapse_init();
+        const cam_config_t *cfg_tl = config_get();
+        if (cfg_tl->timelapse_enabled) {
+            esp_err_t ret = timelapse_start();
+            if (ret == ESP_OK) {
+                s_timelapse_started = true;
+                ESP_LOGI(TAG, "Timelapse started (interval=%us, burst=%u)",
+                         cfg_tl->timelapse_interval_s, cfg_tl->timelapse_burst_count);
+            } else {
+                ESP_LOGW(TAG, "Timelapse start failed: %s", esp_err_to_name(ret));
+            }
+        } else {
+            s_timelapse_started = true;
+            ESP_LOGI(TAG, "Timelapse disabled in config");
         }
     }
 
@@ -273,6 +294,25 @@ void app_main(void)
         if (ret == ESP_OK) {
             s_web_server_started = true;
             ESP_LOGI(TAG, "Web server started (AP mode)");
+        }
+
+        /* Initialize timelapse (AP mode) */
+        if (!s_timelapse_started) {
+            timelapse_init();
+            const cam_config_t *cfg_tl = config_get();
+            if (cfg_tl->timelapse_enabled) {
+                esp_err_t tl_ret = timelapse_start();
+                if (tl_ret == ESP_OK) {
+                    s_timelapse_started = true;
+                    ESP_LOGI(TAG, "Timelapse started (AP mode, interval=%us, burst=%u)",
+                             cfg_tl->timelapse_interval_s, cfg_tl->timelapse_burst_count);
+                } else {
+                    ESP_LOGW(TAG, "Timelapse start failed (AP mode): %s", esp_err_to_name(tl_ret));
+                }
+            } else {
+                s_timelapse_started = true;
+                ESP_LOGI(TAG, "Timelapse disabled in config (AP mode)");
+            }
         }
     }
 

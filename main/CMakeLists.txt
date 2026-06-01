@@ -9,6 +9,7 @@ idf_component_register(
         "nas_uploader.c"
         "status_led.c"
         "storage_manager.c"
+        "timelapse.c"
         "time_sync.c"
         "web_server.c"
         "webdav_client.c"

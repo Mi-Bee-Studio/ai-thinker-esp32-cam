@@ -84,3 +84,4 @@ config.txt
 
 # Agent knowledge base (local only)
 AGENTS.md
+.trae/
