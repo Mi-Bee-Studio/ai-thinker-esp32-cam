@@ -115,9 +115,7 @@ The board includes two LED indicators:
 
 | Pin | Function | Description |
 |-----|----------|-------------|
-| GPIO0 | Boot Button | Used for: |
-| | | - Factory reset (5-second press) |
-| | | - Bootloader entry (when pressed during reset) |
+| GPIO0 | Boot Button | ⚠️ **Physical button function is DISABLED** on AI-Thinker (GPIO0 = camera XCLK, press detection is unreliable). Use `POST /api/reset` for factory reset. GPIO0 strapping for bootloader entry still works at hardware level. |
 
 ## OV2640 Camera Module
 
