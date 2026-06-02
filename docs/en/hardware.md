@@ -131,7 +131,7 @@ The firmware supports the OV2640 camera sensor, a 2-megapixel camera module.
 | **Color Depth** | RGB/YUV |
 | **Output Formats** | JPEG, RAW RGB, YUV420 |
 | **Lens Type** | Fixed focus |
-| **Sensor Size** | 1/6 inch |
+| **Sensor Size** | 1/4 inch |
 | **Frame Rates** | Up to 30 FPS at lower resolutions |
 
 ### Supported Resolutions
