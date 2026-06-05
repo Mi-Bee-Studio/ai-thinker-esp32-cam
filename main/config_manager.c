@@ -31,6 +31,11 @@ static void apply_defaults(cam_config_t *cfg)
     cfg->timelapse_enabled = 0;
     cfg->timelapse_interval_s = 30;
     cfg->timelapse_burst_count = 3;
+    cfg->timelapse_mode = 0;
+    cfg->timelapse_min_interval_s = 3;
+    cfg->timelapse_max_interval_s = 300;
+    cfg->timelapse_decay_factor = 2;
+    cfg->timelapse_decay_period_s = 10;
     cfg->magic = CONFIG_MAGIC;
     cfg->version = CONFIG_VERSION;
 }
@@ -93,7 +98,13 @@ esp_err_t config_init(void)
                             s_config.timelapse_interval_s = 30;
                             s_config.timelapse_burst_count = 3;
                         }
-                        s_config.version = CONFIG_VERSION;
+                        /* V5/V6→V7: missing dynamic timelapse fields */
+                        if (s_config.version <= 6) {
+                            s_config.timelapse_min_interval_s = 3;
+                            s_config.timelapse_max_interval_s = 300;
+                            s_config.timelapse_decay_factor = 2;
+                            s_config.timelapse_decay_period_s = 10;
+                        }
                         ESP_LOGI(TAG, "Config migrated V%d->V%d (blob %u->%u), saving",
                                  s_config.version, CONFIG_VERSION, (unsigned)cur_len, (unsigned)sizeof(cam_config_t));
                         config_save();
@@ -291,6 +302,18 @@ esp_err_t config_set_timelapse(uint8_t enabled, uint16_t interval_s, uint8_t bur
     s_config.timelapse_interval_s = interval_s;
     s_config.timelapse_burst_count = burst_count;
     ESP_LOGI(TAG, "Timelapse set (enabled=%u, interval=%us, burst=%u)", enabled, interval_s, burst_count);
+    return config_save();
+}
+
+esp_err_t config_set_timelapse_dynamic(uint8_t mode, uint16_t min_interval, uint16_t max_interval, uint8_t decay_factor, uint16_t decay_period)
+{
+    s_config.timelapse_mode = mode;
+    s_config.timelapse_min_interval_s = min_interval;
+    s_config.timelapse_max_interval_s = max_interval;
+    s_config.timelapse_decay_factor = decay_factor;
+    s_config.timelapse_decay_period_s = decay_period;
+    ESP_LOGI(TAG, "Timelapse dynamic set (mode=%u, min=%us, max=%us, decay=%u, period=%us)",
+             mode, min_interval, max_interval, decay_factor, decay_period);
     return config_save();
 }
 

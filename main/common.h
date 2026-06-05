@@ -6,7 +6,7 @@
 #include "esp_err.h"
 
 // Config version and magic
-#define CONFIG_VERSION  6
+#define CONFIG_VERSION  7
 #define CONFIG_MAGIC    0xA5B6C7D8
 
 // Default values
@@ -92,6 +92,11 @@ typedef struct {
     uint8_t timelapse_enabled;
     uint16_t timelapse_interval_s;
     uint8_t timelapse_burst_count;
+    uint8_t  timelapse_mode;          /* 0=static, 1=dynamic */
+    uint16_t timelapse_min_interval_s; /* min interval in seconds (dynamic mode), default 3 */
+    uint16_t timelapse_max_interval_s; /* max interval in seconds (dynamic mode), default 300 */
+    uint8_t  timelapse_decay_factor;   /* interval multiplier per decay period, default 2 */
+    uint16_t timelapse_decay_period_s; /* seconds of no motion before decay step, default 10 */
     uint32_t magic;
     uint32_t version;
 } cam_config_t;

@@ -93,6 +93,7 @@ esp_err_t config_set_motion_saved_threshold(uint8_t threshold);
 esp_err_t config_set_flash_threshold(uint8_t threshold);
 
 esp_err_t config_set_timelapse(uint8_t enabled, uint16_t interval_s, uint8_t burst_count);
+esp_err_t config_set_timelapse_dynamic(uint8_t mode, uint16_t min_interval, uint16_t max_interval, uint8_t decay_factor, uint16_t decay_period);
 
 /**
  * @brief Load WiFi config from /sdcard/config.txt (key=value format)
