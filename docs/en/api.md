@@ -1,4 +1,4 @@
-![Build Status](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/workflows/Release/badge.svg)
+![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/ai-thinker-esp32-cam/release.yml?branch=main)
 ![Platform](https://img.shields.io/badge/platform-ESP32-blue)
 ![Camera](https://img.shields.io/badge/camera-OV2640-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
