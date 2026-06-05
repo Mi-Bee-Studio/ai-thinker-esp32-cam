@@ -1,7 +1,7 @@
 # AI-Thinker ESP32-CAM 固件
 
 [![ESP32](https://img.shields.io/badge/ESP32-ESP32_D0WD_V3-blue.svg)](https://www.espressif.com/en/products/socs/esp32)
-[![ESP-IDF](https://img.shields.io/badge/ESP-IDF-v6.0.1-green.svg)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)
+[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v6.0.1-green.svg)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)
 [![OV2640](https://img.shields.io/badge/Camera-OV2640-orange.svg)](https://www.ovti.com/products/imaging-sensors/ov2640)
 [![Resolution](https://img.shields.io/badge/Resolution-VGA--UXGA-purple.svg)](https://en.wikipedia.org/wiki/Display_resolution)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)

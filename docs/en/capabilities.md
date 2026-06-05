@@ -1,5 +1,5 @@
 [![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/ai-thinker-esp32-cam/release.yml?branch=main)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/actions)
-[![ESP-IDF](https://img.shields.io/badge/ESP-IDF-v6.0.1-blue)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)  
+[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v6.0.1-blue)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)  
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 #HM|> 🌐 [中文文档](../zh/capabilities.md)

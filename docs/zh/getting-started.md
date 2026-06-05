@@ -1,7 +1,7 @@
 [![GitHub release](https://img.shields.io/github/v/release/Mi-Bee-Studio/ai-thinker-esp32-cam?include_prereleases&style=flat-square)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/releases)
 [![GitHub stars](https://img.shields.io/github/stars/Mi-Bee-Studio/ai-thinker-esp32-cam?style=flat-square)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/ai-thinker-esp32-cam/release.yml?branch=main&style=flat-square)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/actions)
-[![ESP-IDF](https://img.shields.io/badge/ESP-IDF-v6.0.1-blue?style=flat-square)](https://docs.espressif.com/projects/esp-idf/en/latest/)
+[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v6.0.1-blue?style=flat-square)](https://docs.espressif.com/projects/esp-idf/en/latest/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
 > 🌐 [English Documentation](../en/getting-started.md)

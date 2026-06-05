@@ -1,4 +1,4 @@
-[![ESP-IDF](https://img.shields.io/badge/ESP-IDF-v6.0.1-blue)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)  
+[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v6.0.1-blue)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)  
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 #WM|> 🌐 [中文文档](../zh/architecture.md)

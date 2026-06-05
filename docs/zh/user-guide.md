@@ -1,4 +1,4 @@
-[![ESP32](https://img.shields.io/badge/ESP32-Esp32--cam-blue.svg)](https://github.com/espressif/esp-idf) [![ESP-IDF](https://img.shields.io/badge/ESP-IDF-v6.0.1-green.svg)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/) [![OV2640](https://img.shields.io/badge/Camera-OV2640-orange.svg)](https://www.ovt.com/products/ov2640.html) [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![ESP32](https://img.shields.io/badge/ESP32-Esp32--cam-blue.svg)](https://github.com/espressif/esp-idf) [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v6.0.1-green.svg)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/) [![OV2640](https://img.shields.io/badge/Camera-OV2640-orange.svg)](https://www.ovt.com/products/ov2640.html) [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > 🌐 [English Documentation](../en/user-guide.md)
 

@@ -1,7 +1,7 @@
 <!-- OMO_INTERNAL_INITIATOR -->
 <p align="center">
-  <img src="https://img.shields.io/badge/ESP32-CAM-Firmware-blue?style=for-the-badge&logo=esp32&logoColor=white" alt="ESP32-CAM Firmware">
-  <img src="https://img.shields.io/badge/ESP-IDF-v6.0.1-green?style=for-the-badge&logo=espressif&logoColor=white" alt="ESP-IDF v6.0.1">
+  <img src="https://img.shields.io/badge/ESP32--CAM-Firmware-blue?style=for-the-badge&logo=esp32&logoColor=white" alt="ESP32-CAM Firmware">
+  <img src="https://img.shields.io/badge/ESP--IDF-v6.0.1-green?style=for-the-badge&logo=espressif&logoColor=white" alt="ESP-IDF v6.0.1">
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="MIT License">
   <img src="https://img.shields.io/badge/Platform-ESP32-orange?style=for-the-badge&logo=arduino&logoColor=white" alt="ESP32 Platform">
   <img src="https://img.shields.io/badge/Language-C-red?style=for-the-badge&logo=c&logoColor=white" alt="C Language">
