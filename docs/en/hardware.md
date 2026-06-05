@@ -1,4 +1,7 @@
-> 🌐 [中文文档](../zh/hardware.md)
+[![Board](https://img.shields.io/badge/Board-AI_Thinker_ESP32--CAM-blue)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam)  
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+#RW|> 🌐 [中文文档](../zh/hardware.md)
 
 # Hardware
 

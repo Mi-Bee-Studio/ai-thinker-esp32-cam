@@ -1,10 +1,16 @@
+[![GitHub release](https://img.shields.io/github/v/release/Mi-Bee-Studio/ai-thinker-esp32-cam?include_prereleases&style=flat-square)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/releases)
+[![GitHub stars](https://img.shields.io/github/stars/Mi-Bee-Studio/ai-thinker-esp32-cam?style=flat-square)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/ai-thinker-esp32-cam/release.yml?branch=main&style=flat-square)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/actions)
+[![ESP-IDF](https://img.shields.io/badge/ESP-IDF-v6.0.1-blue?style=flat-square)](https://docs.espressif.com/projects/esp-idf/en/latest/)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+
 > 🌐 [English Documentation](../en/capabilities.md)
 
 # 项目功能与能力
 
 本文档汇总 AI_Thinker ESP32-CAM 固件当前支持的全部功能、运行模式以及已移除的特性。
 
-> 数据基于当前 main 分支（`CONFIG_VERSION = 6`）。
+**数据基于当前 main 分支（`CONFIG_VERSION = 6`，魔数 `0xA5B6C7D8`）。**
 
 ## 概览
 
@@ -102,11 +108,10 @@
 
 | 功能 | 移除时间 | 原因 |
 |------|----------|------|
-| **NAS 上传（HTTP POST）** | commit `a7f2215` | FTP/NAS 太重，资源占用高 |
-| **NAS 上传（WebDAV）** | commit `a7f2215` | 同上 |
+
 | **FTP 客户端** | v2 早期 | 太重，资源紧张 |
 | **TF 卡 WiFi 配置（config.txt）** | 保留 | SD `/config.txt` 仍可启动时导入 WiFi |
-| **BOOT 按钮出厂重置** | 一直存在但被禁用 | GPIO0 = 摄像头 XCLK，按下检测不可靠，改用 `POST /api/reset` |
+|| **BOOT 按钮出厂重置** | 始终禁用 | GPIO0 = 摄像头 XCLK，按下检测不可靠，改用 `POST /api/reset` |
 | **PSRAM DMA 模式** | 一直禁用 | ESP32 原版 DMA bug，固件 `sdkconfig.defaults` 强制 `CAMERA_PSRAM_DMA=n` |
 | **新 SCCB/I2C 驱动** | 一直禁用 | `CONFIG_SCCB_HARDWARE_I2C_DRIVER_LEGACY=y` 兼容 OV2640 |
 
@@ -128,8 +133,7 @@
 12. Web 服务器启动（端口 80）
 13. 运动检测启动
 14. SD 卡初始化（在摄像头之后，GPIO14 复用）
-15. ~~NAS 上传器~~（已移除）
-16. ~~BOOT 按钮~~（已禁用）
+
 
 ## 配置结构
 
@@ -160,7 +164,7 @@
 
 - **STA 模式连接失败**：连续重连 N 次后回退到 AP 模式
 - **SD 卡挂载失败**：继续运行，只是不能保存照片（web 仍可用）
-- **摄像头初始化失败（STA 模式下）**：重试 3 次，每次间隔 500ms（ESP32 DMA freeze workaround）
+- **摄像头初始化失败（STA 模式下）**：重试 3 次，每次间隔 500ms（ESP32 DMA 冻结问题解决方法，固件在 WiFi STA 模式下延迟摄像头初始化）
 - **WiFi 中途断开**：触发 `WIFI_STATE_STA_DISCONNECTED`，健康监控记录，LED 闪烁
 - **TF 卡热拔**：10s 轮询检测到，自动卸载并通知
 - **TF 卡容量 < 20%**：自动从最旧文件开始删

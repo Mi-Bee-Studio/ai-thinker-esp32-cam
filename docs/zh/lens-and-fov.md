@@ -1,11 +1,24 @@
+[![ESP32](https://img.shields.io/badge/ESP32-Esp32--cam-blue.svg)](https://github.com/espressif/esp-idf) [![ESP-IDF](https://img.shields.io/badge/ESP-IDF-v6.0.1-green.svg)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/) [![OV2640](https://img.shields.io/badge/Camera-OV2640-orange.svg)](https://www.ovt.com/products/ov2640.html) [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 > 🌐 [English Documentation](../en/lens-and-fov.md)
 
 # 镜头与视场角（FOV）
 
-本文档说明 OV2640 摄像头模块的镜头物理参数、视场角、固件中的"视野"控制项，以及如何扩展广角/微距能力。
+**本文档说明 OV2640 摄像头模块的镜头物理参数、视场角、固件中的
+视野"控制项，以及如何扩展广角/微距能力。**"
 
-> **关键事实**：固件**没有**任何软件变焦/对焦/光圈控制，镜头焦距是**物理属性**，更换镜头无需修改代码。
+**📋 目录**
+- [OV2640 传感器物理参数](#ov2640-传感器物理参数)
+- [固件中硬编码的摄像头配置](#固件中硬编码的摄像头配置)
+- [AI-Thinker 板载原厂镜头](#ai-thinker-板载原厂镜头)
+- [视场角（FOV）随分辨率变化](#视场角fov随分辨率变化)
+- [广角能力](#广角能力)
+- [微距能力](#微距能力)
+- [红外 / 夜视版本](#红外--夜视版本)
+- [镜头更换步骤](#镜头更换步骤)
+- [总结](#总结)
 
+---
 ## OV2640 传感器物理参数
 
 | 参数 | 数值 |
@@ -180,6 +193,9 @@ OV2640 通过**内部 ISP 缩放/窗口**生成低分辨率——不是软件裁
 | 视场角（最低分辨率 VGA） | **~34° 水平**（2× 变焦效果） |
 | 视场角（最高分辨率 UXGA） | **~68° 水平**（最广） |
 | 数字变焦 | ❌ 固件没暴露 ROI 接口 |
+
+---
+💡 **提示**：选择合适的镜头可以显著改变拍摄效果，而无需修改任何固件代码。
 | 自动对焦 | ❌ OV2640 不支持 |
 | 畸变校正（LENC） | ❌ 未启用 |
 | 镜像翻转 | ✅ `vflip` 配置项 |

@@ -1,4 +1,7 @@
-> 🌐 [中文文档](../zh/architecture.md)
+[![ESP-IDF](https://img.shields.io/badge/ESP-IDF-v6.0.1-blue)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)  
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+#WM|> 🌐 [中文文档](../zh/architecture.md)
 
 # Architecture
 
@@ -13,7 +16,7 @@ The AI_Thinker ESP32-CAM firmware is a real-time embedded system designed for ca
 - **Real-time Processing**: Concurrent camera capture and streaming
 - **Resource-Constrained**: Optimized for 4MB flash + 4MB PSRAM
 - **Networked**: WiFi connectivity with AP/STA dual-mode
-- **Modular**: 14 separate modules with defined interfaces
+- **Modular**: 12 separate modules with defined interfaces
 - **Event-Driven**: Asynchronous operation with state machines
 
 ## Module Architecture
@@ -24,8 +27,8 @@ The firmware consists of 14 interconnected modules, each with specific responsib
 ┌─────────────────────────────────────────────────────────────┐
 │                    Application Layer                          │
 ├─────────────────────────────────────────────────────────────┤
-│  Web Server    │ MJPEG Streamer │ Motion Detect │ NAS Uploader│
-│  (HTTP + API)  │   (Streaming)  │   (Capture)  │   (Upload)  │
+│  Web Server    │ MJPEG Streamer │ Motion Detect            │
+│  (HTTP + API)  │   (Streaming)  │   (Capture)            │
 ├─────────────────────────────────────────────────────────────┤
 │                    Hardware Interface Layer                  │
 ├─────────────────────────────────────────────────────────────┤
@@ -58,7 +61,7 @@ The firmware consists of 14 interconnected modules, each with specific responsib
 **Responsibility**: OV2640 camera control and frame capture
 - **Functions**: Initialization, JPEG capture, resolution control
 - **Memory**: PSRAM for frame buffers
-- **Critical**: Must init before WiFi (I2C bus conflict)
+- **Critical**: Deferred after WiFi STA (DMA freeze workaround esp32-camera#620)
 - **GPIO**: Uses camera-specific pins (XCLK=0, etc.)
 
 ### 3. WiFi Manager (`wifi_manager.c/h`)
@@ -101,28 +104,28 @@ The firmware consists of 14 interconnected modules, each with specific responsib
 - **Algorithm**: JPEG frame-difference with configurable threshold
 - **Brightness**: Grayscale pixel probing (primary) + JPEG size fallback
 - **Auto Flash**: LEDC PWM on GPIO4 (~80% duty, safe for AI-Thinker hardware)
-- **Trigger**: Save photo + upload to NAS
+- **Trigger**: Save photo to SD card
 - **Configurable**: Threshold, cooldown, flash_threshold (brightness %)
 
-### 9. NAS Uploader (`nas_uploader.c/h`)
-**Responsibility**: Background file upload
-- **Protocols**: HTTP/WebDAV
-- **Queue**: Asynchronous upload processing
-- **Retry**: 3 attempts with exponential backoff
-- **Integration**: Works with motion detection
-
-### 11. WebDAV Client (`webdav_client.c/h`)
-**Responsibility**: WebDAV protocol implementation
-- **Method**: PUT with authentication
-- **Headers**: Content-Type and authorization
-- **Integration**: HTTP-based upload alternative
-
-### 12. Status LED (`status_led.c/h`)
+### 9. Status LED (`status_led.c/h`)
 **Responsibility**: System status indication
 - **GPIO**: GPIO33 (active LOW)
 - **Patterns**: Different blink patterns for each state
 - **States**: Starting, WiFi connecting, running, error, AP mode
 
+
+### 10. Time Sync (`time_sync.c/h`)
+**Responsibility**: Time and date management
+- **Protocol**: SNTP with NTP server
+- **Timezone**: Configurable POSIX timezone
+- **Accuracy**: Synchronized within 1 second
+- **Use Case**: Timestamps for photos and logs
+### 11. Health Monitor (`health_monitor.c/h`)
+**Responsibility**: System health tracking
+- **Metrics**: Heap, PSRAM, task stack usage
+- **Output**: Prometheus-compatible /metrics endpoint
+- **Interval**: 60-second monitoring
+- **Logging**: Periodic health reports
 ### 13. Time Sync (`time_sync.c/h`)
 **Responsibility**: Time and date management
 - **Protocol**: SNTP with NTP server
@@ -146,21 +149,21 @@ graph TD
     A[1. NVS Init] --> B[2. Config Load]
     B --> C[3. LED Init]
     C --> D[4. SPIFFS Mount]
-    D --> E[5. Camera Init]
+    D --> E[5. ~~Camera Init~~ (deferred to WiFi callback - DMA freeze workaround)]
     E --> F[6. WiFi Init]
     F --> G[7. WiFi Callback]
     G --> H[8. Health Monitor]
     H --> I[9. WiFi Mode Selection]
     I --> J{STA Mode?}
-    J -->|Yes| K[10. MJPEG Init]
-    J -->|No| L[10. MJPEG Init]
-    K --> M[11. Time Sync]
-    L --> N[11. Web Server Start]
+    J -->|Yes| K[10. Camera Init (after WiFi STA, DMA freeze workaround esp32-camera#620)]
+    J -->|No| L[10. Camera Init (after WiFi STA, DMA freeze workaround esp32-camera#620)]
+    K --> M[11. MJPEG Init]
+    L --> N[11. Time Sync]
     M --> O[12. Web Server Start]
     O --> P[13. Motion Detect]
-    P --> Q[14. SD Card Init]
-    Q --> R[15. NAS Uploader]
-    R --> S[16. BOOT Monitor]
+    P --> Q[14. SD Card Init (after camera, GPIO14 sharing)]
+    Q --> R[15. Motion Detect]
+    R --> S[16. ~~BOOT button~~ (disabled, use POST /api/reset instead)]
 ```
 
 ### Boot Step Details
@@ -196,7 +199,8 @@ JPEG Encoding → MJPEG Streamer → Network Client
     ↓
 Storage Manager → SD Card (Photos)
     ↓
-Motion Detection → NAS Uploader → Remote Server
+    ↓
+Motion Detection → SD Card Storage
 ```
 
 ### Network Data Flow
@@ -263,7 +267,7 @@ Runtime Changes → Config Manager → NVS Update
 // Background Tasks
 - Health monitoring (60s interval)
 - Motion detection (continuous)
-- NAS uploader (queue processing)
+
 - SD card monitoring (hot-plug detection)
 ```
 

@@ -1,3 +1,9 @@
+[![GitHub release](https://img.shields.io/github/v/release/Mi-Bee-Studio/ai-thinker-esp32-cam?include_prereleases&style=flat-square)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/releases)
+[![GitHub stars](https://img.shields.io/github/stars/Mi-Bee-Studio/ai-thinker-esp32-cam?style=flat-square)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/ai-thinker-esp32-cam/release.yml?branch=main&style=flat-square)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/actions)
+[![ESP-IDF](https://img.shields.io/badge/ESP-IDF-v6.0.1-blue?style=flat-square)](https://docs.espressif.com/projects/esp-idf/en/latest/)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+
 > 🌐 [English Documentation](../en/getting-started.md)
 
 # 入门指南
@@ -14,7 +20,7 @@
 - 带有 USB 端口的计算机
 
 ### 软件
-- **ESP-IDF v6.0** — [安装指南](https://docs.espressif.com/projects/esp-idf/en/v6.0/esp32/get-started/index.html)
+- **ESP-IDF v6.0.1** — [安装指南](https://docs.espressif.com/projects/esp-idf/en/v6.0/esp32/get-started/index.html) (**必需版本**，固件专为 ESP-IDF v6.0.1 构建)
 - **Python 3.8 或更高版本**
 - **Git**
 - **esptool.py**（通常随 ESP-IDF 一起提供）
@@ -182,7 +188,7 @@ curl -o test.jpg http://<设备-ip>/capture
 设备运行后，您可以：
 - 探索 [用户指南](user-guide.md) 了解详细使用方法
 - 了解 [硬件](hardware.md) 规格和引脚映射
-- 配置运动检测和 NAS 上传
+- 配置运动检测和延时摄影功能
 - 查看 [架构](architecture.md) 了解系统详情
 - 检查 [故障排除](troubleshooting.md) 指南以获取解决方案
 - 探索 [API](api.md) 进行编程控制

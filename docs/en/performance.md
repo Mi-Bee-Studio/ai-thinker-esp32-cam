@@ -1,8 +1,9 @@
-> 🌐 [中文文档](../zh/performance.md)
+![Build Status](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/workflows/Release/badge.svg)
+![Platform](https://img.shields.io/badge/platform-ESP32-blue)
+![Camera](https://img.shields.io/badge/camera-OV2640-green)
+![License](https://img.shields.io/badge/license-MIT-orange)
 
 # Performance and Latency
-
-This document provides measured FPS, JPEG size, and end-to-end latency data for the ESP32-CAM firmware at different resolution/quality settings, plus performance bottleneck analysis.
 
 > Data based on AI-Thinker ESP32-CAM (ESP32 dual-core 240MHz, 4MB PSRAM, OV2640), firmware `main` branch.
 
@@ -17,8 +18,8 @@ This document provides measured FPS, JPEG size, and end-to-end latency data for 
 | **2.4GHz WiFi 802.11 b/g/n** | Effective bandwidth ~20-30 Mbps (affected by signal quality / interference) |
 | **Single-threaded HTTP server** | `HTTPD_DEFAULT_CONFIG` default; one slow request blocks all others |
 
-> ⚠️ ESP32 in STA mode has a known camera DMA freeze issue. The firmware uses "start WiFi first → init camera in callback + 3x retry" workaround (`main.c:54-72`).
 
+> ⚠️ ESP32 in STA mode has a known camera DMA freeze issue. The firmware uses "start WiFi first → init camera in callback + 3x retry" workaround (`main.c:54-72`).
 ## Resolution vs Achievable FPS
 
 | Resolution | Pixels | Achievable FPS (streaming) | JPEG Encode Time | Recommended Use |
@@ -172,6 +173,26 @@ MJPEG stream = frame rate × per-frame bytes:
 - Flash LED on GPIO4 (PWM)
 - Note: Flash range limited (~2 meters)
 
+## Performance Trade-offs
+
+### Key Limitations
+- **2-client limit**: MJPEG streaming supports maximum 2 concurrent clients due to memory constraints
+- **Single-threaded HTTP server**: One slow request blocks all other API calls
+- **Camera mutex contention**: Streaming and `/capture` endpoints are mutually exclusive
+- **PSRAM limitations**: Frame buffer size limits resolution choices
+
+### Optimization Recommendations
+**For best performance:**
+- Use VGA resolution (640×480) for streaming
+- Limit to 10-15 FPS for stable operation
+- Avoid concurrent camera operations during streaming
+- Monitor free heap memory (should remain >20KB)
+- Disable status LED if not needed for power savings
+
+**For high-quality snapshots:**
+- Use UXGA resolution (1600×1200) with quality 0
+- Accept higher latency (1-1.5 seconds)
+- Avoid streaming during capture operations
 ## Things NOT to Do
 
 | Bad Practice | Consequence |

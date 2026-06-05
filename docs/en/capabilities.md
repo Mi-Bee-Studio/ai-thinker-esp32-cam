@@ -1,8 +1,12 @@
-> 🌐 [中文文档](../zh/capabilities.md)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/ai-thinker-esp32-cam/release.yml?branch=main)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/actions)
+[![ESP-IDF](https://img.shields.io/badge/ESP-IDF-v6.0.1-blue)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)  
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+#HM|> 🌐 [中文文档](../zh/capabilities.md)
 
 # Project Capabilities
 
-This document summarizes all currently supported features, operating modes, and removed features in the AI_Thinker ESP32-CAM firmware.
+This document summarizes all currently supported features, operating modes, and removed features in the AI-Thinker ESP32-CAM firmware.
 
 > Data based on current main branch (`CONFIG_VERSION = 6`).
 
@@ -118,14 +122,14 @@ Full endpoint list (see [`api.md`](./api.md) for details):
 2. Config load from NVS (V1→V6 migration)
 3. Status LED init (`LED_STARTING`)
 4. SPIFFS mount (Web UI)
-5. Release SD SPI bus
+5. Release SD SPI bus (GPIO14 arbitration)
 6. WiFi subsystem init
 7. Register WiFi state callback
 8. Health monitor init
 9. WiFi mode selection (STA or AP)
-10. MJPEG streamer init
+10. ~~Camera init~~ (deferred to WiFi callback - DMA freeze workaround)
 11. NTP time sync init
-12. Web server start (port 80)
+12. Camera init (after WiFi STA, DMA freeze workaround esp32-camera#620)
 13. Motion detection start
 14. SD card init (after camera, GPIO14 sharing)
 15. ~~NAS uploader~~ (removed)

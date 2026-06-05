@@ -545,63 +545,17 @@ curl -X POST http://192.168.1.100/api/storage/init
 
 ## 网络和上传问题
 
-### NAS 上传失败
+### 📁 文件管理问题
 
-#### 问题：HTTP 上传失败
+#### 问题：文件上传功能已移除
 
-**症状**：运动检测的照片无法上传到服务器
-
-**解决方案**：
-1. **验证服务器连接**：
-   ```bash
-   # 测试服务器可达性
-   curl -I http://your-server.com/upload
-   ```
-
-2. **检查配置**：
-   ```json
-   {
-     "nas": {
-       "protocol": "HTTP",
-       "url": "http://your-server.com",
-       "port": 80,
-       "path": "/upload",
-       "retries": 3
-     }
-   }
-   ```
-
-3. **重试配置**：
-   ```bash
-   # 清除上传队列
-   curl -X POST "http://192.168.1.100/api/files/clear-queue" \
-     -H "X-Password: admin"
-   ```
-
-#### 问题：FTP 上传失败
-
-**症状**：使用 FTP 协议上传失败
+**症状**：尝试使用上传功能时出现错误
 
 **解决方案**：
-1. **FTP 服务器配置**：
-   - 启用被动模式
-   - 验证用户名/密码
-   - 检查写入权限
+此功能已从固件中移除。如需上传文件，请使用第三方工具或通过 Web 界面下载文件后手动上传。
 
-2. **调试上传**：
-   ```bash
-   # 启用详细日志
-   curl -X POST "http://192.168.1.100/api/config/update" \
-     -H "Content-Type: application/json" \
-     -H "X-Password: admin" \
-     -d '{"system":{"debug_upload":true}}'
-   ```
-
-3. **网络连接**：
-   ```bash
-   # 测试 FTP 服务器连接
-   telnet your-server.com 21
-   ```
+---
+### 🌐 API 访问问题
 
 ### API 访问问题
 
@@ -830,3 +784,9 @@ esptool.py --port COM8 --baud 460800 write_flash 0x10000 latest_firmware.bin
 2. **内存限制**：UXGA 分辨率需要 2.4MB PSRAM
 3. **WiFi 协议**：仅支持 2.4GHz (802.11 b/g/n)
 4. **文件系统**：最大支持 32GB SD 卡
+
+### 📌 重要说明
+
+**⚠️ DMA 冻结工作流程**：ESP32 在 STA 模式下摄像头初始化有已知的 DMA 冻结问题。固件采用"先启动 WiFi STA 模式，在回调中初始化摄像头 + 重试 3 次"的策略来解决此问题。启动时请注意等待 1-2 秒的摄像头初始化延迟。
+
+**⚠️ GPIO14 共享问题**：AI-Thinker ESP32-CAM 上，GPIO14 引脚被摄像头（XCLK）和 SD 卡（CLK）共享使用。固件采用 SD 卡初始化 → 摄像头初始化 → SD 卡重新初始化的顺序来避免冲突。如果遇到 SD 卡或摄像头功能异常，请首先检查此引脚连接。

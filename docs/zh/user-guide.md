@@ -1,3 +1,5 @@
+[![ESP32](https://img.shields.io/badge/ESP32-Esp32--cam-blue.svg)](https://github.com/espressif/esp-idf) [![ESP-IDF](https://img.shields.io/badge/ESP-IDF-v6.0.1-green.svg)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/) [![OV2640](https://img.shields.io/badge/Camera-OV2640-orange.svg)](https://www.ovt.com/products/ov2640.html) [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 > 🌐 [English Documentation](../en/user-guide.md)
 
 # 用户指南
@@ -54,8 +56,6 @@
 - **照片库**：按日期组织的保存照片列表
 - **下载**：单独下载照片
 - **删除**：删除照片
-- **上传到 NAS**：将照片发送到 NAS 服务器
-
 ## 配置选项
 
 ### WiFi 配置
@@ -111,12 +111,14 @@
 | 模式 | 图案 | 描述 |
 |-------|---------|-------------|
 | **常亮** | 启动中 | 系统正在启动 |
-| **快速闪烁（0.5秒亮，0.5秒灭）** | WiFi 连接中 | 正在连接到 WiFi |
-| **慢速闪烁（2秒亮，2秒灭）** | WiFi 已连接 | WiFi 已连接，正常运行 |
-| **中等闪烁（1秒亮，1秒灭）** | AP 模式 | 接入点模式激活 |
-| **红色快速闪烁（0.2秒亮，0.8秒灭）** | 错误 | 系统错误条件 |
+|| **快速闪烁（0.5秒亮，0.5秒灭）** | WiFi 连接中 | 正在连接到 WiFi
+|| **慢速闪烁（2秒亮，2秒灭）** | WiFi 已连接 | WiFi 已连接，正常运行
+|| **中等闪烁（1秒亮，1秒灭）** | AP 模式 | 接入点模式激活
+|| **红色快速闪烁（0.2秒亮，0.8秒灭）** | 错误 | 系统错误条件
 
-## SD 卡使用
+## 📁 SD 卡使用
+
+⚠️ **GPIO14 共享说明**：AI-Thinker ESP32-CAM 上，GPIO14 引脚被摄像头（XCLK）和 SD 卡（CLK）共享使用。固件采用 SD 卡初始化 → 摄像头初始化 → SD 卡重新初始化的顺序来避免冲突。
 
 ### 支持的格式
 - **文件系统**：FAT16/FAT32
@@ -253,32 +255,16 @@ else:
 当检测到运动时：
 1. LED 表示运动（短暂闪烁）
 2. 照片保存到 SD 卡
-3. 触发 NAS 上传（如果启用）
-4. 事件记录到串口输出
+3. 事件记录到串口输出
 
-## NAS 上传
+## 📶 存储管理
 
-### 支持的协议
+**SD 卡使用**：
+- 照片按日期自动保存到 SD 卡
+- 支持手动下载和删除照片
+- 可用空间实时监控
 
-#### HTTP POST
-- **端点**：`POST /upload`
-- **标头**：`Content-Type: image/jpeg`，`X-Device-ID: <设备名称>`
-- **主体**：JPEG 二进制数据
-- **最适用于**：像 iot-server-base 这样的 Web 服务器
-
-#### WebDAV
-- **方法**：PUT 带认证
-- **标头**：Content-Type 和授权
-- **最适用于**：启用了 WebDAV 的云存储
-
-### 上传工作流程
-1. 检测到运动或手动触发
-2. 捕获照片并保存到 SD 卡
-3. 添加到上传队列
-4. 重试机制：3 次尝试，间隔 2 秒
-5. 成功：从队列中删除文件
-6. 失败：稍后重试
-
+**⚠️ 重要提醒**：BOOT 按钮工厂重置功能已禁用，因为 GPIO0 被用作摄像头 XCLK 引脚。如需重置设备，请使用 Web 界面或 API 端点。
 ## 命令行界面
 
 ### 使用 `curl` 进行 API 访问
@@ -376,12 +362,10 @@ reset
 - **照片**：存储在 SD 卡上本地
 - **配置**：在 NVS 存储中加密
 - **上传**：云上传推荐使用 HTTPS
-
-### 物理安全
-- **工厂重置**：BOOT 按钮用于紧急重置
+### 🔒 物理安全
+- **重置方式**：使用 Web 界面或 API 进行重置（BOOT 按钮已禁用）
 - **LED 状态**：系统健康状态的视觉指示
 - **温度监控**：自动热保护
-
 ## 提示和最佳实践
 
 ### 安放

@@ -1,4 +1,7 @@
-> 🌐 [中文文档](../zh/user-guide.md)
+![Build Status](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/workflows/Release/badge.svg)
+![Platform](https://img.shields.io/badge/platform-ESP32-blue)
+![Camera](https://img.shields.io/badge/camera-OV2640-green)
+![License](https://img.shields.io/badge/license-MIT-orange)
 
 # User Guide
 
@@ -44,10 +47,8 @@ Full device configuration interface:
 - **WiFi Settings**: SSID, password, device name
 - **Camera Settings**: Resolution, frame rate, JPEG quality
 - **Motion Detection**: Threshold, cooldown period
-- **NAS Upload**: Protocol, server settings
 - **Time Settings**: Timezone, NTP server
 - **Security**: Web password (optional)
-
 #### 4. Files (`/files.html`)
 Photo file management:
 
@@ -82,20 +83,8 @@ Photo file management:
 |---------|-------------|---------|-------|
 | **Motion Threshold** | Sensitivity level | 5 | 1-255 |
 | **Motion Cooldown** | Minimum interval between triggers | 10 seconds | 1-255 seconds |
-| **Save Photos** | Save motion photos to SD card | Enabled | Yes/No |
-| **Upload Photos** | Upload motion photos to NAS | Enabled | Yes/No |
+|| **Save Photos** | Save motion photos to SD card | Enabled | Yes/No
 
-### NAS Upload Settings
-
-| Setting | Description | Default | Range |
-|---------|-------------|---------|-------|
-| **Upload Protocol** | HTTP or WebDAV | HTTP | HTTP/WebDAV |
-| **Server URL** | NAS server address | Empty | String |
-| **Port** | Server port | 80/21/5005 | 1-65535 |
-| **Username** | Authentication username | Empty | 32 chars |
-| **Password** | Authentication password | Empty | 64 chars |
-| **Upload Path** | Destination folder | /photos | String |
-| **Retry Count** | Upload retry attempts | 3 | 1-10 |
 
 ### Time Configuration
 
@@ -251,33 +240,11 @@ Motion detection uses frame-difference algorithm:
 
 ### Motion Events
 When motion is detected:
+When motion is detected:
 1. LED indicates motion (brief flash)
 2. Photo saved to SD card
-3. NAS upload triggered (if enabled)
-4. Event logged to serial output
+3. Event logged to serial output
 
-## NAS Upload
-
-### Supported Protocols
-
-#### HTTP POST
-- **Endpoint**: `POST /upload`
-- **Headers**: `Content-Type: image/jpeg`, `X-Device-ID: <device-name>`
-- **Body**: JPEG binary data
-- **Best For**: Web servers like iot-server-base
-
-#### WebDAV
-- **Method**: PUT
-- **Authentication**: Basic auth
-- **Best For**: WebDAV-enabled cloud storage
-
-### Upload Workflow
-1. Motion detected or manual trigger
-2. Photo captured and saved to SD card
-3. Added to upload queue
-4. Retry mechanism: 3 attempts with 2s intervals
-5. Success: File deleted from queue
-6. Failure: Retry later
 
 ## Command Line Interface
 

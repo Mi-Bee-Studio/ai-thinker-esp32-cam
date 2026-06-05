@@ -1,4 +1,8 @@
-> 🌐 [中文文档](../zh/getting-started.md)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/ai-thinker-esp32-cam/release.yml?branch=main)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/actions)
+[![ESP-IDF](https://img.shields.io/badge/ESP-IDF-v6.0.1-blue)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)  
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+#SX|> 🌐 [中文文档](../zh/getting-started.md)
 
 # Getting Started
 
@@ -14,7 +18,7 @@ This guide will help you get the AI_Thinker ESP32-CAM firmware up and running. F
 - Computer with USB port
 
 ### Software
-- **ESP-IDF v6.0** — [Installation Guide](https://docs.espressif.com/projects/esp-idf/en/v6.0/esp32/get-started/index.html)
+- **ESP-IDF v6.0.1** — [Installation Guide](https://docs.espressif.com/projects/esp-idf/en/v6.0.1/esp32/get-started/index.html)
 - **Python 3.8 or later**
 - **Git**
 - **esptool.py** (usually included with ESP-IDF)
@@ -35,6 +39,11 @@ cd AI_Thinker-ESP32-cam
 C:\Espressif\esp-idf> export.bat
 
 # Linux/Mac
+source ~/esp/esp-idf/export.sh
+
+# Set up Python virtual environment (first time only)
+python3 $IDF_PATH/tools/idf_tools.py install-python-env
+# Creates: ~/.espressif/python_env/idf6.0_py3.12_env/
 source ~/esp/esp-idf/export.sh
 ```
 
@@ -182,7 +191,7 @@ curl -o test.jpg http://<device-ip>/capture
 Once your device is running, you can:
 - Explore the [User Guide](user-guide.md) for detailed usage
 - Learn about [Hardware](hardware.md) specifications and pin mappings
-- Configure motion detection and NAS upload
+- Configure motion detection and SD storage
 - Review the [Architecture](architecture.md) for system details
 - Check the [Troubleshooting](troubleshooting.md) guide for solutions
 - Explore the [API](api.md) for programmatic control

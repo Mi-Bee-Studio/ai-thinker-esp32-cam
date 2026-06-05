@@ -1,4 +1,7 @@
-> 🌐 [中文文档](../zh/troubleshooting.md)
+![Build Status](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/workflows/Release/badge.svg)
+![Platform](https://img.shields.io/badge/platform-ESP32-blue)
+![Camera](https://img.shields.io/badge/camera-OV2640-green)
+![License](https://img.shields.io/badge/license-MIT-orange)
 
 # Troubleshooting
 
@@ -16,8 +19,10 @@ idf.py -p COM8 monitor
 ```
 
 ### Step 2: Verify Hardware Connections
+
 - Ensure camera module is properly seated
 - Check TF card insertion (if using)
+- **GPIO14 shared pin**: SD card CLK and camera XCLK use same GPIO - ensure proper initialization order
 - Verify power supply (5V, 1A recommended)
 - Inspect USB cable and connections
 
@@ -88,7 +93,19 @@ idf.py -p COM8 flash -b 115200
 # Check camera module seating
 # Verify camera is OV2640 (not OV3660 or other)
 # Check GPIO14 conflict (ensure SD card not in use)
+
+# ESP32 DMA freeze workaround:
+# - Camera initialization is deferred after WiFi connection
+# - System waits for WiFi STA connection before camera init
+# - If camera fails, automatic retry up to 3 times
 ```
+
+**Root Causes**:
+- **Wrong camera model**: Only OV2640 supported
+- **Pin conflicts**: GPIO14 shared with SD card
+- **PSRAM issues**: Ensure 4MB PSRAM installed
+- **I2C communication**: Check SIOD/SIOC connections
+- **DMA freeze**: ESP32 hardware bug - WiFi must be initialized first
 
 **Root Causes**:
 - **Wrong camera model**: Only OV2640 supported
@@ -426,14 +443,16 @@ curl http://<ip>/metrics | grep heap_free
 - **Power management**: Enable dynamic frequency scaling
 
 #### Boot Button Issues
-**Problem**: Factory reset not working
+**Problem**: Factory reset not working via BOOT button
+
+**Important**: BOOT button is not functional on this firmware (GPIO0 = camera XCLK). Use these alternatives instead:
 
 **Solutions**:
-- **Timing**: Hold button for exactly 5 seconds
-- **Boot sequence**: Press during boot, not while running
-- **Physical**: Ensure button contacts clean
-- **Test**: Use `reset` command via serial if needed
+- **Web interface**: Go to Configuration page → Reset to Defaults
+- **API endpoint**: `curl -X POST http://<device-ip>/api/reset -H "X-Password: admin"`
+- **Serial command**: Type `reset` in serial monitor
 
+**Note**: GPIO0 serves as camera master clock (XCLK) and cannot be used as a general-purpose button.
 ## Advanced Troubleshooting
 
 ### Debug Commands via Serial

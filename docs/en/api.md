@@ -1,4 +1,7 @@
-> 🌐 [中文文档](../zh/api.md)
+![Build Status](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/workflows/Release/badge.svg)
+![Platform](https://img.shields.io/badge/platform-ESP32-blue)
+![Camera](https://img.shields.io/badge/camera-OV2640-green)
+![License](https://img.shields.io/badge/license-MIT-orange)
 
 # API Reference
 
@@ -18,8 +21,8 @@ Replace `<device-ip>` with your device's IP address.
 The following endpoints require authentication:
 
 - `POST /api/config`
-- `POST /api/reset`
-- `POST /api/reboot`
+- `POST /api/reset` — Factory reset (via web interface, BOOT button not functional)
+- `POST /api/reboot` — Reboot device
 
 ### Authentication Method
 Use the `X-Password` header with the web password (default: "admin"):
@@ -39,7 +42,6 @@ Set web password via POST /api/config:
   "web_password": "your-password-here"
 }
 ```
-
 ## API Endpoints
 
 ### 1. Device Status
@@ -120,13 +122,7 @@ Returns current configuration (passwords are not included).
   "timezone": "CST-8",
   "motion_threshold": 5,
   "motion_cooldown": 10,
-  "nas_protocol": 0,
-  "nas_host": "192.168.1.50",
-  "nas_port": 80,
-  "nas_user": "",
-  "nas_pass": "[hidden]",
-  "nas_path": "/photos",
-  "config_version": 1,
+  "config_version": 6,
   "config_magic": 2864434392
 }
 ```
@@ -151,13 +147,7 @@ Updates device configuration. Requires authentication.
   "jpeg_quality": 12,
   "timezone": "CST-8",
   "motion_threshold": 5,
-  "motion_cooldown": 10,
-  "nas_protocol": 0,
-  "nas_host": "192.168.1.50",
-  "nas_port": 80,
-  "nas_user": "",
-  "nas_pass": "",
-  "nas_path": "/photos"
+  "motion_cooldown": 10
 }
 ```
 
@@ -203,6 +193,8 @@ curl -X POST http://192.168.1.100/api/config \
 
 Resets configuration to factory defaults. Requires authentication.
 
+**Important**: BOOT button is not functional (GPIO0 = camera XCLK). Use this endpoint instead.
+
 **Response**
 ```json
 {
@@ -239,7 +231,7 @@ curl -X POST http://192.168.1.100/api/reboot \
 
 ### 4. Camera Functions
 
-#### GET /capture
+#### GET /api/cam
 
 Captures a single JPEG frame and returns it as binary data.
 
@@ -250,16 +242,16 @@ Captures a single JPEG frame and returns it as binary data.
 **Curl Examples**
 ```bash
 # Capture and save to file
-curl -o capture.jpg http://192.168.1.100/capture
+curl -o capture.jpg http://192.168.1.100/api/cam
 
 # Capture and display in terminal (if small)
-curl -s http://192.168.1.100/capture | file -
+curl -s http://192.168.1.100/api/cam | file -
 
 # Test capture without saving
-curl -I http://192.168.1.100/capture
+curl -I http://192.168.1.100/api/cam
 ```
 
-#### GET /stream
+#### GET /api/stream
 
 Provides MJPEG streaming using multipart/x-mixed-replace format.
 
@@ -267,24 +259,26 @@ Provides MJPEG streaming using multipart/x-mixed-replace format.
 - Content-Type: `multipart/x-mixed-replace; boundary=frame`
 - Body: MJPEG frames with boundary markers
 
+**Note**: Camera initialization is deferred after WiFi connection to avoid ESP32 DMA freeze issues.
+
 **Curl Examples**
 ```bash
 # View stream in browser
-http://192.168.1.100/stream
+http://192.168.1.100/api/stream
 
 # Test stream connectivity
-curl -s http://192.168.1.100/stream | head -c 200
+curl -s http://192.168.1.100/api/stream | head -c 200
 
 # Save stream to file (first 10MB)
-curl -s http://192.168.1.100/stream | head -c 10485760 > stream.mjpeg
+curl -s http://192.168.1.100/api/stream | head -c 10485760 > stream.mjpeg
 
 # Get stream info (headers only)
-curl -I http://192.168.1.100/stream
+curl -I http://192.168.1.100/api/stream
 ```
 
-### 5. Monitoring and Metrics
+### 5. System Health Monitoring
 
-#### GET /metrics
+#### GET /api/health
 
 Returns Prometheus-compatible metrics for monitoring.
 
@@ -329,22 +323,22 @@ esp_temperature_celsius 42.5
 
 **Curl Examples**
 ```bash
-# Get metrics
-curl -s http://192.168.1.100/metrics
+# Get health metrics
+curl -s http://192.168.1.100/api/health
 
 # Filter specific metrics
-curl -s http://192.168.1.100/metrics | grep heap
+curl -s http://192.168.1.100/api/health | grep heap
 
 # Export metrics for Prometheus
-curl -s http://192.168.1.100/metrics > prometheus_metrics.txt
+curl -s http://192.168.1.100/api/health > prometheus_metrics.txt
 
 # Monitor metrics in real-time
-watch -n 5 "curl -s http://192.168.1.100/metrics | grep heap"
+watch -n 5 "curl -s http://192.168.1.100/api/health | grep heap"
 ```
 
-### 6. File Management
+### 6. SD Card Photo Management
 
-#### GET /api/files
+#### GET /api/sd/photo
 
 Returns list of SD card photos with metadata.
 
@@ -392,16 +386,13 @@ Returns list of SD card photos with metadata.
 **Curl Examples**
 ```bash
 # Get all photos
-curl -s http://192.168.1.100/api/files | python -m json.tool
+curl -s http://192.168.1.100/api/sd/photo | python -m json.tool
 
 # Get first page of photos
-curl -s "http://192.168.1.100/api/files?page=1&per_page=10" | python -m json.tool
-
-# Filter photos by date
-curl -s "http://192.168.1.100/api/files?date=2024-12-30" | python -m json.tool
+curl -s "http://192.168.1.100/api/sd/photo?page=1&per_page=10" | python -m json.tool
 
 # Check photo count
-curl -s http://192.168.1.100/api/files | jq '.photos | length'
+curl -s http://192.168.1.100/api/sd/photo | jq '.photos | length'
 ```
 
 #### GET /api/download?name=xxx
@@ -421,61 +412,45 @@ Downloads a specific photo file.
 curl -o "2024-12-30-14-30-25.jpg" "http://192.168.1.100/api/download?name=2024-12-30-14-30-25.jpg"
 
 # Download with different filename
-curl -o "photo_backup.jpg" "http://192.168.1.100/api/download?name=2024-12-30-14-30-25.jpg"
+curl -o "photo_backup.jpg" "http://192.168.1.100/api/sd/photo/2024-12-30-14-30-25.jpg"
 
 # List available photos first
-curl -s http://192.168.1.100/api/files | jq -r '.photos[].name'
+curl -s http://192.168.1.100/api/sd/photo | jq -r '.photos[].name'
 ```
 
-### 7. Upload Functions
+### 7. Photo Deletion
 
-#### POST /api/upload
+#### DELETE /api/sd/photo/:name
 
-Triggers manual NAS upload of a specific photo. Requires authentication.
-
-**Request Body**
-```json
-{
-  "photo_name": "2024-12-30-14-30-25.jpg"
-}
-```
+Deletes a specific photo from SD card. Requires authentication.
 
 **Parameters**
-- `photo_name`: Name of the photo to upload (optional, defaults to newest)
+- `name`: Photo filename to delete (required)
 
 **Response**
 ```json
 {
   "success": true,
-  "message": "Upload started",
-  "photo": "2024-12-30-14-30-25.jpg",
-  "protocol": "HTTP",
-  "server": "192.168.1.50",
-  "status": "queued",
-  "estimated_time": 5
+  "message": "Photo deleted successfully",
+  "photo": "2024-12-30-14-30-25.jpg"
 }
 ```
 
 **Curl Examples**
 ```bash
-# Upload specific photo
-curl -X POST http://192.168.1.100/api/upload \
-  -H "Content-Type: application/json" \
-  -H "X-Password: admin" \
-  -d '{"photo_name":"2024-12-30-14-30-25.jpg"}'
-
-# Upload most recent photo
-curl -X POST http://192.168.1.100/api/upload \
-  -H "Content-Type: application/json" \
+# Delete specific photo
+curl -X DELETE http://192.168.1.100/api/sd/photo/2024-12-30-14-30-25.jpg \n
   -H "X-Password: admin"
 
-# Check upload status (monitor response)
-curl -X POST http://192.168.1.100/api/upload \
-  -H "Content-Type: application/json" \
-  -H "X-Password: admin" | python -m json.tool
+# List photos before deletion
+curl -s http://192.168.1.100/api/sd/photo | jq -r '.photos[].name'
+
+# Verify deletion
+curl -s http://192.168.1.100/api/sd/photo | jq -r '.photos[] | select(.name == "2024-12-30-14-30-25.jpg")'
 ```
 
-## Web Interface Endpoints
+
+## Web Interface
 
 ### Static Pages
 - `GET /` - Dashboard (SPIFFS index.html)
