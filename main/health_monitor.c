@@ -12,6 +12,7 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "timelapse.h"
 #include <inttypes.h>
 #include <stdio.h>
 
@@ -192,6 +193,13 @@ const char *health_monitor_get_prometheus_str(void)
     PROM_LINE("# HELP esp32_timelapse_burst_photos Timelapse burst photos taken");
     PROM_LINE("# TYPE esp32_timelapse_burst_photos counter");
     PROM_LINE("esp32_timelapse_burst_photos %" PRIu32, s_metrics.timelapse_burst_photos);
+
+    PROM_LINE("# HELP esp32_timelapse_current_interval Timelapse current interval in seconds");
+    PROM_LINE("# TYPE esp32_timelapse_current_interval gauge");
+    PROM_LINE("esp32_timelapse_current_interval %u", timelapse_get_current_interval_s());
+    PROM_LINE("# HELP esp32_timelapse_mode Timelapse mode (0=static, 1=dynamic)");
+    PROM_LINE("# TYPE esp32_timelapse_mode gauge");
+    PROM_LINE("esp32_timelapse_mode %u", timelapse_get_mode());
 
 #undef PROM_LINE
 

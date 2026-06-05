@@ -227,6 +227,11 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "timelapse_enabled", (double)cfg->timelapse_enabled);
     cJSON_AddNumberToObject(data, "timelapse_interval_s", (double)cfg->timelapse_interval_s);
     cJSON_AddNumberToObject(data, "timelapse_burst_count", (double)cfg->timelapse_burst_count);
+    cJSON_AddNumberToObject(data, "timelapse_mode", (double)cfg->timelapse_mode);
+    cJSON_AddNumberToObject(data, "timelapse_min_interval_s", (double)cfg->timelapse_min_interval_s);
+    cJSON_AddNumberToObject(data, "timelapse_max_interval_s", (double)cfg->timelapse_max_interval_s);
+    cJSON_AddNumberToObject(data, "timelapse_decay_factor", (double)cfg->timelapse_decay_factor);
+    cJSON_AddNumberToObject(data, "timelapse_decay_period_s", (double)cfg->timelapse_decay_period_s);
     return send_json_ok(req, data);
 }
 
@@ -410,6 +415,71 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
 
         if (timelapse_changed) {
             config_set_timelapse(tl_enabled, tl_interval, tl_burst);
+        }
+    }
+
+    /* Dynamic timelapse settings */
+    {
+        bool dynamic_changed = false;
+        uint8_t tl_mode = config_get()->timelapse_mode;
+        uint16_t tl_min = config_get()->timelapse_min_interval_s;
+        uint16_t tl_max = config_get()->timelapse_max_interval_s;
+        uint8_t tl_decay = config_get()->timelapse_decay_factor;
+        uint16_t tl_period = config_get()->timelapse_decay_period_s;
+
+        item = cJSON_GetObjectItem(json, "timelapse_mode");
+        if (item && cJSON_IsNumber(item)) {
+            uint8_t val = (uint8_t)item->valueint;
+            if (val > 1) {
+                char msg[64];
+                snprintf(msg, sizeof(msg), "Invalid timelapse_mode: %u (must be 0 or 1)", val);
+                cJSON_Delete(json);
+                return send_json_error(req, msg, 400);
+            }
+            tl_mode = val;
+            dynamic_changed = true;
+        }
+
+        item = cJSON_GetObjectItem(json, "timelapse_min_interval_s");
+        if (item && cJSON_IsNumber(item)) { tl_min = (uint16_t)item->valueint; dynamic_changed = true; }
+
+        item = cJSON_GetObjectItem(json, "timelapse_max_interval_s");
+        if (item && cJSON_IsNumber(item)) { tl_max = (uint16_t)item->valueint; dynamic_changed = true; }
+
+        item = cJSON_GetObjectItem(json, "timelapse_decay_factor");
+        if (item && cJSON_IsNumber(item)) {
+            uint8_t val = (uint8_t)item->valueint;
+            if (val <= 1) {
+                char msg[64];
+                snprintf(msg, sizeof(msg), "Invalid timelapse_decay_factor: %u (must be > 1)", val);
+                cJSON_Delete(json);
+                return send_json_error(req, msg, 400);
+            }
+            tl_decay = val;
+            dynamic_changed = true;
+        }
+
+        item = cJSON_GetObjectItem(json, "timelapse_decay_period_s");
+        if (item && cJSON_IsNumber(item)) {
+            uint16_t val = (uint16_t)item->valueint;
+            if (val == 0) {
+                char msg[128];
+                snprintf(msg, sizeof(msg), "Invalid timelapse_decay_period_s: %u (must be > 0)", val);
+                cJSON_Delete(json);
+                return send_json_error(req, msg, 400);
+            }
+            tl_period = val;
+            dynamic_changed = true;
+        }
+
+        if (dynamic_changed) {
+            if (tl_min >= tl_max) {
+                char msg[128];
+                snprintf(msg, sizeof(msg), "Invalid timelapse interval: min=%u must be less than max=%u", tl_min, tl_max);
+                cJSON_Delete(json);
+                return send_json_error(req, msg, 400);
+            }
+            config_set_timelapse_dynamic(tl_mode, tl_min, tl_max, tl_decay, tl_period);
         }
     }
 
@@ -759,6 +829,8 @@ static esp_err_t handler_api_timelapse_status(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "burst_count", (double)cfg->timelapse_burst_count);
     cJSON_AddNumberToObject(data, "photo_count", (double)timelapse_get_photo_count());
     cJSON_AddNumberToObject(data, "burst_photo_count", (double)timelapse_get_burst_photo_count());
+    cJSON_AddNumberToObject(data, "current_interval_s", (double)timelapse_get_current_interval_s());
+    cJSON_AddNumberToObject(data, "mode", (double)timelapse_get_mode());
     return send_json_ok(req, data);
 }
 
