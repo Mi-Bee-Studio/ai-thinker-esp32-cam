@@ -55,7 +55,7 @@ static uint32_t s_cached_total_mb = 0;  /* Cached SD total capacity, set on moun
 static char *s_list_cache = NULL;
 static size_t s_list_cache_len = 0;
 static int64_t s_list_cache_time = 0;
-#define LIST_CACHE_TTL_MS  30000  /* 30 second cache TTL */
+#define LIST_CACHE_TTL_MS  300000 /* 5 minute cache TTL (was 30s — slow SPI SD)*/
 
 /* ---- Forward declarations ---- */
 static void hotplug_monitor_task(void *arg);
@@ -142,7 +142,15 @@ static esp_err_t ensure_photo_dir(char *dirpath, size_t dirpath_size)
     time_t now = time(NULL);
     struct tm tm;
     localtime_r(&now, &tm);
-    snprintf(dirpath, dirpath_size, "%s/%04d-%02d", PHOTOS_BASE_PATH, tm.tm_year + 1900, tm.tm_mon + 1);
+
+    /* Guard: if RTC time is before 2024 (pre-NTP epoch), use unknown dir
+     * instead of creating a 1970-* directory. */
+    int year = tm.tm_year + 1900;
+    if (year < 2024) {
+        snprintf(dirpath, dirpath_size, "%s/unknown", PHOTOS_BASE_PATH);
+    } else {
+        snprintf(dirpath, dirpath_size, "%s/%04d-%02d", PHOTOS_BASE_PATH, year, tm.tm_mon + 1);
+    }
 
     struct stat st;
     /* Create base photos dir if missing */
@@ -678,6 +686,60 @@ uint32_t storage_get_total_space(void)
     return s_cached_total_mb;
 }
 
+void storage_warm_cache(void)
+{
+    if (!s_mounted) return;
+
+    char *buf = malloc(32768);
+    if (!buf) {
+        ESP_LOGW(TAG, "Cannot allocate buffer for cache warm-up");
+        return;
+    }
+
+    ESP_LOGI(TAG, "Warming photo list cache...");
+    int count = storage_list_photos(PHOTOS_BASE_PATH, buf, 32768);
+    ESP_LOGI(TAG, "Photo list cache warmed: %d entries", count);
+    free(buf);
+}
+
+esp_err_t storage_format(void)
+{
+    if (!s_mounted || !s_card) {
+        ESP_LOGE(TAG, "SD card not mounted, cannot format");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+    ESP_LOGW(TAG, "=== FORMATTING SD CARD - ALL DATA WILL BE LOST ===");
+
+    /* Invalidate photo list cache */
+    if (s_list_cache) {
+        free(s_list_cache);
+        s_list_cache = NULL;
+        s_list_cache_len = 0;
+        s_list_cache_time = 0;
+    }
+
+    /* Format the SD card via VFS FatFs (unmounts, formats, remounts) */
+    esp_err_t ret = esp_vfs_fat_sdcard_format(MOUNT_POINT, s_card);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "SD card format failed: %s", esp_err_to_name(ret));
+        s_mounted = false;
+        xSemaphoreGive(s_mutex);
+        return ret;
+    }
+
+    /* Recreate photos base directory */
+    mkdir(PHOTOS_BASE_PATH, 0775);
+
+    /* Recalculate total space (may differ after format on some cards) */
+    cache_sd_total_mb();
+
+    ESP_LOGI(TAG, "SD card formatted successfully");
+    xSemaphoreGive(s_mutex);
+    return ESP_OK;
+}
 static void cache_sd_total_mb(void)
 {
     DWORD free_clusters = 0;

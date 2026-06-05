@@ -83,4 +83,10 @@ void storage_invalidate_list_cache(void);
  */
 uint32_t storage_get_total_space(void);
 
+/** @brief Warm the photo list cache in background (call after storage_init) */
+void storage_warm_cache(void);
+
+/** @brief Format the SD card (all data lost). Remounts after format. */
+esp_err_t storage_format(void);
+
 #endif // STORAGE_MANAGER_H

@@ -49,6 +49,7 @@ static bool s_in_cooldown = false;
 static int64_t s_cooldown_start_us = 0;
 static uint8_t s_brightness_pct = 50;
 static bool s_scene_dark = false;
+static uint32_t s_unknown_seq = 0; /* Counter for pre-sync fallback filenames */
 
 /* ---- Internal helpers ---- */
 
@@ -113,17 +114,18 @@ static void handle_motion_event(bool dark_scene)
         }
     }
 
-    /* Generate timestamped filename (FAT-safe: no colons) */
-    const char *timestamp = time_sync_get_str();
+    /* Generate timestamped filename (FAT-safe: no colons)
+     * If time not synced yet, use counter-based fallback to avoid 1970 timestamps. */
     char filename[64];
-    if (timestamp != NULL) {
+    if (time_sync_is_synced()) {
+        const char *timestamp = time_sync_get_str();
         snprintf(filename, sizeof(filename), "motion_%s.jpg", timestamp);
         /* Replace spaces and colons with underscores for FAT compatibility */
         for (char *p = filename; *p; p++) {
             if (*p == ' ' || *p == ':') *p = '_';
         }
     } else {
-        snprintf(filename, sizeof(filename), "motion_unknown.jpg");
+        snprintf(filename, sizeof(filename), "motion_unknown_%03u.jpg", (unsigned)s_unknown_seq++);
     }
 
     esp_err_t err = storage_save_photo(fb, filename);

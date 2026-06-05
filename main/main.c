@@ -46,6 +46,12 @@ static bool s_timelapse_started = false;
 /* stack overflow in the event callback. Camera init, MJPEG, web      */
 /* server, motion detection all run here after WiFi STA connects.      */
 /* ------------------------------------------------------------------ */
+/* Background task to warm photo list cache after SD init */
+static void storage_warm_cache_task(void *arg)
+{
+    storage_warm_cache();
+    vTaskDelete(NULL);
+}
 static void sta_services_task(void *arg)
 {
     ESP_LOGI(TAG, "STA services task started");
@@ -92,6 +98,21 @@ static void sta_services_task(void *arg)
         } else {
             ESP_LOGW(TAG, "Time sync init failed: %s", esp_err_to_name(ret));
         }
+    }
+
+    /* Wait for NTP time sync before starting capture services.
+     * Prevents 1970-timestamped photos from motion/timelapse.
+     * Timeout after 30s — services start regardless (with fallback naming).
+     */
+    int sync_wait = 0;
+    while (!time_sync_is_synced() && sync_wait < 30) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        sync_wait++;
+    }
+    if (time_sync_is_synced()) {
+        ESP_LOGI(TAG, "Time synchronized after %d sec", sync_wait);
+    } else {
+        ESP_LOGW(TAG, "Time sync timeout (%d sec), capture will use fallback naming", sync_wait);
     }
 
     /* Start web server (once) */
@@ -363,6 +384,9 @@ void app_main(void)
         } else {
             ESP_LOGD(TAG, "=== SD config: no update ===");
         }
+
+        /* Background cache warm-up so first /api/files call is fast */
+        xTaskCreate(storage_warm_cache_task, "warm_cache", 4096, NULL, 1, NULL);
     }
 
     /* Step 15/16: NAS uploader removed */

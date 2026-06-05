@@ -86,6 +86,7 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 </select>
 <button class="btn btn-s" onclick="goPage(curPage)">刷新</button>
 </div>
+    <button class="btn btn-d" onclick="formatSD()">格式化SD卡</button>
 </div>
 
 <div id="fileList"></div>
@@ -210,6 +211,26 @@ function delFile(name){
     });
 }
 
+
+function formatSD(){
+    var btn=document.querySelector('.btn-d');
+    if(!confirm('⚠️ 确定要格式化SD卡吗？\n\n所有照片数据将被永久删除！\n此操作不可恢复！'))return;
+    if(!confirm('⚠️ 再次确认：格式化将删除全部 '+($('fSummary').textContent||'照片')+'\n\n确定继续？'))return;
+    btn.disabled=true;btn.textContent='格式化中...';
+    fetch('/api/format',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+        if(d&&d.ok){
+            showToast('格式化成功，请重新加载页面');
+            setTimeout(function(){goPage(1)},1500);
+        }else{
+            showToast('格式化失败: '+(d&&d.error||'未知错误'),true);
+            btn.disabled=false;btn.textContent='格式化SD卡';
+        }
+    }).catch(function(e){
+        showToast('格式化请求失败',true);
+        btn.disabled=false;btn.textContent='格式化SD卡';
+        console.error(e);
+    });
+}
 window.onload=function(){goPage(1)};
 </script>
 </body>

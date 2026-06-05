@@ -835,6 +835,28 @@ static esp_err_t handler_api_timelapse_status(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------ */
+/*  POST /api/format  — Format SD card (all data lost!)               */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handler_api_format(httpd_req_t *req)
+{
+    if (!storage_is_available()) {
+        return send_json_error(req, "SD card not available", 503);
+    }
+
+    ESP_LOGW(TAG, "=== FORMAT SD CARD requested via API ===");
+
+    esp_err_t ret = storage_format();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "SD card format failed: %s", esp_err_to_name(ret));
+        return send_json_error(req, "Format failed, please reboot", 500);
+    }
+
+    ESP_LOGI(TAG, "SD card formatted successfully via API");
+    return send_json_ok(req, NULL);
+}
+
+/* ------------------------------------------------------------------ */
 /*  OPTIONS *   - CORS preflight                                       */
 /* ------------------------------------------------------------------ */
 
@@ -931,6 +953,7 @@ static const uri_entry_t s_uris[] = {
     { "/api/timelapse/start",  HTTP_POST, handler_api_timelapse_start  },
     { "/api/timelapse/stop",   HTTP_POST, handler_api_timelapse_stop   },
     { "/api/timelapse/status", HTTP_GET,  handler_api_timelapse_status },
+    { "/api/format",   HTTP_POST,   handler_api_format       },
 
     { "/*",             HTTP_OPTIONS, handler_options         },
     { "/*",             HTTP_GET,    handler_static          },

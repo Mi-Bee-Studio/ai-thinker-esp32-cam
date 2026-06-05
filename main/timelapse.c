@@ -33,6 +33,7 @@ static uint32_t s_photo_count = 0;
 static uint32_t s_burst_photo_count = 0;
 static uint16_t s_current_interval_s = 0;
 static uint64_t s_last_motion_time_us = 0;
+static uint32_t s_unknown_seq = 0; /* Counter for pre-sync fallback filenames */
 
 static void resolve_filename_conflict(char *filename, size_t filename_size, const char *base_name)
 {
@@ -169,15 +170,15 @@ static void timelapse_task(void *arg)
             samples[j] = fb->buf[i];
         }
 
-        const char *timestamp = time_sync_get_str();
         char base_name[64];
-        if (timestamp != NULL) {
+        if (time_sync_is_synced()) {
+            const char *timestamp = time_sync_get_str();
             snprintf(base_name, sizeof(base_name), "timelapse_%s", timestamp);
             for (char *p = base_name; *p; p++) {
                 if (*p == ' ' || *p == ':') *p = '_';
             }
         } else {
-            snprintf(base_name, sizeof(base_name), "timelapse_unknown");
+            snprintf(base_name, sizeof(base_name), "timelapse_unknown_%03u", (unsigned)s_unknown_seq++);
         }
 
         char filename[80];
