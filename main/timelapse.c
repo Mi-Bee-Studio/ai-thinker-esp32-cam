@@ -11,6 +11,8 @@
 #include "time_sync.h"
 #include "health_monitor.h"
 #include "flash_led.h"
+#include "motion_detect.h"
+#include "esp_timer.h"
 
 static const char *TAG = "timelapse";
 
@@ -29,6 +31,8 @@ static TaskHandle_t s_task_handle = NULL;
 static volatile bool s_running = false;
 static uint32_t s_photo_count = 0;
 static uint32_t s_burst_photo_count = 0;
+static uint16_t s_current_interval_s = 0;
+static uint64_t s_last_motion_time_us = 0;
 
 static void resolve_filename_conflict(char *filename, size_t filename_size, const char *base_name)
 {
@@ -89,8 +93,17 @@ static void timelapse_task(void *arg)
     while (s_running) {
         const cam_config_t *cfg = config_get();
 
-        for (uint32_t i = 0; i < cfg->timelapse_interval_s && s_running; i++) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
+        if (cfg->timelapse_mode == 1) {
+            if (s_current_interval_s == 0) {
+                s_current_interval_s = cfg->timelapse_min_interval_s;
+            }
+            for (uint32_t i = 0; i < s_current_interval_s && s_running; i++) {
+                vTaskDelay(pdMS_TO_TICKS(1000));
+            }
+        } else {
+            for (uint32_t i = 0; i < cfg->timelapse_interval_s && s_running; i++) {
+                vTaskDelay(pdMS_TO_TICKS(1000));
+            }
         }
         if (!s_running) break;
 
@@ -228,6 +241,25 @@ static void timelapse_task(void *arg)
                      cfg->timelapse_burst_count);
             do_burst_capture(base_name, dark_scene, cfg->timelapse_burst_count);
         }
+        if (cfg->timelapse_mode == 1) {
+            if (motion) {
+                s_current_interval_s = cfg->timelapse_min_interval_s;
+                s_last_motion_time_us = esp_timer_get_time();
+                ESP_LOGI(TAG, "Motion detected, interval reset to %us", s_current_interval_s);
+            } else {
+                uint64_t elapsed_us = esp_timer_get_time() - s_last_motion_time_us;
+                unsigned elapsed_s = (unsigned)(elapsed_us / 1000000);
+                if (elapsed_s >= cfg->timelapse_decay_period_s) {
+                    s_current_interval_s = s_current_interval_s * cfg->timelapse_decay_factor;
+                    if (s_current_interval_s > cfg->timelapse_max_interval_s) {
+                        s_current_interval_s = cfg->timelapse_max_interval_s;
+                    }
+                    s_last_motion_time_us = esp_timer_get_time();
+                    ESP_LOGI(TAG, "No motion for %us, interval decayed to %us",
+                             elapsed_s, s_current_interval_s);
+                }
+            }
+        }
 
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -257,6 +289,13 @@ esp_err_t timelapse_start(void)
     s_running = true;
     s_photo_count = 0;
     s_burst_photo_count = 0;
+    const cam_config_t *cfg = config_get();
+    s_current_interval_s = cfg->timelapse_min_interval_s;
+    s_last_motion_time_us = esp_timer_get_time();
+    if (cfg->timelapse_mode == 1) {
+        ESP_LOGI(TAG, "Dynamic mode: stopping independent motion detection");
+        motion_detect_stop();
+    }
 
     BaseType_t ret = xTaskCreate(
         timelapse_task,
@@ -273,8 +312,9 @@ esp_err_t timelapse_start(void)
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "Timelapse started (interval=%us, burst=%u)",
-             config_get()->timelapse_interval_s, config_get()->timelapse_burst_count);
+    ESP_LOGI(TAG, "Timelapse started (mode=%s, interval=%us)",
+             cfg->timelapse_mode == 1 ? "dynamic" : "static",
+             cfg->timelapse_mode == 1 ? s_current_interval_s : cfg->timelapse_interval_s);
     return ESP_OK;
 }
 
@@ -285,6 +325,10 @@ esp_err_t timelapse_stop(void)
     }
 
     ESP_LOGI(TAG, "Stopping timelapse...");
+    const cam_config_t *cfg = config_get();
+    if (cfg->timelapse_mode == 1) {
+        ESP_LOGI(TAG, "Dynamic mode stopped. Motion detection was auto-stopped and can be manually restarted.");
+    }
     s_running = false;
 
     TickType_t timeout = pdMS_TO_TICKS(STOP_WAIT_MS);
@@ -316,4 +360,15 @@ uint32_t timelapse_get_photo_count(void)
 uint32_t timelapse_get_burst_photo_count(void)
 {
     return s_burst_photo_count;
+}
+
+uint16_t timelapse_get_current_interval_s(void)
+{
+    return s_current_interval_s;
+}
+
+uint8_t timelapse_get_mode(void)
+{
+    const cam_config_t *cfg = config_get();
+    return cfg->timelapse_mode;
 }
