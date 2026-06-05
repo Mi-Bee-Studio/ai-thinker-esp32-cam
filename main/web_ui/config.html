@@ -112,6 +112,13 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 <div class="card">
 <div class="ct">延时拍摄</div>
 <div class="chk-r"><input type="checkbox" id="timelapse_enabled"><label for="timelapse_enabled">启用延时拍摄</label></div>
+<div class="fld"><label>延时模式</label><select id="timelapse_mode"><option value="0">静态延时</option><option value="1">动态延时</option></select></div>
+<div id="dynamic_fields" style="display:none">
+<div class="fld"><label>最小间隔 (秒)</label><input type="number" id="timelapse_min_interval_s" min="1" max="3600" value="3"></div>
+<div class="fld"><label>最大间隔 (秒)</label><input type="number" id="timelapse_max_interval_s" min="1" max="3600" value="300"></div>
+<div class="fld"><label>衰减系数 (2-10)</label><input type="number" id="timelapse_decay_factor" min="2" max="10" step="1" value="2"></div>
+<div class="fld"><label>衰减周期 (秒)</label><input type="number" id="timelapse_decay_period_s" min="1" max="3600" value="10"></div>
+</div>
 <div class="fld"><label>拍摄间隔</label>
 <select id="timelapse_interval_s">
 <option value="5">5 秒</option>
@@ -156,6 +163,7 @@ $('motion_cooldown').oninput=function(){$('mcVal').textContent=this.value};
 $('wifi_tx_power').oninput=function(){$('txVal').textContent=(this.value*0.25).toFixed(1)+'dBm'};
 $('flash_threshold').oninput=function(){$('ftVal').textContent=this.value};
 
+$('timelapse_mode').addEventListener('change',function(){$('dynamic_fields').style.display=this.value==='1'?'':'none'})
 
 function loadConfig(){
 fetch('/api/config').then(function(r){return r.json()}).then(function(d){
@@ -176,12 +184,20 @@ $('flash_threshold').value=v.flash_threshold!=null?v.flash_threshold:40;$('ftVal
 $('timelapse_enabled').checked=!!(v.timelapse_enabled);
 $('timelapse_interval_s').value=v.timelapse_interval_s||30;
 $('timelapse_burst_count').value=v.timelapse_burst_count||3;
+$('timelapse_mode').value=v.timelapse_mode!=null?v.timelapse_mode:'0';
+$('timelapse_min_interval_s').value=v.timelapse_min_interval_s||3;
+$('timelapse_max_interval_s').value=v.timelapse_max_interval_s||300;
+$('timelapse_decay_factor').value=v.timelapse_decay_factor||2;
+$('timelapse_decay_period_s').value=v.timelapse_decay_period_s||10;
+$('dynamic_fields').style.display=v.timelapse_mode==1?'':'none'
 }).catch(function(e){console.error('Load config failed:',e)});
 }
 
 function saveConfig(){
 var pw=$('web_password').value,cpw=$('web_password_confirm').value;
 if(pw&&pw!==cpw){showToast('两次输入的密码不一致',true);return}
+var minI=parseInt($('timelapse_min_interval_s').value)||3,maxI=parseInt($('timelapse_max_interval_s').value)||300;
+if(minI>=maxI){showToast('最小间隔必须小于最大间隔',true);return}
 requireAuth(function(){
 var cfg={
 wifi_ssid:$('wifi_ssid').value,
@@ -198,6 +214,11 @@ wifi_power_save:$('wifi_power_save').checked?1:0
 timelapse_enabled:$('timelapse_enabled').checked?1:0,
 timelapse_interval_s:parseInt($('timelapse_interval_s').value)||30,
 timelapse_burst_count:parseInt($('timelapse_burst_count').value)||3
+timelapse_mode:parseInt($('timelapse_mode').value)||0,
+timelapse_min_interval_s:parseInt($('timelapse_min_interval_s').value)||3,
+timelapse_max_interval_s:parseInt($('timelapse_max_interval_s').value)||300,
+timelapse_decay_factor:parseInt($('timelapse_decay_factor').value)||2,
+timelapse_decay_period_s:parseInt($('timelapse_decay_period_s').value)||10
 };
 if(pw)cfg.web_password=pw;
 authFetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}).then(function(r){return r.json()}).then(function(d){
