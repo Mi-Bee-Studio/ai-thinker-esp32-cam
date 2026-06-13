@@ -1,11 +1,11 @@
-![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/ai-thinker-esp32-cam/release.yml?branch=main)
+![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/mibee-cam/release.yml?branch=main)
 ![Platform](https://img.shields.io/badge/platform-ESP32-blue)
 ![Camera](https://img.shields.io/badge/camera-OV2640-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
 # API Reference
 
-This document provides a complete reference for the AI_Thinker ESP32-CAM REST API. All endpoints are available via HTTP and return JSON responses where applicable.
+This document provides a complete reference for the MiBee Cam REST API. All endpoints are available via HTTP and return JSON responses where applicable.
 
 ## Base URL
 
@@ -54,7 +54,7 @@ Returns comprehensive device status information.
 ```json
 {
   "device": {
-    "name": "ai-thinker-cam",
+    "name": "MiBeeCam",
     "uptime": 12345,
     "version": "1.0.0"
   },
@@ -114,7 +114,7 @@ Returns current configuration (passwords are not included).
 {
   "wifi_ssid": "MyNetwork",
   "wifi_pass": "[hidden]",
-  "device_name": "ai-thinker-cam",
+  "device_name": "MiBeeCam",
   "resolution": 0,
   "fps": 15,
   "jpeg_quality": 12,
@@ -141,7 +141,7 @@ Updates device configuration. Requires authentication.
 {
   "wifi_ssid": "MyNetwork",
   "wifi_pass": "MyPassword",
-  "device_name": "ai-thinker-cam",
+  "device_name": "MiBeeCam",
   "resolution": 0,
   "fps": 15,
   "jpeg_quality": 12,

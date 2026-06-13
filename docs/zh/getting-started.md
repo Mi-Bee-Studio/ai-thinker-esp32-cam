@@ -1,6 +1,6 @@
-[![GitHub release](https://img.shields.io/github/v/release/Mi-Bee-Studio/ai-thinker-esp32-cam?include_prereleases&style=flat-square)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/releases)
-[![GitHub stars](https://img.shields.io/github/stars/Mi-Bee-Studio/ai-thinker-esp32-cam?style=flat-square)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/ai-thinker-esp32-cam/release.yml?branch=main&style=flat-square)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/actions)
+[![GitHub release](https://img.shields.io/github/v/release/Mi-Bee-Studio/mibee-cam?include_prereleases&style=flat-square)](https://github.com/Mi-Bee-Studio/mibee-cam/releases)
+[![GitHub stars](https://img.shields.io/github/stars/Mi-Bee-Studio/mibee-cam?style=flat-square)](https://github.com/Mi-Bee-Studio/mibee-cam)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/mibee-cam/release.yml?branch=main&style=flat-square)](https://github.com/Mi-Bee-Studio/mibee-cam/actions)
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v6.0.1-blue?style=flat-square)](https://docs.espressif.com/projects/esp-idf/en/latest/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
@@ -8,12 +8,12 @@
 
 # 入门指南
 
-本指南将帮助您快速上手 AI_Thinker ESP32-CAM 固件。请按照以下步骤构建、烧录和配置您的设备。
+本指南将帮助您快速上手 MiBee Cam 固件。请按照以下步骤构建、烧录和配置您的设备。
 
 ## 前置要求
 
 ### 硬件
-- AI_Thinker ESP32-CAM 主板
+- MiBee Cam 主板
 - OV2640 摄像头模块
 - TF 卡（可选，用于照片存储）
 - USB 电源和数据线
@@ -30,8 +30,8 @@
 ### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/your-username/AI_Thinker-ESP32-cam.git
-cd AI_Thinker-ESP32-cam
+git clone https://github.com/your-username/mibee-cam.git
+cd mibee-cam
 ```
 
 ### 2. 设置 ESP-IDF 环境
@@ -66,7 +66,7 @@ idf.py build
 ```
 
 固件将在 `build/` 目录中构建。查找最终二进制文件：
-- `build/ai-thinker-cam.bin` — 主固件
+- `build/mibee-cam.bin` — 主固件
 - `bootloader.bin` — 引导加载程序
 - `build/partition_table.bin` — 分区表
 
@@ -74,7 +74,7 @@ idf.py build
 
 ### 串口设置
 
-1. 通过 USB 将您的 AI_Thinker ESP32-CAM 连接到计算机
+1. 通过 USB 将您的 MiBee Cam 连接到计算机
 2. 识别串口：
    - **Windows**: 在设备管理器的 "端口 (COM 和 LPT)" 下查看
    - **Linux**: 通常是 `/dev/ttyUSB0`、`/dev/ttyACM0` 或类似设备
@@ -112,7 +112,7 @@ I (2345) main: 系统启动完成
 
 当设备首次启动时，由于没有存储 WiFi 凭据，它将进入 AP 模式：
 
-1. **连接 WiFi**：连接到网络 **ai-thinker-cam**（密码：`12345678`）
+1. **连接 WiFi**：连接到网络 **MiBeeCam**（密码：`12345678`）
 2. **访问 Web 界面**：在 Web 浏览器中打开 **http://192.168.4.1**
 3. **配置 WiFi**：
    - 进入 "配置" 页面

@@ -36,6 +36,18 @@ static void apply_defaults(cam_config_t *cfg)
     cfg->timelapse_max_interval_s = 300;
     cfg->timelapse_decay_factor = 2;
     cfg->timelapse_decay_period_s = 10;
+    cfg->record_mode = 0;           /* continuous */
+    cfg->record_segment_sec = 300;
+    cfg->frame_drop_enabled = 1;
+    cfg->webdav_enabled = 0;
+    memset(cfg->webdav_url, 0, sizeof(cfg->webdav_url));
+    memset(cfg->webdav_user, 0, sizeof(cfg->webdav_user));
+    memset(cfg->webdav_pass, 0, sizeof(cfg->webdav_pass));
+    strncpy(cfg->upload_base_path, "/mibee-cam", sizeof(cfg->upload_base_path) - 1);
+    cfg->alert_webhook_enabled = 0;
+    memset(cfg->alert_webhook_url, 0, sizeof(cfg->alert_webhook_url));
+    cfg->cleanup_low_pct = 80;
+    cfg->cleanup_high_pct = 70;
     cfg->magic = CONFIG_MAGIC;
     cfg->version = CONFIG_VERSION;
 }
@@ -104,6 +116,21 @@ esp_err_t config_init(void)
                             s_config.timelapse_max_interval_s = 300;
                             s_config.timelapse_decay_factor = 2;
                             s_config.timelapse_decay_period_s = 10;
+                        }
+                        /* V7→V8: missing recording, NAS, webhook, storage cleanup fields */
+                        if (s_config.version <= 7) {
+                            s_config.record_mode = 0;
+                            s_config.record_segment_sec = 300;
+                            s_config.frame_drop_enabled = 1;
+                            s_config.webdav_enabled = 0;
+                            memset(s_config.webdav_url, 0, sizeof(s_config.webdav_url));
+                            memset(s_config.webdav_user, 0, sizeof(s_config.webdav_user));
+                            memset(s_config.webdav_pass, 0, sizeof(s_config.webdav_pass));
+                            strncpy(s_config.upload_base_path, "/mibee-cam", sizeof(s_config.upload_base_path) - 1);
+                            s_config.alert_webhook_enabled = 0;
+                            memset(s_config.alert_webhook_url, 0, sizeof(s_config.alert_webhook_url));
+                            s_config.cleanup_low_pct = 80;
+                            s_config.cleanup_high_pct = 70;
                         }
                         ESP_LOGI(TAG, "Config migrated V%d->V%d (blob %u->%u), saving",
                                  s_config.version, CONFIG_VERSION, (unsigned)cur_len, (unsigned)sizeof(cam_config_t));

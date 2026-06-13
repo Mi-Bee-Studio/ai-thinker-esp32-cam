@@ -1,6 +1,6 @@
-[![GitHub release](https://img.shields.io/github/v/release/Mi-Bee-Studio/ai-thinker-esp32-cam?include_prereleases&style=flat-square)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/releases)
-[![GitHub stars](https://img.shields.io/github/stars/Mi-Bee-Studio/ai-thinker-esp32-cam?style=flat-square)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/ai-thinker-esp32-cam/release.yml?branch=main&style=flat-square)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/actions)
+[![GitHub release](https://img.shields.io/github/v/release/Mi-Bee-Studio/mibee-cam?include_prereleases&style=flat-square)](https://github.com/Mi-Bee-Studio/mibee-cam/releases)
+[![GitHub stars](https://img.shields.io/github/stars/Mi-Bee-Studio/mibee-cam?style=flat-square)](https://github.com/Mi-Bee-Studio/mibee-cam)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/mibee-cam/release.yml?branch=main&style=flat-square)](https://github.com/Mi-Bee-Studio/mibee-cam/actions)
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v6.0.1-blue?style=flat-square)](https://docs.espressif.com/projects/esp-idf/en/latest/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
@@ -8,7 +8,7 @@
 
 # 项目功能与能力
 
-本文档汇总 AI_Thinker ESP32-CAM 固件当前支持的全部功能、运行模式以及已移除的特性。
+本文档汇总 MiBee Cam 固件当前支持的全部功能、运行模式以及已移除的特性。
 
 **数据基于当前 main 分支（`CONFIG_VERSION = 6`，魔数 `0xA5B6C7D8`）。**
 
@@ -49,7 +49,7 @@
 | 功能 | 说明 |
 |------|------|
 | **WiFi STA 模式** | 配置 SSID/密码后自动连接，支持断线重连 |
-| **WiFi AP 模式** | 首次未配网时进入，SSID `ai-thinker-cam`，密码 `12345678` |
+**WiFi AP 模式** | 首次未配网时进入，SSID `MiBeeCam`，密码 `12345678` |
 | **TX 功率可调** | 0-80（0.25dBm 单位，80=20dBm） |
 | **省电模式** | `WIFI_PS_MIN_MODEM` |
 | **Web UI 仪表盘** | `/`（自动刷新 10s） |
@@ -143,7 +143,7 @@
 |------|------|--------|------|
 | `wifi_ssid` | char[33] | "" | STA 模式 SSID |
 | `wifi_pass` | char[65] | "" | STA 模式密码 |
-| `device_name` | char[33] | "ai-thinker-cam" | 主机名 |
+`device_name` | char[33] | "MiBeeCam" | 主机名 |
 | `resolution` | uint8 | 0 (VGA) | 0=VGA, 1=SVGA, 2=XGA, 3=UXGA |
 | `fps` | uint8 | 15 | 帧率目标 |
 | `jpeg_quality` | uint8 | 12 | 0-63（低=高质） |

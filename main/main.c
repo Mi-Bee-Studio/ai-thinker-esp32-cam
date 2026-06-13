@@ -1,5 +1,5 @@
 /*
- * AI Thinker ESP32-CAM - Main Entry Point
+ * MiBee Cam - Main Entry Point
  * 16-step boot sequence integrating all modules.
  *
  * Boot order (CRITICAL):
@@ -196,7 +196,7 @@ static void wifi_state_cb(wifi_state_t state, void *user_data)
 void app_main(void)
 {
     ESP_LOGI(TAG, "========================================");
-    ESP_LOGI(TAG, "  AI Thinker ESP32-CAM");
+    ESP_LOGI(TAG, "  MiBee Cam");
     ESP_LOGI(TAG, "========================================");
 
     /* Step 1/16: NVS flash init */
@@ -209,7 +209,7 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
     ESP_LOGI(TAG, "=== Step 1/16: NVS initialized ===");
 
-    /* NOTE: BOOT button factory reset DISABLED on AI-Thinker ESP32-CAM.
+    /* NOTE: BOOT button factory reset DISABLED on MiBee Cam.
      * GPIO 0 is the camera XCLK pin and reads LOW even before camera init,
      * making it unreliable as a button input. Use POST /api/reset instead. */
 

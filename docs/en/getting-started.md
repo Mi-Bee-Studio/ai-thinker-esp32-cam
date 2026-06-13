@@ -1,4 +1,4 @@
-[![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/ai-thinker-esp32-cam/release.yml?branch=main)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/actions)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/mibee-cam/release.yml?branch=main)](https://github.com/Mi-Bee-Studio/mibee-cam/actions)
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v6.0.1-blue)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)  
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -6,12 +6,12 @@
 
 # Getting Started
 
-This guide will help you get the AI_Thinker ESP32-CAM firmware up and running. Follow these steps to build, flash, and configure your device.
+This guide will help you get the MiBee Cam firmware up and running. Follow these steps to build, flash, and configure your device.
 
 ## Prerequisites
 
 ### Hardware
-- AI_Thinker ESP32-CAM board
+- MiBee Cam board
 - OV2640 camera module
 - TF card (optional, for photo storage)
 - USB cable for power and programming
@@ -28,8 +28,8 @@ This guide will help you get the AI_Thinker ESP32-CAM firmware up and running. F
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam.git
-cd AI_Thinker-ESP32-cam
+git clone https://github.com/Mi-Bee-Studio/mibee-cam.git
+cd mibee-cam
 ```
 
 ### 2. Set up ESP-IDF Environment
@@ -69,7 +69,7 @@ idf.py build
 ```
 
 The firmware will be built in the `build/` directory. Look for the final binaries:
-- `build/ai-thinker-cam.bin` — Main firmware
+- `build/mibee-cam.bin` — Main firmware
 - `build/bootloader.bin` — Bootloader
 - `build/partition_table.bin` — Partition table
 
@@ -77,7 +77,7 @@ The firmware will be built in the `build/` directory. Look for the final binarie
 
 ### Serial Port Setup
 
-1. Connect your AI_Thinker ESP32-CAM to your computer via USB
+1. Connect your MiBee Cam to your computer via USB
 2. Identify the serial port:
    - **Windows**: Look in Device Manager under "Ports (COM & LPT)"
    - **Linux**: Usually `/dev/ttyUSB0`, `/dev/ttyACM0`, or similar
@@ -115,7 +115,7 @@ I (2345) main: System startup complete
 
 When the device boots for the first time, it will enter AP mode because no WiFi credentials are stored:
 
-1. **Connect to WiFi**: Connect to the network **ai-thinker-cam** (password: `12345678`)
+1. **Connect to WiFi**: Connect to the network **MiBeeCam** (password: `12345678`)
 2. **Access Web Interface**: Open your web browser and navigate to **http://192.168.4.1**
 3. **Configure WiFi**: 
    - Go to the "Configuration" page

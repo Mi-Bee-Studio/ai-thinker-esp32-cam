@@ -1,18 +1,18 @@
-menu "ai-thinker-cam Configuration"
+menu "mibee-cam Configuration"
 
-    config AI_THINKER_CAM_ENABLE_MOTION
+    config MIBEE_CAM_ENABLE_MOTION
         bool "Enable motion detection"
         default y
         help
             Enable frame-difference motion detection.
 
-    config AI_THINKER_CAM_ENABLE_NAS
+    config MIBEE_CAM_ENABLE_NAS
         bool "Enable NAS upload (FTP/WebDAV/HTTP)"
         default y
         help
             Enable file upload to NAS server via FTP, WebDAV, or HTTP POST.
 
-    config AI_THINKER_CAM_ENABLE_HEALTH
+    config MIBEE_CAM_ENABLE_HEALTH
         bool "Enable health monitoring"
         default y
         help

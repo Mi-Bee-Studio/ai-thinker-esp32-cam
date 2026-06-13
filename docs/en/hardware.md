@@ -1,15 +1,15 @@
-[![Board](https://img.shields.io/badge/Board-AI_Thinker_ESP32--CAM-blue)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam)  
+[![Board](https://img.shields.io/badge/Board-MiBee_Cam-blue)](https://github.com/Mi-Bee-Studio/mibee-cam)  
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 #RW|> 🌐 [中文文档](../zh/hardware.md)
 
 # Hardware
 
-This document provides detailed hardware specifications, pin mappings, and technical information for the AI_Thinker ESP32-CAM firmware.
+This document provides detailed hardware specifications, pin mappings, and technical information for the MiBee Cam firmware.
 
-## AI_Thinker ESP32-CAM Board
+## MiBee Cam Board
 
-The AI_Thinker ESP32-CAM is a development board featuring an ESP32 chip with camera interface, designed specifically for camera applications.
+The MiBee Cam is a development board featuring an ESP32 chip with camera interface, designed specifically for camera applications.
 
 ### Board Specifications
 
@@ -118,7 +118,7 @@ The board includes two LED indicators:
 
 | Pin | Function | Description |
 |-----|----------|-------------|
-| GPIO0 | Boot Button | ⚠️ **Physical button function is DISABLED** on AI-Thinker (GPIO0 = camera XCLK, press detection is unreliable). Use `POST /api/reset` for factory reset. GPIO0 strapping for bootloader entry still works at hardware level. |
+GPIO0 | Boot Button | ⚠️ **Physical button function is DISABLED** on MiBee (GPIO0 = camera XCLK, press detection is unreliable). Use `POST /api/reset` for factory reset. GPIO0 strapping for bootloader entry still works at hardware level. |
 
 ## OV2640 Camera Module
 

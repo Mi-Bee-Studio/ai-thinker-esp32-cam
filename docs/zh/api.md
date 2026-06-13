@@ -4,11 +4,11 @@
 
 # API 参考文档
 
-本文档提供 AI_Thinker ESP32-CAM 固件 REST API 的完整参考，包括所有端点、参数和示例。
+本文档提供 MiBee Cam 固件 REST API 的完整参考，包括所有端点、参数和示例。
 
 ## 概述
 
-AI_Thinker ESP32-CAM 提供 RESTful API 接口，允许通过 HTTP 请求控制和监控系统。API 支持以下功能：
+MiBee Cam 提供 RESTful API 接口，允许通过 HTTP 请求控制和监控系统。API 支持以下功能：
 
 - **设备状态监控**：获取系统健康信息、网络状态和指标
 - **配置管理**：更新 WiFi、摄像头和其他设置
@@ -67,7 +67,7 @@ Host: 192.168.1.100
 ```json
 {
   "status": "running",
-  "hostname": "ai-thinker-cam",
+  "hostname": "MiBeeCam",
   "uptime": 86400,
   "wifi": {
     "mode": "STA",
@@ -135,7 +135,7 @@ Host: 192.168.1.100
 ```json
 {
   "status": "running",
-  "hostname": "ai-thinker-cam",
+  "hostname": "MiBeeCam",
   "ip": "192.168.1.100",
   "signal": -45,
   "uptime": 86400
@@ -161,7 +161,7 @@ Host: 192.168.1.100
     "mode": "STA",
     "ssid": "MyWiFi",
     "password": "MyPassword",
-    "device_name": "ai-thinker-cam",
+    "device_name": "MiBeeCam",
     "scan_results": []
   },
   "camera": {
@@ -880,7 +880,7 @@ curl -s http://192.168.1.100/api/health | jq .
 
 ### GPIO14 共享引脚说明
 
-⚠️ **重要提醒**：GPIO14 引脚在 AI-Thinker ESP32-CAM 上被摄像头和 SD 卡共享使用（摄像头 XCLK 和 SD 卡 CLK）。固件采用严格的初始化顺序来解决冲突：SD 卡初始化 → 摄像头初始化 → SD 卡重新初始化。如果遇到相关功能异常，请检查此引脚连接。
+⚠️ **重要提醒**：GPIO14 引脚在 MiBee Cam 上被摄像头和 SD 卡共享使用（摄像头 XCLK 和 SD 卡 CLK）。固件采用严格的初始化顺序来解决冲突：SD 卡初始化 → 摄像头初始化 → SD 卡重新初始化。如果遇到相关功能异常，请检查此引脚连接。
 
 ### 性能限制
 

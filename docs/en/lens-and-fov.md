@@ -41,9 +41,9 @@ Camera controls **not exposed** by firmware:
 - ❌ Horizontal flip (only `vflip` for vertical)
 - ❌ Sharpness / noise reduction / color matrix tuning
 
-## Stock AI-Thinker Lens
+## Stock MiBee Lens
 
-The stock lens on AI-Thinker ESP32-CAM is an **M12 mount fixed-focus lens** (unscrewable but requires desoldering):
+The stock lens on MiBee Cam is an **M12 mount fixed-focus lens** (unscrewable but requires desoldering):
 
 | Parameter | Typical Value |
 |-----------|---------------|
@@ -146,7 +146,7 @@ The firmware has no FOV / focal length / wide-angle config. `cam_config_t` does 
 
 > ⚠️ Requires soldering iron. Beginners please be careful.
 
-1. **Remove case**: AI-Thinker board has plastic case
+1. **Remove case**: MiBee board has plastic case
 2. **Remove stock lens**: M12 mount, rotate counter-clockwise
 3. **Desolder 22pF capacitor on lens mount** (some mounts have it)
 4. **Solder new lens**: Align threads carefully

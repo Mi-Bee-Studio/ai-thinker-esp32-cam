@@ -1,4 +1,4 @@
-[![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/ai-thinker-esp32-cam/release.yml?branch=main)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/actions)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/mibee-cam/release.yml?branch=main)](https://github.com/Mi-Bee-Studio/mibee-cam/actions)
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v6.0.1-blue)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)  
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -6,7 +6,7 @@
 
 # Project Capabilities
 
-This document summarizes all currently supported features, operating modes, and removed features in the AI-Thinker ESP32-CAM firmware.
+This document summarizes all currently supported features, operating modes, and removed features in the MiBee Cam firmware.
 
 > Data based on current main branch (`CONFIG_VERSION = 6`).
 
@@ -47,7 +47,7 @@ The firmware is a **pure JPEG capture + MJPEG streaming** ESP32-CAM firmware. Ta
 | Feature | Description |
 |---------|-------------|
 | **WiFi STA Mode** | Connect with stored SSID/password, auto-reconnect on disconnect |
-| **WiFi AP Mode** | Fallback for first boot, SSID `ai-thinker-cam`, password `12345678` |
+**WiFi AP Mode** | Fallback for first boot, SSID `MiBeeCam`, password `12345678` |
 | **TX Power Adjustable** | 0-80 (0.25dBm units, 80=20dBm) |
 | **Power Save Mode** | `WIFI_PS_MIN_MODEM` |
 | **Web UI Dashboard** | `/` (auto-refresh 10s) |
@@ -143,7 +143,7 @@ Full endpoint list (see [`api.md`](./api.md) for details):
 |-------|------|---------|---------|
 | `wifi_ssid` | char[33] | "" | STA SSID |
 | `wifi_pass` | char[65] | "" | STA password |
-| `device_name` | char[33] | "ai-thinker-cam" | Hostname |
+`device_name` | char[33] | "MiBeeCam" | Hostname |
 | `resolution` | uint8 | 0 (VGA) | 0=VGA, 1=SVGA, 2=XGA, 3=UXGA |
 | `fps` | uint8 | 15 | Target frame rate |
 | `jpeg_quality` | uint8 | 12 | 0-63 (lower = better) |

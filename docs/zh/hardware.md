@@ -1,6 +1,6 @@
-[![GitHub release](https://img.shields.io/github/v/release/Mi-Bee-Studio/ai-thinker-esp32-cam?include_prereleases&style=flat-square)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/releases)
-[![GitHub stars](https://img.shields.io/github/stars/Mi-Bee-Studio/ai-thinker-esp32-cam?style=flat-square)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/ai-thinker-esp32-cam/release.yml?branch=main&style=flat-square)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/actions)
+[![GitHub release](https://img.shields.io/github/v/release/Mi-Bee-Studio/mibee-cam?include_prereleases&style=flat-square)](https://github.com/Mi-Bee-Studio/mibee-cam/releases)
+[![GitHub stars](https://img.shields.io/github/stars/Mi-Bee-Studio/mibee-cam?style=flat-square)](https://github.com/Mi-Bee-Studio/mibee-cam)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/mibee-cam/release.yml?branch=main&style=flat-square)](https://github.com/Mi-Bee-Studio/mibee-cam/actions)
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v6.0.1-blue?style=flat-square)](https://docs.espressif.com/projects/esp-idf/en/latest/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
@@ -8,11 +8,11 @@
 
 # 硬件说明
 
-本文档提供 AI_Thinker ESP32-CAM 固件的详细硬件规格、引脚映射和技术信息。
+本文档提供 MiBee Cam 固件的详细硬件规格、引脚映射和技术信息。
 
-## AI_Thinker ESP32-CAM 主板
+## MiBee Cam 主板
 
-AI_Thinker ESP32-CAM 是一款专为摄像头应用设计的开发板，带有 ESP32 芯片和摄像头接口。
+MiBee Cam 是一款专为摄像头应用设计的开发板，带有 ESP32 芯片和摄像头接口。
 
 ### 主板规格
 
@@ -121,7 +121,7 @@ AI_Thinker ESP32-CAM 是一款专为摄像头应用设计的开发板，带有 E
 
 | 引脚 | 功能 | 描述 |
 |-----|----------|-------------|
-| GPIO0 | 启动按钮 | ⚠️ AI-Thinker 板上物理按钮功能**已禁用**（GPIO0 = 摄像头 XCLK，按下检测不可靠）。出厂重置请改用 `POST /api/reset`。GPIO0 启动模式选择（引导加载程序进入）在硬件层仍有效。 |
+GPIO0 | 启动按钮 | ⚠️ MiBee 板上物理按钮功能**已禁用**（GPIO0 = 摄像头 XCLK，按下检测不可靠）。出厂重置请改用 `POST /api/reset`。GPIO0 启动模式选择（引导加载程序进入）在硬件层仍有效。 |
 
 ## OV2640 摄像头模块
 

@@ -1,11 +1,11 @@
-![Build Status](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/workflows/Release/badge.svg)
+![Build Status](https://github.com/Mi-Bee-Studio/mibee-cam/workflows/Release/badge.svg)
 ![Platform](https://img.shields.io/badge/platform-ESP32-blue)
 ![Camera](https://img.shields.io/badge/camera-OV2640-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
 # User Guide
 
-This guide explains how to use the AI_Thinker ESP32-CAM firmware, including configuration, web interface usage, and feature settings.
+This guide explains how to use the MiBee Cam firmware, including configuration, web interface usage, and feature settings.
 
 ## Web Interface Access
 
@@ -17,7 +17,7 @@ This guide explains how to use the AI_Thinker ESP32-CAM firmware, including conf
 3. Access: `http://<device-ip>/`
 
 #### AP Mode (First-time Setup)
-1. Connect to WiFi network: **ai-thinker-cam** (password: `12345678`)
+1. Connect to WiFi network: **MiBeeCam** (password: `12345678`)
 2. Access: `http://192.168.4.1/`
 
 ### Web Interface Pages
@@ -66,7 +66,7 @@ Photo file management:
 | **WiFi Mode** | STA or AP mode | STA | STA/AP |
 | **SSID** | Network name (STA mode) | Empty | String |
 | **Password** | Network password | Empty | String |
-| **Device Name** | Hostname/identification | ai-thinker-cam | 32 chars |
+**Device Name** | Hostname/identification | MiBeeCam | 32 chars |
 
 ### Camera Configuration
 
@@ -135,7 +135,7 @@ Photos are stored in the following directory structure:
 
 ## Brightness & Flash
 
-The firmware detects scene brightness using **grayscale pixel probing** — the most reliable method for the OV2640 sensor on AI-Thinker boards.
+The firmware detects scene brightness using **grayscale pixel probing** — the most reliable method for the OV2640 sensor on MiBee boards.
 
 ### How It Works
 
@@ -143,7 +143,7 @@ The firmware detects scene brightness using **grayscale pixel probing** — the 
 
 2. **JPEG Fallback**: When grayscale probing is not possible (e.g., MJPEG streaming clients are connected), the system falls back to a JPEG frame size heuristic — smaller JPEG files indicate darker scenes. This is less accurate but always available.
 
-3. **Auto Flash**: When a motion event is detected in a dark scene (`brightness_pct < flash_threshold`), the flash LED (GPIO4) automatically turns on at ~80% PWM duty (safe for the AI-Thinker board's lack of current-limiting resistor) for the photo capture, then immediately turns off.
+3. **Auto Flash**: When a motion event is detected in a dark scene (`brightness_pct < flash_threshold`), the flash LED (GPIO4) automatically turns on at ~80% PWM duty (safe for the MiBee board's lack of current-limiting resistor) for the photo capture, then immediately turns off.
 
 4. **Dark Scene Motion Sensitivity**: In dark scenes, JPEG frames have very low byte variance, making motion harder to detect. The firmware automatically lowers the effective motion threshold to 1/4 of the configured value (minimum 5%).
 
@@ -161,7 +161,7 @@ pct = avg × 100 / 255                           // normalize to 0-100%
 is_dark = (pct < flash_threshold)
 ```
 
-Measured values (AI-Thinker board, SVGA, quality=10):
+Measured values (MiBee board, SVGA, quality=10):
 - Dark room (no light): avg=32, pct=12%
 - Facing ceiling light: avg=136, pct=53%
 
@@ -185,7 +185,7 @@ Measured JPEG sizes (SVGA, quality=10):
 ```
 // GPIO4, LEDC Timer 1 / Channel 1 (Timer 0 used by camera XCLK)
 // PWM: 2 kHz, 8-bit resolution (0-255 duty)
-// Duty = 205 (~80%) — safe max for AI-Thinker (no current-limit resistor)
+// Duty = 205 (~80%) — safe max for MiBee (no current-limit resistor)
 
 ON:  ledc_set_duty(205) → wait 200ms warmup → capture photo → ledc_set_duty(0)
 OFF: ledc_set_duty(0)

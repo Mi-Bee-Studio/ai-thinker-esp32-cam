@@ -9,14 +9,14 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-Production--Ready-brightgreen?style=for-the-badge" alt="Production Ready">
-  <img src="https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/ai-thinker-esp32-cam/release.yml?style=for-the-badge&logo=github&logoColor=white" alt="Build Status">
-  <img src="https://img.shields.io/github/release/Mi-Bee-Studio/ai-thinker-esp32-cam?style=for-the-badge&logo=github&logoColor=white" alt="Latest Release">
+  <img src="https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/mibee-cam/release.yml?style=for-the-badge&logo=github&logoColor=white" alt="Build Status">
+  <img src="https://img.shields.io/github/release/Mi-Bee-Studio/mibee-cam?style=for-the-badge&logo=github&logoColor=white" alt="Latest Release">
 </p>
 
-<h1 align="center">AI-Thinker ESP32-CAM Firmware</h1>
+<h1 align="center">MiBee Cam Firmware</h1>
 
 <p align="center">
-  <strong>Professional-grade camera firmware for AI-Thinker ESP32-CAM boards with OV2640 streaming, motion detection, and REST API</strong>
+  <strong>Professional-grade camera firmware for MiBee Cam boards with OV2640 streaming, motion detection, and REST API</strong>
 </p>
 
 <p align="center">
@@ -45,7 +45,7 @@
 
 | Component | Specification |
 |-----------|----------------|
-| **Board** | AI-Thinker ESP32-CAM (ESP32-D0WD-V3) |
+| **Board** | MiBee Cam (ESP32-D0WD-V3) |
 | **Camera** | OV2640 camera module (4-bit parallel interface) |
 | **Storage** | TF card (optional, FAT formatted for photo storage) |
 | **Flash Memory** | 4MB (3.5MB available for firmware) |
@@ -80,15 +80,15 @@
 
 - ESP-IDF v6.0.1 installed
 - Python 3.8+ with pip
-- AI-Thinker ESP32-CAM board with OV2640 camera
+- MiBee Cam board with OV2640 camera
 - Serial USB-to-TTL adapter (for flashing)
 
 ### Setup Instructions
 
 ```bash
 # Clone the repository
-git clone https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam.git
-cd ai-thinker-esp32-cam
+git clone https://github.com/Mi-Bee-Studio/mibee-cam.git
+cd mibee-cam
 
 # Configure ESP-IDF environment
 export IDF_PATH=~/.espressif/v6.0.1/esp-idf
@@ -104,7 +104,7 @@ idf.py -p /dev/ttyUSB0 flash monitor
 
 ### First-time Configuration
 
-1. **Connect to AP Mode**: On first boot, the device creates WiFi network **ai-thinker-cam** (password: `12345678`)
+1. **Connect to AP Mode**: On first boot, the device creates WiFi network **MiBeeCam** (password: `12345678`)
 2. **Access Web Interface**: Open `http://192.168.4.1` in your browser
 3. **Configure WiFi**: Enter your WiFi SSID and password in the settings page
 4. **Apply Changes**: Save configuration — device reboots and connects in STA mode
@@ -156,7 +156,7 @@ curl -X POST http://DEVICE_IP/api/reset
 ## 📁 Project Structure
 
 ```
-ai-thinker-esp32-cam/
+mibee-cam/
 ├── main/
 │   ├── main.c              # System entry point (12-step boot sequence)
 │   ├── camera_driver.c/h   # OV2640 camera driver with DMA optimization
@@ -216,7 +216,7 @@ All settings are stored in NVS with version 6 schema and accessible via web UI (
 ### Device Settings
 ```json
 {
-  "device_name": "ai-thinker-cam",
+  "device_name": "MiBeeCam",
   "web_password": "optional_ui_password"
 }
 ```
@@ -322,12 +322,12 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 1. Fork the repository
 2. Create a feature branch
-3. Test thoroughly on AI-Thinker ESP32-CAM hardware
+3. Test thoroughly on MiBee Cam hardware
 4. Submit a pull request with detailed testing notes
 
 ---
 
 <p align="center">
   <strong>Built with ❤️ for the ESP32 community</strong><br>
-  <em>AI-Thinker ESP32-CAM Professional Firmware</em>
+  <em>MiBee Cam Professional Firmware</em>
 </p>

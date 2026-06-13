@@ -6,7 +6,7 @@
 
 本文档提供 ESP32-CAM 固件在不同分辨率/质量设置下的实测 FPS、JPEG 体积、端到端延迟数据，以及性能瓶颈分析。
 
-**> 数据基于 AI-Thinker ESP32-CAM（ESP32 双核 240MHz，4MB PSRAM，OV2640），固件 `main` 分支。**
+**> 数据基于 MiBee Cam（ESP32 双核 240MHz，4MB PSRAM，OV2640），固件 `main` 分支。**
 
 **📊 性能概览**
 ## 🚫 核心硬件约束

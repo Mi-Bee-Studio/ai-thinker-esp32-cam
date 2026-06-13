@@ -5,11 +5,11 @@
 
 # Architecture
 
-This document provides a comprehensive overview of the AI_Thinker ESP32-CAM firmware architecture, including module organization, boot sequence, data flow, and system design.
+This document provides a comprehensive overview of the MiBee Cam firmware architecture, including module organization, boot sequence, data flow, and system design.
 
 ## System Overview
 
-The AI_Thinker ESP32-CAM firmware is a real-time embedded system designed for camera applications with WiFi connectivity and storage capabilities. The architecture follows a modular design with clear separation of concerns.
+The MiBee Cam firmware is a real-time embedded system designed for camera applications with WiFi connectivity and storage capabilities. The architecture follows a modular design with clear separation of concerns.
 
 ### Key Characteristics
 
@@ -103,7 +103,7 @@ The firmware consists of 14 interconnected modules, each with specific responsib
 **Responsibility**: Motion detection, brightness sensing, and auto-flash
 - **Algorithm**: JPEG frame-difference with configurable threshold
 - **Brightness**: Grayscale pixel probing (primary) + JPEG size fallback
-- **Auto Flash**: LEDC PWM on GPIO4 (~80% duty, safe for AI-Thinker hardware)
+- **Auto Flash**: LEDC PWM on GPIO4 (~80% duty, safe for MiBee hardware)
 - **Trigger**: Save photo to SD card
 - **Configurable**: Threshold, cooldown, flash_threshold (brightness %)
 

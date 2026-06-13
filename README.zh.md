@@ -1,15 +1,15 @@
-# AI-Thinker ESP32-CAM 固件
+# MiBee Cam 固件
 
 [![ESP32](https://img.shields.io/badge/ESP32-ESP32_D0WD_V3-blue.svg)](https://www.espressif.com/en/products/socs/esp32)
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v6.0.1-green.svg)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)
 [![OV2640](https://img.shields.io/badge/Camera-OV2640-orange.svg)](https://www.ovti.com/products/imaging-sensors/ov2640)
 [![Resolution](https://img.shields.io/badge/Resolution-VGA--UXGA-purple.svg)](https://en.wikipedia.org/wiki/Display_resolution)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Build](https://img.shields.io/badge/Build-Working-brightgreen.svg)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam)
+[![Build](https://img.shields.io/badge/Build-Working-brightgreen.svg)](https://github.com/Mi-Bee-Studio/mibee-cam)
 
 ---
 
-🚀 **高性能 ESP32-CAM 固件** - 基于 ESP-IDF v6.0.1 开发的开源固件，为 AI-Thinker ESP32-CAM 板卡提供完整的摄像头解决方案。
+🚀 **高性能 ESP32-CAM 固件** - 基于 ESP-IDF v6.0.1 开发的开源固件，为 MiBee Cam 板卡提供完整的摄像头解决方案。
 
 ## 功能特性
 
@@ -27,7 +27,7 @@
 
 ## 硬件要求
 
-- **主板**: AI-Thinker ESP32-CAM (ESP32-D0WD-V3)
+- **主板**: MiBee Cam (ESP32-D0WD-V3)
 - **摄像头**: OV2640 摄像头模块
 - **存储**: TF 卡（可选，用于照片存储）
 - **闪存**: 4MB
@@ -80,7 +80,7 @@
 - ESP-IDF v6.0.1 已安装
 - Python 3.8+
 - esptool.py
-- AI-Thinker ESP32-CAM 主板
+- MiBee Cam 主板
 - OV2640 摄像头模块
 
 ### 构建
@@ -106,7 +106,7 @@ idf.py -p /dev/ttyUSB0 flash monitor
 
 首次启动时，设备进入 AP 模式：
 
-1. 连接 WiFi 网络 **ai-thinker-cam**（密码：`12345678`）
+1. 连接 WiFi 网络 **MiBeeCam**（密码：`12345678`）
 2. 在浏览器中打开 **http://192.168.4.1**
 3. 进入配置页面，输入您的 WiFi SSID 和密码
 4. 保存配置 — 设备重启并以 STA 模式连接到您的网络
@@ -134,7 +134,7 @@ idf.py -p /dev/ttyUSB0 flash monitor
 ## 项目结构
 
 ```
-AI_Thinker-ESP32-cam/
+mibee-cam/
 ├── main/
 │   ├── main.c              # 系统入口，12步启动序列
 │   ├── camera_driver.c/h   # OV2640 摄像头驱动
@@ -191,7 +191,7 @@ AI_Thinker-ESP32-cam/
 - **wifi_pass** — WiFi 密码（API 出于安全考虑不会返回此字段）
 
 ### 设备配置
-- **device_name** — 仪表板显示的设备名称（默认：`ai-thinker-cam`）
+- **device_name** — 仪表板显示的设备名称（默认：`MiBeeCam`）
 - **web_password** — 可选的 Web 界面访问密码（留空 = 无需认证）
 
 ### 摄像头配置

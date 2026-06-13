@@ -1,11 +1,11 @@
-![Build Status](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/workflows/Release/badge.svg)
+![Build Status](https://github.com/Mi-Bee-Studio/mibee-cam/workflows/Release/badge.svg)
 ![Platform](https://img.shields.io/badge/platform-ESP32-blue)
 ![Camera](https://img.shields.io/badge/camera-OV2640-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
 # Troubleshooting
 
-This guide provides solutions for common issues encountered with the AI_Thinker ESP32-CAM firmware. Follow the systematic approach to diagnose and resolve problems.
+This guide provides solutions for common issues encountered with the MiBee Cam firmware. Follow the systematic approach to diagnose and resolve problems.
 
 ## Systematic Diagnosis
 
@@ -542,7 +542,7 @@ When reporting issues, include:
 ## Contact Support
 
 If you continue to experience issues:
-1. Check [GitHub Issues](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/issues) for similar problems
+1. Check [GitHub Issues](https://github.com/Mi-Bee-Studio/mibee-cam/issues) for similar problems
 2. Search [Documentation](../) for additional troubleshooting guides
 3. Create a new issue with detailed information as above
 4. Include serial logs and configuration dumps if possible

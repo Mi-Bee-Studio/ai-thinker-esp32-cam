@@ -1,11 +1,11 @@
-![Build Status](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/workflows/Release/badge.svg)
+![Build Status](https://github.com/Mi-Bee-Studio/mibee-cam/workflows/Release/badge.svg)
 ![Platform](https://img.shields.io/badge/platform-ESP32-blue)
 ![Camera](https://img.shields.io/badge/camera-OV2640-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
 # Performance and Latency
 
-> Data based on AI-Thinker ESP32-CAM (ESP32 dual-core 240MHz, 4MB PSRAM, OV2640), firmware `main` branch.
+> Data based on MiBee Cam (ESP32 dual-core 240MHz, 4MB PSRAM, OV2640), firmware `main` branch.
 
 ## Core Hardware Constraints
 

@@ -6,13 +6,13 @@
 #include "esp_err.h"
 
 // Config version and magic
-#define CONFIG_VERSION  7
+#define CONFIG_VERSION  8
 #define CONFIG_MAGIC    0xA5B6C7D8
 
 // Default values
 #define CONFIG_DEFAULT_TIMEZONE     "CST-8"
-#define CONFIG_DEFAULT_DEVICE_NAME  "ai-thinker-cam"
-#define CONFIG_DEFAULT_AP_SSID      "ai-thinker-cam"
+#define CONFIG_DEFAULT_DEVICE_NAME  "MiBeeCam"
+#define CONFIG_DEFAULT_AP_SSID      "MiBeeCam"
 #define CONFIG_DEFAULT_AP_PASS      "12345678"
 
 // Camera resolutions
@@ -97,6 +97,18 @@ typedef struct {
     uint16_t timelapse_max_interval_s; /* max interval in seconds (dynamic mode), default 300 */
     uint8_t  timelapse_decay_factor;   /* interval multiplier per decay period, default 2 */
     uint16_t timelapse_decay_period_s; /* seconds of no motion before decay step, default 10 */
+    uint8_t  record_mode;              /* 0=continuous, 1=timelapse, 2=dynamic timelapse */
+    uint16_t record_segment_sec;      /* segment duration in seconds (default 300) */
+    uint8_t  frame_drop_enabled;      /* smart frame drop (default 1=enabled) */
+    uint8_t  webdav_enabled;          /* NAS upload enabled (default 0) */
+    char     webdav_url[129];         /* WebDAV server URL */
+    char     webdav_user[33];         /* WebDAV username */
+    char     webdav_pass[65];         /* WebDAV password */
+    char     upload_base_path[65];    /* remote base path (default "/mibee-cam") */
+    uint8_t  alert_webhook_enabled;   /* webhook enabled (default 0) */
+    char     alert_webhook_url[257];  /* webhook URL (default empty) */
+    uint8_t  cleanup_low_pct;         /* start cleanup when used% > this (default 80) */
+    uint8_t  cleanup_high_pct;        /* stop cleanup when used% < this (default 70) */
     uint32_t magic;
     uint32_t version;
 } cam_config_t;

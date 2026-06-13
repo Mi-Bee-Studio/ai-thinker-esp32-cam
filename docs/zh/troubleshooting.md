@@ -2,7 +2,7 @@
 
 # 故障排除指南
 
-本指南提供 AI_Thinker ESP32-CAM 固件的常见问题诊断和解决方案。按照分步说明解决连接、摄像头、存储和网络问题。
+本指南提供 MiBee Cam 固件的常见问题诊断和解决方案。按照分步说明解决连接、摄像头、存储和网络问题。
 
 ## 快速诊断
 
@@ -24,7 +24,7 @@
 |---------|---------|---------|
 | **常亮红色** | 摄像头初始化失败 | 检查摄像头连接 |
 | **快速闪烁 (0.5秒)** | WiFi 连接失败 | 检查 WiFi 设置 |
-| **慢速闪烁 (2秒)** | AP 模式激活 | 连接到 ai-thinker-cam |
+**慢速闪烁 (2秒)** | AP 模式激活 | 连接到 MiBeeCam |
 | **红色闪烁 (0.2秒亮/0.8秒灭)** | 系统错误 | 查看串口日志 |
 | **无指示灯** | 电源问题 | 检查 USB 电源 |
 
@@ -112,7 +112,7 @@ Error: Failed to download component...
 2. 手动下载依赖项：
    ```bash
    # 进入项目目录
-   cd AI_Thinker-ESP32-cam
+   cd mibee-cam
    
    # 清理并重新构建
    idf.py clean
@@ -225,16 +225,16 @@ idf.py -p /dev/ttyUSB0 --before default_reset --after hard_reset flash monitor
 esptool.py --port COM8 list_ports
 
 # 烧录固件
-esptool.py --port COM8 --baud 460800 write_flash 0x10000 build/ai-thinker-cam.bin
+esptool.py --port COM8 --baud 460800 write_flash 0x10000 build/mibee-cam.bin
 ```
 
 ## WiFi 连接问题
 
 ### AP 模式连接
 
-#### 问题：无法连接到 "ai-thinker-cam" 网络
+#### 问题：无法连接到 "MiBeeCam" 网络
 
-**症状**：WiFi 网络列表中未显示 ai-thinker-cam
+**症状**：WiFi 网络列表中未显示 MiBeeCam
 
 **解决方案**：
 1. **信号强度**：确保设备距离路由器 < 10 米
@@ -249,7 +249,7 @@ esptool.py --port COM8 --baud 460800 write_flash 0x10000 build/ai-thinker-cam.bi
 
 #### 问题：连接后无互联网访问
 
-**症状**：连接到 ai-thinker-cam 但无法访问浏览器
+**症状**：连接到 MiBeeCam 但无法访问浏览器
 
 **解决方案**：
 1. **IP 地址**：尝试手动访问：
@@ -571,7 +571,7 @@ curl -X POST http://192.168.1.100/api/storage/init
 2. **IP 地址确认**：
    ```bash
    # 通过串口获取 IP
-   # 或通过 mDNS 访问：http://ai-thinker-cam.local
+   # 或通过 mDNS 访问：http://mibee-cam.local
    ```
 
 3. **端口检查**：
@@ -713,7 +713,7 @@ curl -X POST "http://192.168.1.100/api/reset?mode=full" \
 esptool.py --port COM8 erase_flash
 
 # 写入新固件
-esptool.py --port COM8 --baud 460800 write_flash 0x0 build/bootloader.bin 0x8000 build/partition_table.bin 0x10000 build/ai-thinker-cam.bin
+esptool.py --port COM8 --baud 460800 write_flash 0x0 build/bootloader.bin 0x8000 build/partition_table.bin 0x10000 build/mibee-cam.bin
 ```
 
 ### 固件更新
@@ -773,9 +773,9 @@ esptool.py --port COM8 --baud 460800 write_flash 0x10000 latest_firmware.bin
 
 | ESP32-CAM 版本 | PSRAM | 支持的分辨率 |
 |---------------|-------|-------------|
-| AI-Thinker V3 | 有 | VGA, SVGA, XGA, UXGA |
-| AI-Thinker V2 | 有 | VGA, SVGA, XGA |
-| AI-Thinker V1 | 无 | VGA, SVGA |
+MiBee V3 | 有 | VGA, SVGA, XGA, UXGA |
+MiBee V2 | 有 | VGA, SVGA, XGA |
+MiBee V1 | 无 | VGA, SVGA |
 | 其他品牌 | 查看规格 | 根据具体型号 |
 
 #### 已知限制
@@ -789,4 +789,4 @@ esptool.py --port COM8 --baud 460800 write_flash 0x10000 latest_firmware.bin
 
 **⚠️ DMA 冻结工作流程**：ESP32 在 STA 模式下摄像头初始化有已知的 DMA 冻结问题。固件采用"先启动 WiFi STA 模式，在回调中初始化摄像头 + 重试 3 次"的策略来解决此问题。启动时请注意等待 1-2 秒的摄像头初始化延迟。
 
-**⚠️ GPIO14 共享问题**：AI-Thinker ESP32-CAM 上，GPIO14 引脚被摄像头（XCLK）和 SD 卡（CLK）共享使用。固件采用 SD 卡初始化 → 摄像头初始化 → SD 卡重新初始化的顺序来避免冲突。如果遇到 SD 卡或摄像头功能异常，请首先检查此引脚连接。
+**⚠️ GPIO14 共享问题**：MiBee Cam 上，GPIO14 引脚被摄像头（XCLK）和 SD 卡（CLK）共享使用。固件采用 SD 卡初始化 → 摄像头初始化 → SD 卡重新初始化的顺序来避免冲突。如果遇到 SD 卡或摄像头功能异常，请首先检查此引脚连接。
