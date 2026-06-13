@@ -19,6 +19,8 @@ idf_component_register(
         "webhook.c"
         "nas_uploader.c"
         "webdav_client.c"
+        "video_recorder.c"
+        "ws_server.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi

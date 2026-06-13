@@ -55,4 +55,6 @@ CONFIG_ESP32_COREDUMP=n
 
 # Disable debug features to reduce IRAM usage
 CONFIG_ESP32_DEBUG_OCDAWARE=n
-CONFIG_ESP_DEBUG_STUBS_ENABLED=n
+
+# WebSocket support (for real-time push to browser)
+CONFIG_HTTPD_WS_SUPPORT=y
