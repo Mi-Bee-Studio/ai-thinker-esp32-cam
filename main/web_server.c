@@ -35,6 +35,11 @@
 #include "timelapse.h"
 #include "esp_spiffs.h"
 
+#include "video_recorder.h"
+#include "nas_uploader.h"
+#include "ws_server.h"
+#include "webhook.h"
+
 #define FIRMWARE_VERSION "v1.0"
 
 #include <string.h>
@@ -876,6 +881,134 @@ static esp_err_t handler_api_storage(httpd_req_t *req)
 
     return send_json_ok(req, data);
 }
+/* ------------------------------------------------------------------ */
+/*  POST /api/record?action=start|stop  — Recording control            */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handler_api_record_post(httpd_req_t *req)
+{
+    if (!check_auth(req)) {
+        return send_unauthorized(req);
+    }
+
+    char query[64] = {0};
+    char action[16] = {0};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        httpd_query_key_value(query, "action", action, sizeof(action));
+    }
+
+    esp_err_t ret = ESP_OK;
+    recorder_state_t state = recorder_get_state();
+    cJSON *data = cJSON_CreateObject();
+
+    if (strcmp(action, "start") == 0) {
+        if (state == RECORDER_RECORDING) {
+            ret = ESP_ERR_INVALID_STATE;
+        } else {
+            ret = recorder_start();
+        }
+        if (ret == ESP_OK) {
+            cJSON_AddStringToObject(data, "state", "RECORDING");
+        } else {
+            return send_json_error(req, "failed to start recording", 500);
+        }
+    } else if (strcmp(action, "stop") == 0) {
+        if (state == RECORDER_IDLE) {
+            ret = ESP_ERR_INVALID_STATE;
+        } else {
+            ret = recorder_stop();
+        }
+        if (ret == ESP_OK) {
+            cJSON_AddStringToObject(data, "state", "IDLE");
+        } else {
+            return send_json_error(req, "failed to stop recording", 500);
+        }
+    } else {
+        return send_json_error(req, "invalid action, use start|stop", 400);
+    }
+
+    return send_json_ok(req, data);
+}
+
+/* ------------------------------------------------------------------ */
+/*  GET /api/record  — Recording status                                 */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handler_api_record_get(httpd_req_t *req)
+{
+    recorder_state_t state = recorder_get_state();
+    cJSON *data = cJSON_CreateObject();
+
+    const char *state_str;
+    switch (state) {
+        case RECORDER_IDLE:      state_str = "IDLE"; break;
+        case RECORDER_RECORDING: state_str = "RECORDING"; break;
+        case RECORDER_PAUSED:    state_str = "PAUSED"; break;
+        case RECORDER_ERROR:     state_str = "ERROR"; break;
+        default:                 state_str = "UNKNOWN"; break;
+    }
+    cJSON_AddStringToObject(data, "state", state_str);
+
+    if (state == RECORDER_RECORDING || state == RECORDER_PAUSED) {
+        const char *file = recorder_get_current_file();
+        if (file && strlen(file) > 0) {
+            cJSON_AddStringToObject(data, "current_file", file);
+        }
+    }
+
+    cJSON_AddNumberToObject(data, "frames_dropped", (double)recorder_get_frames_dropped());
+
+    return send_json_ok(req, data);
+}
+
+/* ------------------------------------------------------------------ */
+/*  POST /api/nas/test  — Test NAS connection                           */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handler_api_nas_test(httpd_req_t *req)
+{
+    if (!check_auth(req)) {
+        return send_unauthorized(req);
+    }
+
+    /* Queue a test upload - use any known file for testing */
+    esp_err_t ret = nas_uploader_enqueue("/test-upload-marker.txt");
+
+    if (ret == ESP_OK) {
+        cJSON *data = cJSON_CreateObject();
+        cJSON_AddStringToObject(data, "status", "ok");
+        return send_json_ok(req, data);
+    } else {
+        return send_json_error(req, "failed to queue test upload", 500);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  GET /api/nas  — NAS upload status                                   */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handler_api_nas(httpd_req_t *req)
+{
+    char last_upload[32] = {0};
+    int queue_count = 0;
+    bool paused = false;
+    nas_uploader_get_status(last_upload, sizeof(last_upload), &queue_count, &paused);
+
+    int success = 0, failure = 0;
+    nas_uploader_get_stats(&success, &failure);
+
+    cJSON *data = cJSON_CreateObject();
+    cJSON_AddNumberToObject(data, "queue_count", (double)queue_count);
+    cJSON_AddBoolToObject(data, "paused", paused);
+    cJSON_AddStringToObject(data, "last_upload", last_upload);
+
+    cJSON *stats = cJSON_CreateObject();
+    cJSON_AddNumberToObject(stats, "success", (double)success);
+    cJSON_AddNumberToObject(stats, "failure", (double)failure);
+    cJSON_AddItemToObject(data, "stats", stats);
+
+    return send_json_ok(req, data);
+}
 
 /* ------------------------------------------------------------------ */
 /*  OPTIONS *   - CORS preflight                                       */
@@ -949,6 +1082,27 @@ static esp_err_t handler_static(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Recording segment completion callback                              */
+/* ------------------------------------------------------------------ */
+
+static void on_segment_complete(const char *filepath, uint32_t size)
+{
+    ESP_LOGI(TAG, "Segment complete: %s (%u bytes)", filepath, size);
+    /* Register file in storage manager */
+    storage_register_file(filepath, size);
+
+
+    /* Enqueue for NAS upload */
+    nas_uploader_enqueue(filepath);
+
+    /* Run storage cleanup if needed */
+    storage_cleanup();
+
+    /* Send webhook alert */
+    webhook_send_alert("recording_segment", filepath);
+}
+
+/* ------------------------------------------------------------------ */
 /*  URI registration table                                             */
 /* ------------------------------------------------------------------ */
 
@@ -976,6 +1130,10 @@ static const uri_entry_t s_uris[] = {
     { "/api/timelapse/status", HTTP_GET,  handler_api_timelapse_status },
     { "/api/format",   HTTP_POST,   handler_api_format       },
     { "/api/storage",  HTTP_GET,    handler_api_storage      },
+    { "/api/record",    HTTP_POST,   handler_api_record_post  },
+    { "/api/record",    HTTP_GET,    handler_api_record_get   },
+    { "/api/nas/test",  HTTP_POST,   handler_api_nas_test     },
+    { "/api/nas",       HTTP_GET,    handler_api_nas          },
 
     { "/*",             HTTP_OPTIONS, handler_options         },
     { "/*",             HTTP_GET,    handler_static          },
@@ -989,9 +1147,16 @@ static const uri_entry_t s_uris[] = {
 
 esp_err_t web_server_init(void)
 {
+    /*
+     * Module initialization notes:
+     * - ws_server_init() is called in web_server_start() after HTTP server starts
+     * - recorder_set_segment_cb(on_segment_complete) should be called after recorder_init()
+     * - webhook_init() should be called after WiFi STA connected (main.c)
+     * - nas_uploader_init() should be called after WiFi STA connected (main.c)
+     */
     ESP_LOGI(TAG, "web_server_init (reserved)");
     return ESP_OK;
-}
+    }
 
 esp_err_t web_server_start(uint16_t port)
 {
@@ -1002,7 +1167,7 @@ esp_err_t web_server_start(uint16_t port)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = port;
-    config.max_uri_handlers = 25;
+    config.max_uri_handlers = 30;
     config.stack_size = 8192;
     config.recv_wait_timeout = 10;    /* longer tolerance for slow WiFi */
     config.send_wait_timeout = 30;    /* prevent premature stream disconnects */
@@ -1043,11 +1208,12 @@ esp_err_t web_server_start(uint16_t port)
         };
         httpd_register_uri_handler(s_server, &uri);
     }
+    /* Initialize WebSocket server */
+    ws_server_init(s_server);
 
     ESP_LOGI(TAG, "Web server started on port %d", port);
     return ESP_OK;
 }
-
 esp_err_t web_server_stop(void)
 {
     if (s_server) {

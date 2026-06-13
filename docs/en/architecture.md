@@ -16,12 +16,12 @@ The MiBee Cam firmware is a real-time embedded system designed for camera applic
 - **Real-time Processing**: Concurrent camera capture and streaming
 - **Resource-Constrained**: Optimized for 4MB flash + 4MB PSRAM
 - **Networked**: WiFi connectivity with AP/STA dual-mode
-- **Modular**: 12 separate modules with defined interfaces
+#RR|- **Modular**: 22 separate modules with defined interfaces
 - **Event-Driven**: Asynchronous operation with state machines
 
 ## Module Architecture
 
-The firmware consists of 14 interconnected modules, each with specific responsibilities:
+The firmware consists of 22 interconnected modules, each with specific responsibilities:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -51,7 +51,7 @@ The firmware consists of 14 interconnected modules, each with specific responsib
 
 ### 1. Main Module (`main.c`)
 **Responsibility**: System orchestration and boot sequence
-- **Functions**: 16-step initialization, task coordination
+- **Functions**: 19-step initialization, task coordination
 - **Key Files**: `main.c`
 - **Dependencies**: All other modules
 - **Memory**: Stack size 8KB
@@ -113,36 +113,78 @@ The firmware consists of 14 interconnected modules, each with specific responsib
 - **Patterns**: Different blink patterns for each state
 - **States**: Starting, WiFi connecting, running, error, AP mode
 
-
 ### 10. Time Sync (`time_sync.c/h`)
 **Responsibility**: Time and date management
 - **Protocol**: SNTP with NTP server
 - **Timezone**: Configurable POSIX timezone
 - **Accuracy**: Synchronized within 1 second
 - **Use Case**: Timestamps for photos and logs
+
 ### 11. Health Monitor (`health_monitor.c/h`)
 **Responsibility**: System health tracking
 - **Metrics**: Heap, PSRAM, task stack usage
 - **Output**: Prometheus-compatible /metrics endpoint
 - **Interval**: 60-second monitoring
 - **Logging**: Periodic health reports
-### 13. Time Sync (`time_sync.c/h`)
-**Responsibility**: Time and date management
-- **Protocol**: SNTP with NTP server
-- **Timezone**: Configurable POSIX timezone
-- **Accuracy**: Synchronized within 1 second
-- **Use Case**: Timestamps for photos and logs
 
-### 14. Health Monitor (`health_monitor.c/h`)
-**Responsibility**: System health tracking
-- **Metrics**: Heap, PSRAM, task stack usage
-- **Output**: Prometheus-compatible /metrics endpoint
-- **Interval**: 60-second monitoring
-- **Logging**: Periodic health reports
+### 12. Video Recorder (`video_recorder.c/h`)
+**Responsibility**: AVI video recording with multiple modes
+- **Modes**: Continuous, timelapse, dynamic
+- **Storage**: Segmented AVI files on SD card
+- **Config**: Record mode, segment duration
+
+### 13. Frame Broadcaster (`frame_broadcaster.c/h`)
+**Responsibility**: Frame buffer distribution to multiple consumers
+- **Consumers**: MJPEG streamer, video recorder, motion detection
+- **Buffering**: Shared frame buffer with reference counting
+
+### 14. NAS Uploader (`nas_uploader.c/h`)
+**Responsibility**: NAS upload via WebDAV/HTTP
+- **Protocol**: WebDAV or HTTP POST
+- **Retry**: Configurable retry with exponential backoff
+- **Queue**: Upload queue with priority management
+
+### 15. WebDAV Client (`webdav_client.c/h`)
+**Responsibility**: WebDAV protocol implementation
+- **Operations**: PUT, MKCOL, PROPFIND
+- **Auth**: Basic/Digest authentication
+
+### 16. ONVIF Discovery (`onvif_discovery.c/h`)
+**Responsibility**: ONVIF WS-Discovery service
+- **Protocol**: WS-Discovery over UDP multicast
+- **Compatibility**: Synology, Milestone NVR
+
+### 17. ONVIF Service (`onvif_service.c/h`)
+**Responsibility**: ONVIF SOAP service handlers
+- **Services**: Device, Media, PTZ (simulated)
+
+### 18. WebSocket Server (`ws_server.c/h`)
+**Responsibility**: Real-time event push via WebSocket
+- **Events**: Motion, recording, system status
+- **Protocol**: WebSocket over HTTP upgrade
+
+### 19. Webhook (`webhook.c/h`)
+**Responsibility**: HTTP POST event notifications
+- **Events**: Motion, recording, system alerts
+- **Config**: URL, method, headers, retry
+
+### 20. SHA256 (`sha256.c/h`)
+**Responsibility**: File integrity verification
+- **Use**: NAS upload verification, checksum validation
+
+### 21. cJSON (embedded)
+**Responsibility**: JSON parsing for API responses
+- **Note**: Embedded in main/ (should be separate component)
+
+### 22. Common (`common.h`)
+**Responsibility**: Shared types, pin definitions, config struct
+- **Pin Mappings**: CAM_PIN_*, SD_PIN_*
+- **Config Struct**: cam_config_t
+- **Enums**: wifi_state_t, led_state_t
 
 ## Boot Sequence
 
-The firmware follows a carefully ordered 16-step boot sequence to avoid hardware conflicts and ensure proper initialization:
+#WP|The firmware follows a carefully ordered 19-step boot sequence to avoid hardware conflicts and ensure proper initialization:
 
 ```mermaid
 graph TD
@@ -174,20 +216,24 @@ graph TD
 - SPIFFS mount for web UI
 
 **Steps 5-8: Hardware Setup**
-- Camera initialization (before WiFi to avoid I2C conflict)
 - WiFi subsystem setup
 - Health monitoring start
+- WiFi mode selection (STA if configured, AP otherwise)
 
 **Steps 9-12: Network Services**
-- WiFi mode selection (STA if configured, AP otherwise)
 - MJPEG streaming service
+- Web server start (port 80)
 - Time synchronization (STA mode only)
-
-**Steps 13-16: Application Services**
 - Motion detection (STA mode only)
-- SD card storage (after camera to handle GPIO14 sharing)
-- NAS upload service
-- System monitoring and control
+
+**Steps 13-19: Application Services**
+- Video recorder initialization
+- WebSocket server startup
+- ONVIF discovery service
+- ONVIF SOAP service
+- WebDAV client initialization
+- Webhook service startup
+- NAS uploader queue management
 
 ## Data Flow Architecture
 

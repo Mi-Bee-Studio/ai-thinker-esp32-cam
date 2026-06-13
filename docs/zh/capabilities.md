@@ -10,7 +10,7 @@
 
 本文档汇总 MiBee Cam 固件当前支持的全部功能、运行模式以及已移除的特性。
 
-**数据基于当前 main 分支（`CONFIG_VERSION = 6`，魔数 `0xA5B6C7D8`）。**
+**数据基于当前 main 分支（`CONFIG_VERSION = 8`，魔数 `0xA5B6C7D8`）。**
 
 ## 概览
 
@@ -69,7 +69,7 @@
 | **文件名带时间戳** | `motion_2026-06-02_14-30-25.jpg` |
 | **照片列表缓存** | 30s TTL，避免每次 HTTP 请求都遍历 SD |
 | **热插拔检测** | 10s 轮询一次，自动重挂载 |
-| **NVS 配置** | 命名空间 `camcfg`，V1→V6 自动迁移 |
+| **NVS 配置** | 命名空间 `camcfg`，V1→V8 自动迁移 |
 
 ### 🔌 REST API
 
@@ -92,10 +92,14 @@
 | POST   | `/api/timelapse/start` | 启动延时 |
 | POST   | `/api/timelapse/stop` | 停止延时 |
 | GET    | `/api/timelapse/status` | 延时状态 |
-
+| POST   | `/api/record?action=start|stop` | 录像控制（开始/停止） |
+| GET    | `/api/record` | 录像状态信息 |
+| GET    | `/api/storage` | 存储使用与清理状态 |
+| POST   | `/api/nas/test` | 测试 NAS 连接 |
+| GET    | `/api/nas` | NAS 上传状态与队列 |
 ## 不支持的功能（明确列出）
 
-- ❌ **真正的连续录像**：无 H.264 硬件编码，无 mp4/mov/avi 容器封装
+- ✅ **连续视频录制**：AVI 格式，支持 3 种模式（连续、延时、动态）
 - ❌ **音视频录制**：无麦克风输入，无音频编码
 - ❌ **自动对焦 / 光学变焦**：OV2640 是定焦镜头
 - ❌ **水平翻转 / 180° 旋转**：固件仅暴露 `vflip`（垂直翻转）
@@ -108,42 +112,44 @@
 
 | 功能 | 移除时间 | 原因 |
 |------|----------|------|
-
 | **FTP 客户端** | v2 早期 | 太重，资源紧张 |
 | **TF 卡 WiFi 配置（config.txt）** | 保留 | SD `/config.txt` 仍可启动时导入 WiFi |
-|| **BOOT 按钮出厂重置** | 始终禁用 | GPIO0 = 摄像头 XCLK，按下检测不可靠，改用 `POST /api/reset` |
+| **BOOT 按钮出厂重置** | 始终禁用 | GPIO0 = 摄像头 XCLK，按下检测不可靠，改用 `POST /api/reset` |
 | **PSRAM DMA 模式** | 一直禁用 | ESP32 原版 DMA bug，固件 `sdkconfig.defaults` 强制 `CAMERA_PSRAM_DMA=n` |
 | **新 SCCB/I2C 驱动** | 一直禁用 | `CONFIG_SCCB_HARDWARE_I2C_DRIVER_LEGACY=y` 兼容 OV2640 |
-
 ## 启动序列
 
-`app_main()` 中的 16 步启动序列（部分步骤在 STA 模式下被推迟到 WiFi 回调）：
+`app_main()` 中的 **19 步启动序列**（部分步骤在 STA 模式下被推迟到 WiFi 回调）：
 
-1. NVS flash 初始化
-2. 配置从 NVS 加载（V1→V6 迁移）
-3. 状态 LED 初始化（`LED_STARTING`）
-4. SPIFFS 挂载（Web UI）
-5. 释放 SD SPI 总线
-6. WiFi 子系统初始化
-7. 注册 WiFi 状态回调
-8. 健康监控初始化
-9. WiFi 模式选择（STA 或 AP）
-10. MJPEG 流模块初始化
-11. NTP 时间同步初始化
-12. Web 服务器启动（端口 80）
-13. 运动检测启动
-14. SD 卡初始化（在摄像头之后，GPIO14 复用）
-
+1. **NVS 闪存初始化** — 配置存储准备
+2. **配置加载** — 从 NVS 加载设置（版本 8）
+3. **状态 LED 初始化** — GPIO33 系统状态指示
+4. **SPIFFS 挂载** — Web 界面文件系统准备
+5. **WiFi 子系统初始化** — 网络接口和事件循环
+6. **WiFi 状态回调注册** — 网络状态变化监听
+7. **健康监控初始化** — 系统指标收集
+8. **WiFi 模式选择** — STA 已配置则连接，否则启动 AP
+9. **MJPEG 流传输器初始化** — 实时视频流准备
+10. **Web 服务器启动** — HTTP 服务和 API 端点
+11. **时间同步初始化** — NTP 客户端（仅 STA 模式）
+12. **运动检测启动** — 帧监控服务（仅 STA 模式）
+13. **视频录制器初始化** — AVI 录制系统启动
+14. **WebSocket 服务器** — 实时事件推送服务
+15. **ONVIF 发现服务** — NVR 自动发现服务
+16. **ONVIF 服务** — SOAP 服务处理
+17. **WebDAV 客户端** — 云上传系统初始化
+18. **Webhook 服务** — HTTP POST 通知系统
+19. **NAS 上传器** — 上传队列和重试管理
 
 ## 配置结构
 
-`cam_config_t`（NVS blob，大小约 120 字节）：
+`cam_config_t`（NVS blob，大小约 200 字节）：
 
 | 字段 | 类型 | 默认值 | 用途 |
 |------|------|--------|------|
 | `wifi_ssid` | char[33] | "" | STA 模式 SSID |
 | `wifi_pass` | char[65] | "" | STA 模式密码 |
-`device_name` | char[33] | "MiBeeCam" | 主机名 |
+| `device_name` | char[33] | "MiBeeCam" | 主机名 |
 | `resolution` | uint8 | 0 (VGA) | 0=VGA, 1=SVGA, 2=XGA, 3=UXGA |
 | `fps` | uint8 | 15 | 帧率目标 |
 | `jpeg_quality` | uint8 | 12 | 0-63（低=高质） |
@@ -155,10 +161,15 @@
 | `wifi_tx_power` | uint8 | 80 | 0.25dBm 单位（80=20dBm） |
 | `wifi_power_save` | uint8 | 0 | 0=None, 1=MIN_MODEM |
 | `flash_threshold` | uint8 | 40 | 暗光判定阈值（0-100） |
-| `timelapse_enabled` | uint8 | 0 | 延时总开关 |
-| `timelapse_interval_s` | uint16 | 60 | 延时间隔（秒） |
-| `timelapse_burst_count` | uint8 | 3 | 突发连拍张数 |
-| `magic` + `version` | uint32 | `0xA5B6C7D8` / 6 | 魔数+版本号（用于迁移） |
+| `record_mode` | uint8 | 0 | 0=关闭, 1=连续, 2=延时, 3=动态 |
+| `webdav_url` | char[128] | "" | WebDAV 服务器 URL |
+| `webdav_user` | char[64] | "" | WebDAV 用户名 |
+| `webdav_pass` | char[64] | "" | WebDAV 密码 |
+| `alert_webhook_url` | char[128] | "" | Webhook HTTP POST URL |
+| `alert_webhook_events` | uint8 | 0 | 位掩码：bit0=运动, bit1=录像, bit2=系统 |
+| `cleanup_photo_pct` | uint8 | 20 | 照片低于此百分比时自动清理 |
+| `cleanup_video_pct` | uint8 | 10 | 视频低于此百分比时自动清理 |
+| `magic` + `version` | uint32 | `0xA5B6C7D8` / 8 | 魔数+版本号（用于迁移） |
 
 ## 故障转移行为
 

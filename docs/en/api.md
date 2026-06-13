@@ -122,7 +122,7 @@ Returns current configuration (passwords are not included).
   "timezone": "CST-8",
   "motion_threshold": 5,
   "motion_cooldown": 10,
-  "config_version": 6,
+  "config_version": 8,
   "config_magic": 2864434392
 }
 ```
@@ -458,6 +458,118 @@ curl -s http://192.168.1.100/api/sd/photo | jq -r '.photos[] | select(.name == "
 - `GET /config.html` - Configuration interface
 - `GET /files.html` - Photo gallery
 
+### 8. Recording Control
+
+#### POST /api/record?action=start|stop
+
+Start or stop video recording. Requires authentication.
+
+**Parameters**
+- `action`: `start` or `stop` (required)
+
+**Response**
+```json
+{
+  "success": true,
+  "message": "Recording started",
+  "mode": "continuous"
+}
+```
+
+**Curl Examples**
+```bash
+# Start continuous recording
+curl -X POST "http://192.168.1.100/api/record?action=start" \
+  -H "X-Password: admin"
+
+# Stop recording
+curl -X POST "http://192.168.1.100/api/record?action=stop" \
+  -H "X-Password: admin"
+```
+
+#### GET /api/record
+
+Returns recording status and information.
+
+**Response**
+```json
+{
+  "recording": true,
+  "mode": "continuous",
+  "duration": 3600,
+  "segments": 12,
+  "total_size": 125829120,
+  "current_file": "rec_2024-12-30_14-30-25.avi"
+}
+```
+
+### 9. Storage Management
+
+#### GET /api/storage
+
+Returns storage usage and cleanup status.
+
+**Response**
+```json
+{
+  "sd_card": {
+    "available": true,
+    "total": 31457280,
+    "free": 15728640,
+    "used": 15728640,
+    "photo_count": 25,
+    "video_count": 3
+  },
+  "cleanup": {
+    "photo_threshold": 20,
+    "video_threshold": 10,
+    "last_cleanup": "2024-12-30T14:30:00Z"
+  }
+}
+```
+
+### 10. NAS Upload
+
+#### POST /api/nas/test
+
+Test NAS connection. Requires authentication.
+
+**Response**
+```json
+{
+  "success": true,
+  "message": "NAS connection successful",
+  "server": "nas.example.com",
+  "protocol": "webdav"
+}
+```
+
+#### GET /api/nas
+
+Returns NAS upload status and queue.
+
+**Response**
+```json
+{
+  "configured": true,
+  "protocol": "webdav",
+  "server": "nas.example.com",
+  "queue_size": 5,
+  "uploaded": 120,
+  "failed": 2,
+  "last_upload": "2024-12-30T14:30:00Z"
+}
+```
+
+**Curl Examples**
+```bash
+# Test NAS connection
+curl -X POST http://192.168.1.100/api/nas/test \
+  -H "X-Password: admin"
+
+# Get NAS status
+curl http://192.168.1.100/api/nas
+```
 ### Examples
 
 #### Monitoring Script

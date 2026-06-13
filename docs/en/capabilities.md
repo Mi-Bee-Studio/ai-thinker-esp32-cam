@@ -8,7 +8,7 @@
 
 This document summarizes all currently supported features, operating modes, and removed features in the MiBee Cam firmware.
 
-> Data based on current main branch (`CONFIG_VERSION = 6`).
+> Data based on current main branch (`CONFIG_VERSION = 8`).
 
 ## Overview
 
@@ -67,7 +67,7 @@ The firmware is a **pure JPEG capture + MJPEG streaming** ESP32-CAM firmware. Ta
 | **Timestamped Filenames** | `motion_2026-06-02_14-30-25.jpg` |
 | **Photo List Cache** | 30s TTL, avoids SD traversal on every HTTP request |
 | **Hot-plug Detection** | 10s polling, auto-remount |
-| **NVS Config** | Namespace `camcfg`, V1→V6 auto-migration |
+| **NVS Config** | Namespace `camcfg`, V1→V8 auto-migration |
 
 ### 🔌 REST API
 
@@ -90,10 +90,14 @@ Full endpoint list (see [`api.md`](./api.md) for details):
 | POST   | `/api/timelapse/start` | Start timelapse |
 | POST   | `/api/timelapse/stop` | Stop timelapse |
 | GET    | `/api/timelapse/status` | Timelapse status |
-
+| POST   | `/api/record?action=start|stop` | Recording control (start/stop) |
+| GET    | `/api/record` | Recording status and info |
+| GET    | `/api/storage` | Storage usage and cleanup status |
+| POST   | `/api/nas/test` | Test NAS connection |
+| GET    | `/api/nas` | NAS upload status and queue |
 ## Explicitly NOT Supported
 
-- ❌ **Continuous video recording**: No H.264 hardware encoder, no mp4/mov/avi container
+- ✅ **Continuous video recording**: AVI format with 3 modes (continuous, timelapse, dynamic)
 - ❌ **Audio/video recording**: No microphone input, no audio encoding
 - ❌ **Autofocus / optical zoom**: OV2640 is fixed-focus
 - ❌ **Horizontal flip / 180° rotation**: Firmware only exposes `vflip` (vertical)
@@ -106,44 +110,44 @@ Full endpoint list (see [`api.md`](./api.md) for details):
 
 | Feature | Removed | Reason |
 |---------|---------|--------|
-| **NAS Upload (HTTP POST)** | commit `a7f2215` | FTP/NAS too heavy, high resource usage |
-| **NAS Upload (WebDAV)** | commit `a7f2215` | Same as above |
 | **FTP Client** | v2 early | Too heavy, resource constraints |
 | **TF WiFi Config (config.txt)** | Retained | SD `/config.txt` still imported at boot |
 | **BOOT Button Factory Reset** | Existed but disabled | GPIO0 = camera XCLK, button detection unreliable. Use `POST /api/reset` instead |
 | **PSRAM DMA Mode** | Always disabled | ESP32 original DMA bug, `sdkconfig.defaults` forces `CAMERA_PSRAM_DMA=n` |
 | **New SCCB/I2C Driver** | Always disabled | `CONFIG_SCCB_HARDWARE_I2C_DRIVER_LEGACY=y` for OV2640 compatibility |
-
 ## Boot Sequence
 
-16-step boot sequence in `app_main()` (some steps deferred to WiFi callback in STA mode):
+19-step boot sequence in `app_main()` (some steps deferred to WiFi callback in STA mode):
 
 1. NVS flash init
-2. Config load from NVS (V1→V6 migration)
+2. Config load from NVS (V1→V8 migration)
 3. Status LED init (`LED_STARTING`)
 4. SPIFFS mount (Web UI)
-5. Release SD SPI bus (GPIO14 arbitration)
-6. WiFi subsystem init
-7. Register WiFi state callback
-8. Health monitor init
-9. WiFi mode selection (STA or AP)
-10. ~~Camera init~~ (deferred to WiFi callback - DMA freeze workaround)
-11. NTP time sync init
-12. Camera init (after WiFi STA, DMA freeze workaround esp32-camera#620)
-13. Motion detection start
-14. SD card init (after camera, GPIO14 sharing)
-15. ~~NAS uploader~~ (removed)
-16. ~~BOOT button~~ (disabled)
+5. WiFi subsystem init
+6. Register WiFi state callback
+7. Health monitor init
+8. WiFi mode selection (STA or AP)
+9. MJPEG streamer init
+10. Web server start (port 80)
+11. NTP time sync init (STA only)
+12. Motion detection start (STA only)
+13. Video recorder init (AVI)
+14. WebSocket server init
+15. ONVIF discovery service
+16. ONVIF SOAP service
+17. WebDAV client init
+18. Webhook service init
+19. NAS uploader queue management
 
 ## Config Structure
 
-`cam_config_t` (NVS blob, ~120 bytes):
+`cam_config_t` (NVS blob, ~200 bytes):
 
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
 | `wifi_ssid` | char[33] | "" | STA SSID |
 | `wifi_pass` | char[65] | "" | STA password |
-`device_name` | char[33] | "MiBeeCam" | Hostname |
+| `device_name` | char[33] | "MiBeeCam" | Hostname |
 | `resolution` | uint8 | 0 (VGA) | 0=VGA, 1=SVGA, 2=XGA, 3=UXGA |
 | `fps` | uint8 | 15 | Target frame rate |
 | `jpeg_quality` | uint8 | 12 | 0-63 (lower = better) |
@@ -155,10 +159,15 @@ Full endpoint list (see [`api.md`](./api.md) for details):
 | `wifi_tx_power` | uint8 | 80 | 0.25dBm units (80=20dBm) |
 | `wifi_power_save` | uint8 | 0 | 0=None, 1=MIN_MODEM |
 | `flash_threshold` | uint8 | 40 | Dark threshold (0-100) |
-| `timelapse_enabled` | uint8 | 0 | Timelapse master switch |
-| `timelapse_interval_s` | uint16 | 60 | Timelapse interval (seconds) |
-| `timelapse_burst_count` | uint8 | 3 | Burst frame count |
-| `magic` + `version` | uint32 | `0xA5B6C7D8` / 6 | Magic + version (for migration) |
+| `record_mode` | uint8 | 0 | 0=off, 1=continuous, 2=timelapse, 3=dynamic |
+| `webdav_url` | char[128] | "" | WebDAV server URL |
+| `webdav_user` | char[64] | "" | WebDAV username |
+| `webdav_pass` | char[64] | "" | WebDAV password |
+| `alert_webhook_url` | char[128] | "" | Webhook HTTP POST URL |
+| `alert_webhook_events` | uint8 | 0 | Bitmask: bit0=motion, bit1=recording, bit2=system |
+| `cleanup_photo_pct` | uint8 | 20 | Auto-delete photos below this free % |
+| `cleanup_video_pct` | uint8 | 10 | Auto-delete videos below this free % |
+| `magic` + `version` | uint32 | `0xA5B6C7D8` / 8 | Magic + version (for migration) |
 
 ## Failover Behavior
 

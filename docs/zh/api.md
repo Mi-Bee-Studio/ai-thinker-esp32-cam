@@ -12,10 +12,11 @@ MiBee Cam 提供 RESTful API 接口，允许通过 HTTP 请求控制和监控系
 
 - **设备状态监控**：获取系统健康信息、网络状态和指标
 - **配置管理**：更新 WiFi、摄像头和其他设置
-- **照片捕获**：手动和自动照片捕获
+- **文件管理**：SD 卡照片浏览、下载和删除
 - **视频流**：实时 MJPEG 流传输
-- **文件管理**：SD 卡照片浏览、下载和上传
-- **文件管理**：SD 卡照片浏览和下载
+- **录像控制**：启动/停止 AVI 视频录制
+- **NAS 上传**：WebDAV 云存储备份
+- **运动检测**：帧差分运动检测和拍照
 
 ## API 基础信息
 
@@ -30,7 +31,6 @@ MiBee Cam 提供 RESTful API 接口，允许通过 HTTP 请求控制和监控系
 
 ### 认证
 
-### 认证
 某些需要身份验证的操作：
 ```http
 X-Password: admin
@@ -107,7 +107,9 @@ Host: 192.168.1.100
     "stack_watermark": 2048,
     "psram": 0,
     "time": "2024-12-30T14:35:42Z",
-    "timezone": "CST-8"
+    "timezone": "CST-8",
+    "config_version": 8,
+    "config_magic": 2864434392
   }
 }
 ```
@@ -120,27 +122,6 @@ Host: 192.168.1.100
 - `storage`: 存储使用情况
 - `motion`: 运动检测状态
 - `system`: 系统指标和时间
-
-### `/api/status/simplified` - 获取简化状态
-
-获取仅包含基本信息的设备状态。
-
-**请求**
-```http
-GET /api/status/simplified
-Host: 192.168.1.100
-```
-
-**响应**
-```json
-{
-  "status": "running",
-  "hostname": "MiBeeCam",
-  "ip": "192.168.1.100",
-  "signal": -45,
-  "uptime": 86400
-}
-```
 
 ## 配置 API
 
@@ -157,78 +138,77 @@ Host: 192.168.1.100
 **响应**
 ```json
 {
-  "wifi": {
-    "mode": "STA",
-    "ssid": "MyWiFi",
-    "password": "MyPassword",
-    "device_name": "MiBeeCam",
-    "scan_results": []
-  },
-  "camera": {
-    "resolution": 0,
-    "fps": 15,
-    "jpeg_quality": 12,
-    "flash_brightness": 0
-  },
-  "motion": {
-    "enabled": true,
-    "threshold": 5,
-    "cooldown_time": 10,
-    "save_photo": true,
-    "upload_photo": true
-  },
-  "nas": {
-    "enabled": false,
-    "protocol": "HTTP",
-    "url": "",
-    "port": 80,
-    "username": "",
-    "password": "",
-    "path": "",
-    "retries": 3,
-    "upload_motion": false
-  },
-  "time": {
-    "timezone": "CST-8",
-    "ntp_server": "pool.ntp.org"
-  },
-  "system": {
-    "web_password": "",
-    "led_enabled": true
-  }
+  "wifi_ssid": "MyWiFi",
+  "device_name": "MiBeeCam",
+  "resolution": 0,
+  "fps": 15,
+  "jpeg_quality": 12,
+  "web_password": "",
+  "timezone": "CST-8",
+  "motion_threshold": 30,
+  "motion_cooldown": 5,
+  "vflip": 0,
+  "wifi_tx_power": 80,
+  "wifi_power_save": 0,
+  "flash_threshold": 40,
+  "timelapse_enabled": 0,
+  "timelapse_interval_s": 60,
+  "timelapse_burst_count": 3,
+  "record_mode": 0,
+  "webdav_url": "",
+  "webdav_user": "",
+  "alert_webhook_url": "",
+  "alert_webhook_events": 0,
+  "cleanup_photo_pct": 20,
+  "cleanup_video_pct": 10
 }
 ```
 
-### `/api/config/update` - 更新配置
+**注意**：密码字段不会在响应中返回。
+
+### `/api/config` - 更新配置
 
 更新系统配置（需要认证）。
 
 **请求**
 ```http
-POST /api/config/update
+POST /api/config
 Host: 192.168.1.100
 X-Password: admin
 Content-Type: application/json
 
 {
-  "wifi": {
-    "ssid": "NewNetwork",
-    "password": "NewPassword"
-  },
-  "camera": {
-    "resolution": 1,
-    "fps": 20
-  }
+  "wifi_ssid": "NewNetwork",
+  "wifi_pass": "NewPassword",
+  "resolution": 1,
+  "fps": 20,
+  "motion_threshold": 25
 }
 ```
 
 **参数**
-- `wifi`: WiFi 设置 (ssid, password, device_name)
-- `camera`: 摄像头设置 (resolution, fps, jpeg_quality, flash_brightness)
-- `motion`: 运动检测设置 (enabled, threshold, cooldown_time, save_photo, upload_photo)
-- `nas`: NAS 设置 (enabled, protocol, url, port, username, password, path, retries, upload_motion) - 注意：此功能已从固件中移除
-- `time`: 时间设置 (timezone, ntp_server)
-- `system`: 系统设置 (web_password, led_enabled)
+- `wifi_ssid`: WiFi 网络名称
+- `wifi_pass`: WiFi 密码
+- `device_name`: 设备主机名
+- `resolution`: 分辨率 (0=VGA, 1=SVGA, 2=XGA, 3=UXGA)
+- `fps`: 帧率目标
+- `jpeg_quality`: JPEG 质量 (0-63，数字越小质量越高)
+- `web_password`: Web 访问密码
+- `timezone`: 时区字符串
+- `motion_threshold`: 运动检测阈值 (1-100)
+- `motion_cooldown`: 运动检测冷却时间（秒）
+- `vflip`: 垂直翻转 (0=关闭, 1=开启)
+- `wifi_tx_power`: WiFi 发射功率 (0-80，80=20dBm)
+- `wifi_power_save`: 省电模式 (0=关闭, 1=最小调制解调器)
+- `flash_threshold`: 闪光阈值 (0-100)
+- `record_mode`: 录像模式 (0=关闭, 1=连续, 2=延时, 3=动态)
+- `webdav_url`: WebDAV 服务器 URL
+- `webdav_user`: WebDAV 用户名
+- `webdav_pass`: WebDAV 密码
+- `alert_webhook_url`: Webhook HTTP POST URL
+- `alert_webhook_events`: Webhook 事件位掩码
+- `cleanup_photo_pct`: 照片清理阈值百分比
+- `cleanup_video_pct`: 视频清理阈值百分比
 
 **响应**
 ```json
@@ -239,295 +219,45 @@ Content-Type: application/json
 }
 ```
 
-### `/api/config/wifi/scan` - 扫描 WiFi 网络
+### `/api/auth` - 验证密码
 
-扫描可用的 WiFi 网络。
-
-**请求**
-```http
-GET /api/config/wifi/scan
-Host: 192.168.1.100
-```
-
-**响应**
-```json
-[
-  {
-    "ssid": "MyWiFi",
-    "bssid": "AA:BB:CC:DD:EE:FF",
-    "channel": 6,
-    "rssi": -45,
-    "security": 3,
-    "hidden": false
-  },
-  {
-    "ssid": "AnotherNetwork",
-    "bssid": "FF:EE:DD:CC:BB:AA",
-    "channel": 11,
-    "rssi": -65,
-    "security": 3,
-    "hidden": false
-  }
-]
-```
-
-**字段说明**
-- `ssid`: 网络名称
-- `bssid`: MAC 地址
-- `channel`: 信道
-- `rssi`: 信号强度 (dBm)
-- `security`: 安全类型 (0=None, 1=WEP, 2=WPA, 3=WPA2)
-- `hidden`: 是否为隐藏网络
-
-## 摄像头 API
-
-### `/api/capture` - 捕获照片
-
-捕获单张照片并返回文件名。
+验证 Web 访问密码。
 
 **请求**
 ```http
-POST /api/capture
+GET /api/auth
 Host: 192.168.1.100
-Content-Type: application/json
-
-{
-  "quality": 12,
-  "resolution": 0
-}
+X-Password: admin
 ```
-
-**参数**
-- `quality`: JPEG 质量 (1-63, 默认 12)
-- `resolution`: 分辨率 (0=VGA, 1=SVGA, 2=XGA, 3=UXGA, 默认 0)
 
 **响应**
 ```json
 {
   "success": true,
-  "filename": "2024-12-30_14-35-42.jpg",
-  "path": "/sdcard/photos/2024-12-30/2024-12-30_14-35-42.jpg",
-  "size": 45232,
-  "resolution": "640x480",
-  "quality": 12
+  "message": "Password verified"
 }
 ```
 
-### `/api/capture/download` - 下载捕获的照片
+## 摄像头 API
 
-直接下载 JPEG 照片文件。
+### `/capture` - 捕获照片
+
+捕获单张 JPEG 照片。
 
 **请求**
 ```http
-GET /api/capture/download?filename=2024-12-30_14-35-42.jpg
+GET /capture
 Host: 192.168.1.100
 ```
-
-**参数**
-- `filename`: 照片文件名（可选，默认最新照片）
 
 **响应**
 ```http
 HTTP/1.1 200 OK
 Content-Type: image/jpeg
-Content-Disposition: attachment; filename="2024-12-30_14-35-42.jpg"
 Content-Length: 45232
 
 [JPEG 二进制数据]
 ```
-
-### `/api/camera/status` - 获取摄像头状态
-
-获取摄像头当前状态信息。
-
-**请求**
-```http
-GET /api/camera/status
-Host: 192.168.1.100
-```
-
-**响应**
-```json
-{
-  "status": "active",
-  "resolution": 0,
-  "resolution_name": "VGA",
-  "resolution_dimensions": "640x480",
-  "fps": 15,
-  "fps_actual": 14.7,
-  "jpeg_quality": 12,
-  "format": "JPEG",
-  "psram_usage": 600,
-  "buffer_count": 2,
-  "last_capture": "2024-12-30T14:35:42Z",
-  "error_code": 0
-}
-```
-
-## 运动检测 API
-
-### `/api/motion/status` - 获取运动检测状态
-
-获取运动检测配置和状态。
-
-**请求**
-```http
-GET /api/motion/status
-Host: 192.168.1.100
-```
-
-**响应**
-```json
-{
-  "enabled": true,
-  "threshold": 5,
-  "cooldown_time": 10,
-  "save_photo": true,
-  "upload_photo": true,
-  "detected": false,
-  "last_event": "2024-12-30T14:30:25Z",
-  "total_events": 125,
-  "recent_events": [
-    {
-      "timestamp": "2024-12-30T14:30:25Z",
-      "photo": "2024-12-30_14-30-25.jpg",
-      "uploaded": true
-    }
-  ]
-}
-```
-
-### `/api/motion/toggle` - 切换运动检测
-
-启用/禁用运动检测（需要认证）。
-
-**请求**
-```http
-POST /api/motion/toggle?enabled=true
-Host: 192.168.1.100
-X-Password: admin
-```
-
-**参数**
-- `enabled`: 是否启用 (true/false)
-
-**响应**
-```json
-{
-  "success": true,
-  "enabled": true,
-  "message": "Motion detection enabled"
-}
-```
-
-### `/api/motion/test` - 测试运动检测
-
-临时启用运动检测并发送测试事件。
-
-**请求**
-```http
-POST /api/motion/test
-Host: 192.168.1.100
-X-Password: admin
-```
-
-**响应**
-```json
-{
-  "success": true,
-  "test_started": true,
-  "message": "Motion detection test started for 30 seconds"
-}
-```
-
-## 存储和文件 API
-
-### `/api/files` - 列出文件
-
-获取 SD 卡上的照片文件列表。
-
-**请求**
-```http
-GET /api/files?directory=/photos&limit=10
-Host: 192.168.1.100
-```
-
-**参数**
-- `directory`: 目录路径（可选，默认 `/photos`）
-- `limit`: 返回的文件数量（可选，默认 20）
-
-**响应**
-```json
-{
-  "directory": "/photos",
-  "total_files": 125,
-  "total_size": 6710886,
-  "files": [
-    {
-      "name": "2024-12-30_14-35-42.jpg",
-      "path": "/photos/2024-12-30/2024-12-30_14-35-42.jpg",
-      "size": 45232,
-      "timestamp": "2024-12-30T14:35:42Z",
-      "date": "2024-12-30",
-      "time": "14-35-42"
-    },
-    {
-      "name": "2024-12-30_14-30-25.jpg",
-      "path": "/photos/2024-12-30/2024-12-30_14-30-25.jpg",
-      "size": 38421,
-      "timestamp": "2024-12-30T14:30:25Z",
-      "date": "2024-12-30",
-      "time": "14-30-25"
-    }
-  ]
-}
-```
-
-### `/api/files/upload` - 上传文件
-
-此功能已从固件中移除。
-
-**请求**
-```http
-POST /api/files/upload
-Host: 192.168.1.100
-Content-Type: application/json
-```
-
-**响应**
-```json
-{
-  "success": false,
-  "message": "NAS upload functionality has been removed from firmware"
-  "error": "NAS_UPLOAD_DISABLED"
-}
-```
-
-### `/api/files/cleanup` - 清理文件
-
-清理旧照片以释放存储空间（需要认证）。
-
-**请求**
-```http
-POST /api/files/cleanup?keep_days=30
-Host: 192.168.1.100
-X-Password: admin
-```
-
-**参数**
-- `keep_days`: 保留天数（可选，默认 7）
-
-**响应**
-```json
-{
-  "success": true,
-  "files_removed": 45,
-  "space_freed": 2345678,
-  "message": "Cleaned 45 files, freed 2.3 MB"
-}
-```
-
-## 流媒体 API
 
 ### `/stream` - MJPEG 流
 
@@ -559,27 +289,298 @@ Content-Type: image/jpeg
 [JPEG 帧数据 3]
 ```
 
-**参数**
-- `resolution`: 分辨率参数（可选）
-- `quality`: JPEG 质量（可选）
-- `fps`: 帧率（可选）
+## 文件管理 API
 
-### `/stream/snapshot` - 流媒体快照
+### `/api/files` - 列出文件
 
-从当前流捕获单帧。
+获取 SD 卡上的照片文件列表。
 
 **请求**
 ```http
-GET /stream/snapshot
+GET /api/files?limit=10&offset=0
 Host: 192.168.1.100
 ```
+
+**参数**
+- `limit`: 返回的文件数量（可选，默认 20）
+- `offset`: 分页偏移量（可选，默认 0）
+
+**响应**
+```json
+{
+  "files": [
+    {
+      "name": "2024-12-30_14-35-42.jpg",
+      "size": 45232,
+      "timestamp": 1735565742
+    },
+    {
+      "name": "2024-12-30_14-30-25.jpg",
+      "size": 38421,
+      "timestamp": 1735565425
+    }
+  ],
+  "total": 125,
+  "limit": 10,
+  "offset": 0
+}
+```
+
+### `/api/files` - 删除文件
+
+删除 SD 卡上的照片文件（需要认证）。
+
+**请求**
+```http
+DELETE /api/files?name=2024-12-30_14-35-42.jpg
+Host: 192.168.1.100
+X-Password: admin
+```
+
+**参数**
+- `name`: 要删除的文件名（必需）
+
+**响应**
+```json
+{
+  "success": true,
+  "message": "File deleted successfully"
+}
+```
+
+### `/api/download` - 下载文件
+
+下载 SD 卡上的照片文件。
+
+**请求**
+```http
+GET /api/download?name=2024-12-30_14-35-42.jpg
+Host: 192.168.1.100
+```
+
+**参数**
+- `name`: 要下载的文件名（必需）
 
 **响应**
 ```http
 HTTP/1.1 200 OK
 Content-Type: image/jpeg
+Content-Disposition: attachment; filename="2024-12-30_14-35-42.jpg"
+Content-Length: 45232
 
-[JPEG 帧数据]
+[JPEG 二进制数据]
+```
+
+## 录像控制 API
+
+### `/api/record` - 启动/停止录像
+
+启动或停止视频录制（需要认证）。
+
+**请求**
+```http
+POST /api/record?action=start
+Host: 192.168.1.100
+X-Password: admin
+```
+
+**参数**
+- `action`: `start` 或 `stop`（必需）
+
+**响应**
+```json
+{
+  "success": true,
+  "message": "Recording started",
+  "mode": "continuous"
+}
+```
+
+**Curl 示例**
+```bash
+# 启动连续录像
+curl -X POST "http://192.168.1.100/api/record?action=start" \
+  -H "X-Password: admin"
+
+# 停止录像
+curl -X POST "http://192.168.1.100/api/record?action=stop" \
+  -H "X-Password: admin"
+```
+
+### `/api/record` - 获取录像状态
+
+返回录像状态和信息。
+
+**请求**
+```http
+GET /api/record
+Host: 192.168.1.100
+```
+
+**响应**
+```json
+{
+  "recording": true,
+  "mode": "continuous",
+  "duration": 3600,
+  "segments": 12,
+  "total_size": 125829120,
+  "current_file": "rec_2024-12-30_14-30-25.avi"
+}
+```
+
+## 存储管理 API
+
+### `/api/storage` - 获取存储状态
+
+返回存储使用情况和清理状态。
+
+**请求**
+```http
+GET /api/storage
+Host: 192.168.1.100
+```
+
+**响应**
+```json
+{
+  "sd_card": {
+    "available": true,
+    "total": 31457280,
+    "free": 15728640,
+    "used": 15728640,
+    "photo_count": 25,
+    "video_count": 3
+  },
+  "cleanup": {
+    "photo_threshold": 20,
+    "video_threshold": 10,
+    "last_cleanup": "2024-12-30T14:30:00Z"
+  }
+}
+```
+
+## NAS 上传 API
+
+### `/api/nas/test` - 测试 NAS 连接
+
+测试 NAS 连接（需要认证）。
+
+**请求**
+```http
+POST /api/nas/test
+Host: 192.168.1.100
+X-Password: admin
+```
+
+**响应**
+```json
+{
+  "success": true,
+  "message": "NAS connection successful",
+  "server": "nas.example.com",
+  "protocol": "webdav"
+}
+```
+
+**Curl 示例**
+```bash
+# 测试 NAS 连接
+curl -X POST http://192.168.1.100/api/nas/test \
+  -H "X-Password: admin"
+```
+
+### `/api/nas` - 获取 NAS 状态
+
+返回 NAS 上传状态和队列。
+
+**请求**
+```http
+GET /api/nas
+Host: 192.168.1.100
+```
+
+**响应**
+```json
+{
+  "configured": true,
+  "protocol": "webdav",
+  "server": "nas.example.com",
+  "queue_size": 5,
+  "uploaded": 120,
+  "failed": 2,
+  "last_upload": "2024-12-30T14:30:00Z"
+}
+```
+
+**Curl 示例**
+```bash
+# 获取 NAS 状态
+curl http://192.168.1.100/api/nas
+```
+
+## 延时摄影 API
+
+### `/api/timelapse/start` - 启动延时摄影
+
+启动延时摄影（需要认证）。
+
+**请求**
+```http
+POST /api/timelapse/start
+Host: 192.168.1.100
+X-Password: admin
+```
+
+**响应**
+```json
+{
+  "success": true,
+  "message": "Timelapse started",
+  "interval": 60,
+  "burst_count": 3
+}
+```
+
+### `/api/timelapse/stop` - 停止延时摄影
+
+停止延时摄影（需要认证）。
+
+**请求**
+```http
+POST /api/timelapse/stop
+Host: 192.168.1.100
+X-Password: admin
+```
+
+**响应**
+```json
+{
+  "success": true,
+  "message": "Timelapse stopped"
+}
+```
+
+### `/api/timelapse/status` - 获取延时摄影状态
+
+返回延时摄影状态。
+
+**请求**
+```http
+GET /api/timelapse/status
+Host: 192.168.1.100
+```
+
+**响应**
+```json
+{
+  "enabled": true,
+  "running": true,
+  "interval": 60,
+  "burst_count": 3,
+  "photos_taken": 45,
+  "last_photo": "2024-12-30_14-30-25.jpg"
+}
 ```
 
 ## 系统管理 API
@@ -608,27 +609,14 @@ X-Password: admin
 
 恢复出厂设置（需要认证）。
 
-**请求**
-```http
-POST /api/reset?mode=full
-Host: 192.168.1.100
-X-Password: admin
-```
-
-**参数**
-### `/api/reset` - 恢复出厂设置
-
 **注意**：BOOT 按钮工厂重置功能已禁用，因为 GPIO0 被用作摄像头 XCLK 引脚。请使用此 API 端点进行重置。
 
 **请求**
 ```http
 POST /api/reset
 Host: 192.168.1.100
-Content-Type: application/json
+X-Password: admin
 ```
-
-**参数**
-- `mode`: 重置模式 (network - 仅重置网络配置, full - 完全重置)
 
 **响应**
 ```json
@@ -636,21 +624,6 @@ Content-Type: application/json
   "success": true,
   "message": "Factory reset completed",
   "restart_time": 3
-}
-```
-
-**参数**
-- `state`: LED 状态 (on, off, blink)
-**参数**
-- `state`: LED 状态 (on, off, blink)
-- `delay`: 闪烁间隔（毫秒，仅适用于 blink）
-
-**响应**
-```json
-{
-  "success": true,
-  "state": "on",
-  "previous_state": "blink"
 }
 ```
 
@@ -695,47 +668,6 @@ motion_events_total 125
 # HELP photos_taken_total Total photos taken
 # TYPE photos_taken_total counter
 photos_taken_total 245
-
-# HELP upload_success_total Successful uploads
-# TYPE upload_success_total counter
-upload_success_total 120
-```
-
-### `/api/health` - 健康检查
-
-执行系统健康检查。
-
-**请求**
-```http
-GET /api/health
-Host: 192.168.1.100
-```
-
-**响应**
-```json
-{
-  "status": "healthy",
-  "checks": {
-    "camera": {
-      "status": "ok",
-      "response_time": 45
-    },
-    "wifi": {
-      "status": "ok",
-      "signal": -45
-    },
-    "storage": {
-      "status": "ok",
-      "space_available": "1.2GB"
-    },
-    "memory": {
-      "status": "ok",
-      "heap": "44KB",
-      "psram": "1.6MB"
-    }
-  },
-  "timestamp": "2024-12-30T14:35:42Z"
-}
 ```
 
 ## cURL 使用示例
@@ -745,51 +677,29 @@ Host: 192.168.1.100
 # 获取设备状态
 curl -s http://192.168.1.100/api/status | jq .
 
-# 获取简化的状态
-curl -s http://192.168.1.100/api/status/simplified | jq .
+# 获取配置
+curl -s http://192.168.1.100/api/config | jq .
 ```
 
 ### 配置管理
 ```bash
-# 扫描 WiFi 网络
-curl -s http://192.168.1.100/api/config/wifi/scan | jq .
-
-# 更新 WiFi 配置
-curl -X POST http://192.168.1.100/api/config/update \
+# 更新配置
+curl -X POST http://192.168.1.100/api/config \
   -H "Content-Type: application/json" \
   -H "X-Password: admin" \
-  -d '{"wifi":{"ssid":"MyNetwork","password":"MyPass"}}'
+  -d '{"wifi_ssid":"MyNetwork","wifi_pass":"MyPass","resolution":1}'
 
-# 获取当前配置
-curl -s http://192.168.1.100/api/config | jq .
+# 验证密码
+curl -H "X-Password: admin" http://192.168.1.100/api/auth
 ```
 
 ### 摄像头控制
 ```bash
 # 捕获照片
-curl -X POST http://192.168.1.100/api/capture \
-  -H "Content-Type: application/json" \
-  -d '{"quality":10,"resolution":1}'
+curl http://192.168.1.100/capture -o photo.jpg
 
-# 下载照片
-curl -o photo.jpg http://192.168.1.100/capture
-
-# 查看摄像头状态
-curl -s http://192.168.1.100/api/camera/status | jq .
-```
-
-### 运动检测
-```bash
-# 查看运动检测状态
-curl -s http://192.168.1.100/api/motion/status | jq .
-
-# 切换运动检测
-curl -X POST http://192.168.1.100/api/motion/toggle?enabled=true \
-  -H "X-Password: admin"
-
-# 测试运动检测
-curl -X POST http://192.168.1.100/api/motion/test \
-  -H "X-Password: admin"
+# 查看流（在浏览器中打开）
+# http://192.168.1.100/stream
 ```
 
 ### 文件管理
@@ -797,15 +707,50 @@ curl -X POST http://192.168.1.100/api/motion/test \
 # 列出文件
 curl -s "http://192.168.1.100/api/files?limit=5" | jq .
 
-# 上传文件到 NAS
-curl -X POST http://192.168.1.100/api/files/upload \
-  -H "Content-Type: application/json" \
-  -H "X-Password: admin" \
-  -d '{"filename":"2024-12-30_14-35-42.jpg","path":"/photos/2024-12-30/2024-12-30_14-35-42.jpg"}'
+# 下载文件
+curl -o photo.jpg "http://192.168.1.100/api/download?name=2024-12-30_14-35-42.jpg"
 
-# 清理旧文件
-curl -X POST "http://192.168.1.100/api/files/cleanup?keep_days=30" \
+# 删除文件
+curl -X DELETE "http://192.168.1.100/api/files?name=2024-12-30_14-35-42.jpg" \
   -H "X-Password: admin"
+```
+
+### 录像控制
+```bash
+# 启动录像
+curl -X POST "http://192.168.1.100/api/record?action=start" \
+  -H "X-Password: admin"
+
+# 停止录像
+curl -X POST "http://192.168.1.100/api/record?action=stop" \
+  -H "X-Password: admin"
+
+# 查看录像状态
+curl -s http://192.168.1.100/api/record | jq .
+```
+
+### NAS 管理
+```bash
+# 测试 NAS 连接
+curl -X POST http://192.168.1.100/api/nas/test \
+  -H "X-Password: admin"
+
+# 查看 NAS 状态
+curl -s http://192.168.1.100/api/nas | jq .
+```
+
+### 延时摄影
+```bash
+# 启动延时摄影
+curl -X POST http://192.168.1.100/api/timelapse/start \
+  -H "X-Password: admin"
+
+# 停止延时摄影
+curl -X POST http://192.168.1.100/api/timelapse/stop \
+  -H "X-Password: admin"
+
+# 查看延时状态
+curl -s http://192.168.1.100/api/timelapse/status | jq .
 ```
 
 ### 系统管理
@@ -818,18 +763,8 @@ curl -X POST http://192.168.1.100/api/reboot \
 curl -X POST http://192.168.1.100/api/reset \
   -H "X-Password: admin"
 
-# 控制 LED
-curl -X POST "http://192.168.1.100/api/led?state=blink&delay=1000" \
-  -H "X-Password: admin"
-```
-
-### 监控和指标
-```bash
 # 获取 Prometheus 指标
 curl -s http://192.168.1.100/metrics
-
-# 健康检查
-curl -s http://192.168.1.100/api/health | jq .
 ```
 
 ## 错误处理
@@ -866,14 +801,13 @@ curl -s http://192.168.1.100/api/health | jq .
 
 - **并发连接数**：最多 5 个 HTTP 连接
 - **MJPEG 流**：最多 2 个并发流
-- **上传队列**：最多 50 个文件排队
 - **请求大小**：最大 1MB
 - **响应大小**：未限制（流除外）
 
 ## 安全注意事项
 
 1. **Web 密码**：在生产环境中更改默认密码
-2. **HTTPS**：建议在支持的环境中启用
+2. **HTTPS**：当前不支持，建议在专用网络中使用
 3. **网络隔离**：将设备放在专用网络中
 4. **访问控制**：限制 API 访问 IP 范围
 5. **定期更新**：保持固件最新版本以修复安全漏洞
@@ -881,11 +815,3 @@ curl -s http://192.168.1.100/api/health | jq .
 ### GPIO14 共享引脚说明
 
 ⚠️ **重要提醒**：GPIO14 引脚在 MiBee Cam 上被摄像头和 SD 卡共享使用（摄像头 XCLK 和 SD 卡 CLK）。固件采用严格的初始化顺序来解决冲突：SD 卡初始化 → 摄像头初始化 → SD 卡重新初始化。如果遇到相关功能异常，请检查此引脚连接。
-
-### 性能限制
-
-- **并发连接数**：最多 5 个 HTTP 连接
-- **MJPEG 流**：最多 2 个并发流
-- **请求大小**：最大 1MB
-- **响应大小**：未限制（流除外）
-- **摄像头互斥**：流传输和拍照不能同时进行
