@@ -14,9 +14,11 @@ idf_component_register(
         "frame_broadcaster.c"
         "web_server.c"
         "wifi_manager.c"
-        "wifi_manager.c"
         "cJSON.c"
         "sha256.c"
+        "webhook.c"
+        "nas_uploader.c"
+        "webdav_client.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi
@@ -38,4 +40,4 @@ idf_component_register(
         freertos
         esp_system
         log
-)
+    )
