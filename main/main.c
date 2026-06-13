@@ -1,10 +1,11 @@
 /*
  * MiBee Cam - Main Entry Point
- * 16-step boot sequence integrating all modules.
+ * 19-step boot sequence integrating all modules.
  *
  * Boot order (CRITICAL):
- *   NVS -> config -> LED -> SPIFFS -> camera -> WiFi -> callback -> health
- *   -> STA/AP -> MJPEG -> time_sync -> web_server -> motion -> SD -> NAS -> boot_btn
+ *   NVS -> config -> LED -> SPIFFS -> SD bus -> WiFi -> callback -> health
+ *   -> STA/AP -> MJPEG -> time_sync -> web_server -> motion -> SD -> timelapse
+ *   -> fbroadcast -> recorder -> webhook -> NAS -> ONVIF -> auto-record
  */
 
 #include "esp_log.h"
@@ -27,6 +28,12 @@
 #include "motion_detect.h"
 #include "storage_manager.h"
 #include "timelapse.h"
+#include "frame_broadcaster.h"
+#include "video_recorder.h"
+#include "nas_uploader.h"
+#include "webhook.h"
+/* #include "onvif_service.h"    // TODO: add when ONVIF module is ready */
+/* #include "onvif_discovery.h"  // TODO: add when ONVIF module is ready */
 
 static const char *TAG = "main";
 
@@ -52,6 +59,19 @@ static void storage_warm_cache_task(void *arg)
     storage_warm_cache();
     vTaskDelete(NULL);
 }
+
+/* ------------------------------------------------------------------ */
+/*  Recording segment callback — enqueue for NAS upload                */
+/* ------------------------------------------------------------------ */
+static void on_segment_complete(const char *filepath, uint32_t size)
+{
+    ESP_LOGI(TAG, "Segment complete: %s (%u bytes)", filepath, size);
+    storage_register_file(filepath, size);
+    nas_uploader_enqueue(filepath);
+    storage_cleanup();
+    webhook_send_alert("recording_segment", filepath);
+}
+
 static void sta_services_task(void *arg)
 {
     ESP_LOGI(TAG, "STA services task started");
@@ -156,6 +176,56 @@ static void sta_services_task(void *arg)
         }
     }
 
+    /* ── Step 17/19: Frame broadcaster init ── */
+    if (camera_is_initialized()) {
+        esp_err_t ret_fb = fbroadcast_init();
+        if (ret_fb == ESP_OK) {
+            ESP_LOGI(TAG, "=== Step 17/19: Frame broadcaster initialized ===");
+        } else {
+            ESP_LOGW(TAG, "Frame broadcaster init failed: %s", esp_err_to_name(ret_fb));
+        }
+    } else {
+        ESP_LOGW(TAG, "=== Step 17/19: Frame broadcaster skipped (no camera) ===");
+    }
+
+    /* ── Step 18/19: Video recorder init + cleanup + segment callback ── */
+    if (camera_is_initialized() && storage_is_available()) {
+        esp_err_t ret_rec = recorder_init();
+        if (ret_rec == ESP_OK) {
+            recorder_cleanup_incomplete();
+            recorder_set_segment_cb(on_segment_complete);
+            ESP_LOGI(TAG, "=== Step 18/19: Video recorder initialized ===");
+        } else {
+            ESP_LOGW(TAG, "Video recorder init failed: %s", esp_err_to_name(ret_rec));
+        }
+    } else {
+        ESP_LOGW(TAG, "=== Step 18/19: Video recorder skipped (no camera or SD) ===");
+    }
+
+    /* ── Step 19/19: Webhook, NAS, ONVIF, auto-record ── */
+    webhook_init();
+    ESP_LOGI(TAG, "=== Step 19/19: Webhook initialized ===");
+
+    nas_uploader_init();
+    ESP_LOGI(TAG, "=== Step 19/19: NAS uploader initialized ===");
+
+    /* ONVIF init deferred until module is ready */
+    /* TODO: onvif_service_init(httpd_handle); onvif_discovery_init(); onvif_discovery_start(); */
+    ESP_LOGI(TAG, "=== Step 19/19: ONVIF init deferred (module pending) ===");
+
+    /* Auto-start recording if configured */
+    if (camera_is_initialized() && storage_is_available()) {
+        const cam_config_t *cfg_rec = config_get();
+        if (cfg_rec->record_mode != 0) {
+            esp_err_t ret_start = recorder_start();
+            if (ret_start == ESP_OK) {
+                ESP_LOGI(TAG, "Recording auto-started (mode=%u)", cfg_rec->record_mode);
+            } else {
+                ESP_LOGW(TAG, "Auto-start recording failed: %s", esp_err_to_name(ret_start));
+            }
+        }
+    }
+
     /* System is fully up */
     led_set_status(LED_RUNNING);
 
@@ -191,7 +261,7 @@ static void wifi_state_cb(wifi_state_t state, void *user_data)
 
 
 /* ---------------------------------------------------------------------------
- * app_main - system entry point, 16-step boot sequence
+ * app_main - system entry point, 19-step boot sequence
  * --------------------------------------------------------------------------- */
 void app_main(void)
 {
@@ -199,7 +269,7 @@ void app_main(void)
     ESP_LOGI(TAG, "  MiBee Cam");
     ESP_LOGI(TAG, "========================================");
 
-    /* Step 1/16: NVS flash init */
+    /* Step 1/19: NVS flash init */
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_LOGW(TAG, "NVS partition needs erase, formatting...");
@@ -207,24 +277,24 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
-    ESP_LOGI(TAG, "=== Step 1/16: NVS initialized ===");
+    ESP_LOGI(TAG, "=== Step 1/19: NVS initialized ===");
 
     /* NOTE: BOOT button factory reset DISABLED on MiBee Cam.
      * GPIO 0 is the camera XCLK pin and reads LOW even before camera init,
      * making it unreliable as a button input. Use POST /api/reset instead. */
 
-    /* Step 2/16: Config manager init */
+    /* Step 2/19: Config manager init */
     ret = config_init();
     ESP_ERROR_CHECK(ret);
-    ESP_LOGI(TAG, "=== Step 2/16: Config initialized ===");
+    ESP_LOGI(TAG, "=== Step 2/19: Config initialized ===");
 
-    /* Step 3/16: LED init */
+    /* Step 3/19: LED init */
     ret = led_init();
     ESP_ERROR_CHECK(ret);
     led_set_status(LED_STARTING);
-    ESP_LOGI(TAG, "=== Step 3/16: LED initialized ===");
+    ESP_LOGI(TAG, "=== Step 3/19: LED initialized ===");
 
-    /* Step 4/16: SPIFFS mount (/spiffs partition for Web UI) */
+    /* Step 4/19: SPIFFS mount (/spiffs partition for Web UI) */
     esp_vfs_spiffs_conf_t spiffs_conf = {
         .base_path = "/spiffs",
         .partition_label = "spiffs",
@@ -237,39 +307,39 @@ void app_main(void)
     } else {
         size_t total = 0, used = 0;
         esp_spiffs_info("spiffs", &total, &used);
-        ESP_LOGI(TAG, "=== Step 4/16: SPIFFS mounted (%" PRIu32 " KB total, %" PRIu32 " KB used) ===",
+        ESP_LOGI(TAG, "=== Step 4/19: SPIFFS mounted (%" PRIu32 " KB total, %" PRIu32 " KB used) ===",
                  total / 1024, used / 1024);
     }
 
-    /* Step 5/16: Release SD SPI bus (must precede camera and WiFi)
+    /* Step 5/19: Release SD SPI bus (must precede camera and WiFi)
      * Camera init DEFERRED to after WiFi connect (ESP32 DMA freeze fix).
      * WiFi STA start freezes camera I2S DMA - init camera AFTER WiFi. */
     camera_release_sd_bus();
-    ESP_LOGI(TAG, "=== Step 5/16: SD SPI bus released (camera deferred to after WiFi) ===");
+    ESP_LOGI(TAG, "=== Step 5/19: SD SPI bus released (camera deferred to after WiFi) ===");
 
-    /* Step 6/16: WiFi init (netif + event loop) */
+    /* Step 6/19: WiFi init (netif + event loop) */
     ret = wifi_init();
     ESP_ERROR_CHECK(ret);
-    ESP_LOGI(TAG, "=== Step 6/16: WiFi subsystem initialized ===");
+    ESP_LOGI(TAG, "=== Step 6/19: WiFi subsystem initialized ===");
 
-    /* Step 7/16: Register WiFi state change callback */
+    /* Step 7/19: Register WiFi state change callback */
     wifi_register_callback(wifi_state_cb, NULL);
-    ESP_LOGI(TAG, "=== Step 7/16: WiFi callback registered ===");
+    ESP_LOGI(TAG, "=== Step 7/19: WiFi callback registered ===");
 
-    /* Step 8/16: Health monitor init */
+    /* Step 8/19: Health monitor init */
     ret = health_monitor_init();
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Health monitor init failed: %s", esp_err_to_name(ret));
     } else {
-        ESP_LOGI(TAG, "=== Step 8/16: Health monitor initialized ===");
+        ESP_LOGI(TAG, "=== Step 8/19: Health monitor initialized ===");
     }
 
-    /* Step 9/16: WiFi mode selection (STA or AP) */
+    /* Step 9/19: WiFi mode selection (STA or AP) */
     const cam_config_t *cfg = config_get();
     bool has_wifi = cfg->wifi_ssid[0] != '\0' && cfg->wifi_pass[0] != '\0';
 
     if (has_wifi) {
-        ESP_LOGI(TAG, "=== Step 9/16: Starting STA mode (SSID: %s) ===", cfg->wifi_ssid);
+        ESP_LOGI(TAG, "=== Step 9/19: Starting STA mode (SSID: %s) ===", cfg->wifi_ssid);
         ret = wifi_start_sta(cfg->wifi_ssid, cfg->wifi_pass);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "WiFi STA start failed: %s", esp_err_to_name(ret));
@@ -278,7 +348,7 @@ void app_main(void)
         /* Remaining services (MJPEG, time_sync, web_server, motion)
          * are started by wifi_state_cb when WIFI_STATE_STA_CONNECTED fires. */
     } else {
-        ESP_LOGI(TAG, "=== Step 9/16: No WiFi config, starting AP mode ===");
+        ESP_LOGI(TAG, "=== Step 9/19: No WiFi config, starting AP mode ===");
         ret = wifi_start_ap();
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "WiFi AP start failed: %s", esp_err_to_name(ret));
@@ -335,44 +405,44 @@ void app_main(void)
         }
     }
 
-    /* Step 10/16: MJPEG streamer init (STA mode - already done in AP branch above)
+    /* Step 10/19: MJPEG streamer init (STA mode - already done in AP branch above)
      * Note: In STA mode this is deferred to wifi_state_cb, but we log it here
      * for sequence tracking. The actual init happens on WiFi_STATE_STA_CONNECTED. */
     if (!s_mjpeg_started) {
-        ESP_LOGI(TAG, "=== Step 10/16: MJPEG streamer deferred to WiFi connect ===");
+        ESP_LOGI(TAG, "=== Step 10/19: MJPEG streamer deferred to WiFi connect ===");
     } else {
-        ESP_LOGI(TAG, "=== Step 10/16: MJPEG streamer initialized ===");
+        ESP_LOGI(TAG, "=== Step 10/19: MJPEG streamer initialized ===");
     }
 
-    /* Step 11/16: Time sync init (STA mode - deferred to wifi_state_cb) */
+    /* Step 11/19: Time sync init (STA mode - deferred to wifi_state_cb) */
     if (!s_time_sync_started) {
-        ESP_LOGI(TAG, "=== Step 11/16: Time sync deferred to WiFi connect ===");
+        ESP_LOGI(TAG, "=== Step 11/19: Time sync deferred to WiFi connect ===");
     } else {
-        ESP_LOGI(TAG, "=== Step 11/16: Time sync initialized ===");
+        ESP_LOGI(TAG, "=== Step 11/19: Time sync initialized ===");
     }
 
-    /* Step 12/16: Web server start (STA mode - deferred to wifi_state_cb) */
+    /* Step 12/19: Web server start (STA mode - deferred to wifi_state_cb) */
     if (!s_web_server_started) {
-        ESP_LOGI(TAG, "=== Step 12/16: Web server deferred to WiFi connect ===");
+        ESP_LOGI(TAG, "=== Step 12/19: Web server deferred to WiFi connect ===");
     } else {
-        ESP_LOGI(TAG, "=== Step 12/16: Web server started ===");
+        ESP_LOGI(TAG, "=== Step 12/19: Web server started ===");
     }
 
-    /* Step 13/16: Motion detection start (STA mode - deferred to wifi_state_cb) */
+    /* Step 13/19: Motion detection start (STA mode - deferred to wifi_state_cb) */
     if (!s_motion_started) {
-        ESP_LOGI(TAG, "=== Step 13/16: Motion detection deferred to WiFi connect ===");
+        ESP_LOGI(TAG, "=== Step 13/19: Motion detection deferred to WiFi connect ===");
     } else {
-        ESP_LOGI(TAG, "=== Step 13/16: Motion detection started ===");
+        ESP_LOGI(TAG, "=== Step 13/19: Motion detection started ===");
     }
 
-    /* Step 14/16: SD card init - AFTER camera (GPIO14 conflict) */
+    /* Step 14/19: SD card init - AFTER camera (GPIO14 conflict) */
     ret = storage_init();
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "SD card init failed: %s", esp_err_to_name(ret));
-        ESP_LOGI(TAG, "=== Step 14/16: SD card init failed ===");
+        ESP_LOGI(TAG, "=== Step 14/19: SD card init failed ===");
     } else {
         s_sd_init_done = true;
-        ESP_LOGI(TAG, "=== Step 14/16: SD card initialized ===");
+        ESP_LOGI(TAG, "=== Step 14/19: SD card initialized ===");
 
         // Check /sdcard/config.txt for WiFi credentials
         esp_err_t sd_cfg_ret = config_load_from_sd();
@@ -389,10 +459,10 @@ void app_main(void)
         xTaskCreate(storage_warm_cache_task, "warm_cache", 4096, NULL, 1, NULL);
     }
 
-    /* Step 15/16: NAS uploader removed */
+    /* Step 15/19: NAS uploader removed */
 
-    /* Step 16/16: Boot button factory reset disabled (GPIO0 = camera XCLK) */
-    ESP_LOGI(TAG, "=== Step 16/16: BOOT button check disabled (GPIO0 = XCLK) ===");
+    /* Step 16/19: Boot button factory reset disabled (GPIO0 = camera XCLK) */
+    ESP_LOGI(TAG, "=== Step 16/19: BOOT button check disabled (GPIO0 = XCLK) ===");
 
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, "  System startup complete");

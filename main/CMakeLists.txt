@@ -18,9 +18,11 @@ idf_component_register(
         "sha256.c"
         "webhook.c"
         "nas_uploader.c"
-        "webdav_client.c"
+        "onvif_discovery.c"
+        "onvif_service.c"
         "video_recorder.c"
         "ws_server.c"
+        "webdav_client.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi

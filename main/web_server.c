@@ -1081,26 +1081,6 @@ static esp_err_t handler_static(httpd_req_t *req)
     return ESP_OK;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Recording segment completion callback                              */
-/* ------------------------------------------------------------------ */
-
-static void on_segment_complete(const char *filepath, uint32_t size)
-{
-    ESP_LOGI(TAG, "Segment complete: %s (%u bytes)", filepath, size);
-    /* Register file in storage manager */
-    storage_register_file(filepath, size);
-
-
-    /* Enqueue for NAS upload */
-    nas_uploader_enqueue(filepath);
-
-    /* Run storage cleanup if needed */
-    storage_cleanup();
-
-    /* Send webhook alert */
-    webhook_send_alert("recording_segment", filepath);
-}
 
 /* ------------------------------------------------------------------ */
 /*  URI registration table                                             */
@@ -1150,7 +1130,7 @@ esp_err_t web_server_init(void)
     /*
      * Module initialization notes:
      * - ws_server_init() is called in web_server_start() after HTTP server starts
-     * - recorder_set_segment_cb(on_segment_complete) should be called after recorder_init()
+     * - recorder_set_segment_cb() is set in main.c after recorder_init()
      * - webhook_init() should be called after WiFi STA connected (main.c)
      * - nas_uploader_init() should be called after WiFi STA connected (main.c)
      */
