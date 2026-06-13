@@ -11,6 +11,7 @@
  */
 
 #include "storage_manager.h"
+#include "config_manager.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -38,8 +39,8 @@ static const char *TAG = "storage";
 #define MOUNT_POINT          "/sdcard"
 #define PHOTOS_BASE_PATH     "/sdcard/photos"
 #define HOTPLUG_POLL_SEC     10
-#define CLEANUP_LOW_PCT      20.0f
-#define CLEANUP_HIGH_PCT     30.0f
+#define RECORDINGS_PATH      "/sdcard/recordings"
+#define FILE_CACHE_SIZE      500
 #define MAX_RETRIES          5
 
 /* SPI host for SD card — SPI2_HOST (SPI3 may conflict with WiFi on ESP32) */
@@ -57,12 +58,20 @@ static size_t s_list_cache_len = 0;
 static int64_t s_list_cache_time = 0;
 #define LIST_CACHE_TTL_MS  300000 /* 5 minute cache TTL (was 30s — slow SPI SD)*/
 
+/* Recording file cache — ring buffer for circular cleanup */
+static file_info_t s_file_cache[FILE_CACHE_SIZE];
+static int s_file_cache_count = 0;
+
 /* ---- Forward declarations ---- */
 static void hotplug_monitor_task(void *arg);
 static esp_err_t sdspi_mount_internal(bool format_if_failed);
 static void sdspi_unmount_internal(void);
 static uint32_t count_photos_recursive(const char *dirpath);
 static void cache_sd_total_mb(void);
+static int compare_file_info(const void *a, const void *b);
+static void list_files_recursive(const char *dirpath, file_info_t *files, int max_count, int *count);
+static void storage_rebuild_cache(void);
+static int cleanup_incomplete_avi_recursive(const char *dirpath, int depth);
 
 /* ---- Internal helpers ---- */
 
@@ -324,6 +333,151 @@ static void hotplug_monitor_task(void *arg)
     }
 }
 
+/* ---- Recording file helpers ---- */
+
+static int compare_file_info(const void *a, const void *b)
+{
+    return strcmp(((const file_info_t *)a)->name, ((const file_info_t *)b)->name);
+}
+
+static void list_files_recursive(const char *dirpath, file_info_t *files, int max_count, int *count)
+{
+    DIR *dir = opendir(dirpath);
+    if (!dir) return;
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL && *count < max_count) {
+        if (entry->d_name[0] == '.') continue;
+
+        if (entry->d_type == DT_DIR) {
+            char fullpath[300];
+            int needed = snprintf(fullpath, sizeof(fullpath), "%s/%s", dirpath, entry->d_name);
+            if (needed < 0 || needed >= (int)sizeof(fullpath)) continue;
+            list_files_recursive(fullpath, files, max_count, count);
+            continue;
+        }
+
+        /* Only process .avi files */
+        size_t nlen = strlen(entry->d_name);
+        if (nlen < 5 || strcmp(entry->d_name + nlen - 4, ".avi") != 0) continue;
+
+        char fullpath[300];
+        int needed = snprintf(fullpath, sizeof(fullpath), "%s/%s", dirpath, entry->d_name);
+        if (needed < 0 || needed >= (int)sizeof(fullpath)) continue;
+
+        struct stat st;
+        if (stat(fullpath, &st) != 0) continue;
+
+        /* Store relative path from RECORDINGS_PATH */
+        const char *relpath = fullpath + strlen(RECORDINGS_PATH) + 1;
+        strncpy(files[*count].name, relpath, sizeof(files[*count].name) - 1);
+        files[*count].name[sizeof(files[*count].name) - 1] = '\0';
+        files[*count].size = (uint32_t)st.st_size;
+
+        struct tm *tm_info = localtime(&st.st_mtime);
+        strftime(files[*count].time_str, sizeof(files[*count].time_str),
+                 "%Y-%m-%d %H:%M:%S", tm_info);
+
+        (*count)++;
+    }
+    closedir(dir);
+}
+
+static void storage_rebuild_cache(void)
+{
+    if (!s_mounted) {
+        ESP_LOGW(TAG, "SD not mounted, skipping cache rebuild");
+        return;
+    }
+
+    file_info_t *temp_files = malloc(FILE_CACHE_SIZE * sizeof(file_info_t));
+    if (!temp_files) {
+        ESP_LOGE(TAG, "No memory for file cache rebuild");
+        return;
+    }
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    int count = 0;
+    list_files_recursive(RECORDINGS_PATH, temp_files, FILE_CACHE_SIZE, &count);
+
+    /* Sort by name ascending (oldest timestamp first) */
+    qsort(temp_files, count, sizeof(file_info_t), compare_file_info);
+
+    s_file_cache_count = (count < FILE_CACHE_SIZE) ? count : FILE_CACHE_SIZE;
+    for (int i = 0; i < s_file_cache_count; i++) {
+        s_file_cache[i] = temp_files[i];
+    }
+    xSemaphoreGive(s_mutex);
+
+    free(temp_files);
+    ESP_LOGI(TAG, "File cache rebuilt: %d recordings found", s_file_cache_count);
+}
+
+static int cleanup_incomplete_avi_recursive(const char *dirpath, int depth)
+{
+    if (depth > 3) return 0;
+
+    DIR *dir = opendir(dirpath);
+    if (!dir) return 0;
+
+    int deleted = 0;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+
+        char fullpath[300];
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", dirpath, entry->d_name);
+
+        struct stat st;
+        if (stat(fullpath, &st) != 0) continue;
+
+        if (S_ISDIR(st.st_mode)) {
+            deleted += cleanup_incomplete_avi_recursive(fullpath, depth + 1);
+            continue;
+        }
+
+        /* Check if it's an .avi file */
+        size_t nlen = strlen(entry->d_name);
+        if (nlen < 5 || strcmp(entry->d_name + nlen - 4, ".avi") != 0) continue;
+
+        bool should_delete = false;
+
+        /* Empty file (0 bytes) */
+        if (st.st_size == 0) {
+            should_delete = true;
+            ESP_LOGI(TAG, "Found empty AVI (0 bytes): %s", fullpath);
+        } else if (st.st_size < 260) {  /* RIFF(12) + hdrl(236) + movi(12) = 260 */
+            should_delete = true;
+            ESP_LOGI(TAG, "Found undersized AVI (%ld bytes): %s", (long)st.st_size, fullpath);
+        } else {
+            /* Read first 12 bytes: RIFF(4) + size(4) + AVI(4) */
+            FILE *fp = fopen(fullpath, "rb");
+            if (!fp) continue;
+            uint8_t hdr[12];
+            size_t n = fread(hdr, 1, 12, fp);
+            fclose(fp);
+
+            if (n == 12 && memcmp(hdr, "RIFF", 4) == 0) {
+                uint32_t riff_size = (uint32_t)hdr[4] | ((uint32_t)hdr[5] << 8) |
+                                     ((uint32_t)hdr[6] << 16) | ((uint32_t)hdr[7] << 24);
+                if (riff_size == 0) {
+                    should_delete = true;
+                    ESP_LOGI(TAG, "Found incomplete AVI (RIFF size=0): %s", fullpath);
+                }
+            }
+        }
+
+        if (should_delete) {
+            if (remove(fullpath) == 0) {
+                deleted++;
+                ESP_LOGI(TAG, "Deleted incomplete: %s", fullpath);
+            }
+        }
+    }
+    closedir(dir);
+    return deleted;
+}
+
 /* ---- Public API ---- */
 
 esp_err_t storage_init(void)
@@ -375,6 +529,23 @@ esp_err_t storage_init(void)
         mkdir(PHOTOS_BASE_PATH, 0775);
         ESP_LOGI(TAG, "Created photos directory");
     }
+
+    /* Create recordings directory */
+    if (stat(RECORDINGS_PATH, &st) != 0) {
+        mkdir(RECORDINGS_PATH, 0775);
+        ESP_LOGI(TAG, "Created recordings directory");
+    }
+
+    /* Boot cleanup: remove incomplete AVI files */
+    {
+        int incomplete_deleted = cleanup_incomplete_avi_recursive(RECORDINGS_PATH, 0);
+        if (incomplete_deleted > 0) {
+            ESP_LOGI(TAG, "Boot cleanup: removed %d incomplete recordings", incomplete_deleted);
+        }
+    }
+
+    /* Rebuild file cache from existing recordings */
+    storage_rebuild_cache();
 
     xSemaphoreGive(s_mutex);
 
@@ -614,38 +785,79 @@ esp_err_t storage_cleanup(void)
 {
     if (!s_mounted) return ESP_ERR_INVALID_STATE;
 
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    const cam_config_t *cfg = config_get();
+    uint8_t usage = storage_get_usage_pct();
 
-    float free_pct = get_free_percent();
-    ESP_LOGI(TAG, "Storage free: %.1f%%", free_pct);
+    ESP_LOGI(TAG, "Storage usage: %d%% (cleanup threshold: %d%%)", usage, cfg->cleanup_low_pct);
 
-    if (free_pct >= CLEANUP_LOW_PCT) {
-        xSemaphoreGive(s_mutex);
+    if (usage <= cfg->cleanup_low_pct) {
         return ESP_OK;
     }
 
-    ESP_LOGW(TAG, "Storage low (%.1f%%), starting cleanup", free_pct);
-    xSemaphoreGive(s_mutex);
+    ESP_LOGW(TAG, "Storage usage %d%% exceeds %d%%, starting cleanup", usage, cfg->cleanup_low_pct);
 
     int deleted = 0;
     while (true) {
+        usage = storage_get_usage_pct();
+        if (usage < cfg->cleanup_high_pct) break;
+
+        /* Find and delete oldest recording file from cache */
         xSemaphoreTake(s_mutex, portMAX_DELAY);
-        float pct = get_free_percent();
+
+        char oldest_path[512] = {0};
+        time_t oldest_mtime = 0;
+        bool found = false;
+
+        #pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+        for (int i = 0; i < s_file_cache_count; i++) {
+            char fullpath[512];
+            snprintf(fullpath, sizeof(fullpath), "%s/%s", RECORDINGS_PATH, s_file_cache[i].name);
+
+            struct stat st;
+            if (stat(fullpath, &st) == 0 && S_ISREG(st.st_mode)) {
+                if (!found || st.st_mtime < oldest_mtime) {
+                    strncpy(oldest_path, fullpath, sizeof(oldest_path) - 1);
+                    oldest_path[sizeof(oldest_path) - 1] = '\0';
+                    oldest_mtime = st.st_mtime;
+                    found = true;
+                }
+            }
+        }
+#pragma GCC diagnostic pop
+
+        if (!found) {
+            xSemaphoreGive(s_mutex);
+            ESP_LOGW(TAG, "No recording files to delete");
+            break;
+        }
+
+        if (remove(oldest_path) == 0) {
+            ESP_LOGI(TAG, "Deleted oldest recording: %s", oldest_path);
+            deleted++;
+
+            /* Remove from cache */
+            const char *rel = oldest_path + strlen(RECORDINGS_PATH) + 1;
+            for (int i = 0; i < s_file_cache_count; i++) {
+                if (strcmp(s_file_cache[i].name, rel) == 0) {
+                    for (int j = i; j < s_file_cache_count - 1; j++) {
+                        s_file_cache[j] = s_file_cache[j + 1];
+                    }
+                    s_file_cache_count--;
+                    break;
+                }
+            }
+        } else {
+            ESP_LOGE(TAG, "Failed to delete %s: %s", oldest_path, strerror(errno));
+        }
+
         xSemaphoreGive(s_mutex);
 
-        if (pct >= CLEANUP_HIGH_PCT) break;
-
-        xSemaphoreTake(s_mutex, portMAX_DELAY);
-        esp_err_t err = delete_oldest_photo();
-        xSemaphoreGive(s_mutex);
-
-        if (err != ESP_OK) break;
-        deleted++;
         if (deleted > 200) break;  /* Safety limit */
     }
 
-    float new_pct = get_free_percent();
-    ESP_LOGI(TAG, "Cleanup done: deleted %d files, free now %.1f%%", deleted, new_pct);
+    uint8_t new_usage = storage_get_usage_pct();
+    ESP_LOGI(TAG, "Cleanup done: deleted %d files, usage now %d%%", deleted, new_usage);
     return ESP_OK;
 }
 
@@ -730,15 +942,121 @@ esp_err_t storage_format(void)
         return ret;
     }
 
-    /* Recreate photos base directory */
+    /* Recreate photos and recordings directories */
     mkdir(PHOTOS_BASE_PATH, 0775);
+    mkdir(RECORDINGS_PATH, 0775);
+
+    /* Reset recording file cache */
+    s_file_cache_count = 0;
 
     /* Recalculate total space (may differ after format on some cards) */
     cache_sd_total_mb();
 
+    /* Rebuild recording file cache */
+    storage_rebuild_cache();
     ESP_LOGI(TAG, "SD card formatted successfully");
     xSemaphoreGive(s_mutex);
     return ESP_OK;
+}
+
+/* ---- Recording file public API ---- */
+
+void storage_register_file(const char *filepath, uint32_t size)
+{
+    if (!s_mounted || !filepath) return;
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+    int idx;
+    if (s_file_cache_count < FILE_CACHE_SIZE) {
+        idx = s_file_cache_count;
+        s_file_cache_count++;
+    } else {
+        /* Ring buffer full — shift all entries left, evict oldest */
+        for (int i = 0; i < FILE_CACHE_SIZE - 1; i++) {
+            s_file_cache[i] = s_file_cache[i + 1];
+        }
+        idx = FILE_CACHE_SIZE - 1;
+    }
+
+    /* Store relative path from /sdcard/recordings/ */
+    const char *relpath = filepath;
+    const char *prefix = RECORDINGS_PATH "/";
+    if (strncmp(filepath, prefix, strlen(prefix)) == 0) {
+        relpath = filepath + strlen(prefix);
+    }
+    strncpy(s_file_cache[idx].name, relpath, sizeof(s_file_cache[idx].name) - 1);
+    s_file_cache[idx].name[sizeof(s_file_cache[idx].name) - 1] = '\0';
+    s_file_cache[idx].size = size;
+    s_file_cache[idx].time_str[0] = '\0';
+
+    xSemaphoreGive(s_mutex);
+
+    /* Check if cleanup is needed after registering a new file */
+    uint8_t usage = storage_get_usage_pct();
+    if (usage > config_get()->cleanup_low_pct) {
+        ESP_LOGW(TAG, "Usage %d%% > %d%%, triggering cleanup",
+                 usage, config_get()->cleanup_low_pct);
+        storage_cleanup();
+    }
+}
+
+uint8_t storage_get_usage_pct(void)
+{
+    if (!s_mounted) return 0;
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+    DWORD free_clusters = 0;
+    FATFS *fs = NULL;
+    FRESULT res = f_getfree("0:", &free_clusters, &fs);
+    if (res != FR_OK || !fs) {
+        xSemaphoreGive(s_mutex);
+        return 0;
+    }
+
+    uint32_t total_clusters = (uint32_t)(fs->n_fatent - 2);
+    if (total_clusters == 0) {
+        xSemaphoreGive(s_mutex);
+        return 0;
+    }
+
+    uint32_t used_clusters = total_clusters - free_clusters;
+    uint8_t pct = (uint8_t)((uint64_t)used_clusters * 100 / total_clusters);
+
+    xSemaphoreGive(s_mutex);
+    return pct;
+}
+
+esp_err_t storage_cleanup_incomplete_avi(void)
+{
+    if (!s_mounted) return ESP_ERR_INVALID_STATE;
+
+    struct stat st;
+    if (stat(RECORDINGS_PATH, &st) != 0) {
+        ESP_LOGW(TAG, "Recordings directory does not exist");
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    int deleted = cleanup_incomplete_avi_recursive(RECORDINGS_PATH, 0);
+    xSemaphoreGive(s_mutex);
+
+    if (deleted > 0) {
+        ESP_LOGI(TAG, "Incomplete AVI cleanup: removed %d files", deleted);
+    } else {
+        ESP_LOGD(TAG, "No incomplete AVI files found");
+    }
+
+    return ESP_OK;
+}
+
+uint32_t storage_get_recording_count(void)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    uint32_t count = (uint32_t)s_file_cache_count;
+    xSemaphoreGive(s_mutex);
+    return count;
 }
 static void cache_sd_total_mb(void)
 {

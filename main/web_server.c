@@ -857,6 +857,27 @@ static esp_err_t handler_api_format(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------ */
+/*  GET /api/storage  — SD card storage info                           */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handler_api_storage(httpd_req_t *req)
+{
+    if (!storage_is_available()) {
+        return send_json_error(req, "SD card not available", 503);
+    }
+
+    cJSON *data = cJSON_CreateObject();
+
+    cJSON_AddNumberToObject(data, "total_mb", (double)storage_get_total_space());
+    cJSON_AddNumberToObject(data, "free_mb", (double)storage_get_free_space());
+    cJSON_AddNumberToObject(data, "usage_pct", (double)storage_get_usage_pct());
+    cJSON_AddNumberToObject(data, "photo_count", (double)storage_get_photo_count());
+    cJSON_AddNumberToObject(data, "recording_count", (double)storage_get_recording_count());
+
+    return send_json_ok(req, data);
+}
+
+/* ------------------------------------------------------------------ */
 /*  OPTIONS *   - CORS preflight                                       */
 /* ------------------------------------------------------------------ */
 
@@ -954,6 +975,7 @@ static const uri_entry_t s_uris[] = {
     { "/api/timelapse/stop",   HTTP_POST, handler_api_timelapse_stop   },
     { "/api/timelapse/status", HTTP_GET,  handler_api_timelapse_status },
     { "/api/format",   HTTP_POST,   handler_api_format       },
+    { "/api/storage",  HTTP_GET,    handler_api_storage      },
 
     { "/*",             HTTP_OPTIONS, handler_options         },
     { "/*",             HTTP_GET,    handler_static          },
@@ -980,7 +1002,7 @@ esp_err_t web_server_start(uint16_t port)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = port;
-    config.max_uri_handlers = 20;
+    config.max_uri_handlers = 25;
     config.stack_size = 8192;
     config.recv_wait_timeout = 10;    /* longer tolerance for slow WiFi */
     config.send_wait_timeout = 30;    /* prevent premature stream disconnects */

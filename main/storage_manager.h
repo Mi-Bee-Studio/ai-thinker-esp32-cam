@@ -48,7 +48,8 @@ esp_err_t storage_save_photo(camera_fb_t *fb, const char *filename);
 int storage_list_photos(const char *path, char *buf, size_t buf_size);
 
 /**
- * @brief Delete oldest photos when free space < 20%, until free space > 30%
+ * @brief Delete oldest recording files when usage exceeds cleanup_low_pct
+ *        until usage drops below cleanup_high_pct
  * @return ESP_OK on success or if cleanup not needed
  */
 esp_err_t storage_cleanup(void);
@@ -88,5 +89,38 @@ void storage_warm_cache(void);
 
 /** @brief Format the SD card (all data lost). Remounts after format. */
 esp_err_t storage_format(void);
+
+/** @brief Recording file information struct */
+typedef struct {
+    char name[64];       /**< Relative path from /sdcard/recordings/ */
+    uint32_t size;       /**< File size in bytes */
+    char time_str[32];   /**< Modification time string (YYYY-MM-DD HH:MM:SS) */
+} file_info_t;
+
+/**
+ * @brief Register a recording file for circular cleanup tracking
+ * @param filepath Full path to the recording file
+ * @param size File size in bytes
+ */
+void storage_register_file(const char *filepath, uint32_t size);
+
+/**
+ * @brief Get SD card usage percentage (0-100)
+ * @return Used space as percentage of total capacity
+ */
+uint8_t storage_get_usage_pct(void);
+
+/**
+ * @brief Cleanup incomplete AVI files (RIFF header with size=0)
+ * Scans /sdcard/recordings/ recursively for incomplete recordings.
+ * @return ESP_OK on success
+ */
+esp_err_t storage_cleanup_incomplete_avi(void);
+
+/**
+ * @brief Get count of recording files tracked in cache
+ * @return Number of recording files
+ */
+uint32_t storage_get_recording_count(void);
 
 #endif // STORAGE_MANAGER_H

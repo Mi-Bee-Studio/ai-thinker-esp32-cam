@@ -11,10 +11,12 @@ idf_component_register(
         "storage_manager.c"
         "timelapse.c"
         "time_sync.c"
+        "frame_broadcaster.c"
         "web_server.c"
         "wifi_manager.c"
         "wifi_manager.c"
         "cJSON.c"
+        "sha256.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi
