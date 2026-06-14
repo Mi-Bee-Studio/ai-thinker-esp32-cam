@@ -27,6 +27,20 @@ static bool s_camera_initialized = false;
 static camera_resolution_t s_current_resolution = CAMERA_RES_VGA;
 static SemaphoreHandle_t s_camera_mutex = NULL;
 
+/* ── Drain gate: prevents use-after-free when reinit frees frame buffers
+ * while consumers (streamer, motion, recorder, /capture) still hold them.
+ *
+ * Flow:
+ *   camera_capture()    increments s_outstanding_fbs BEFORE releasing mutex
+ *   camera_return_fb()  decrements after esp_camera_fb_return()
+ *   camera_apply_settings()/camera_init_grayscale()/camera_restore_jpeg():
+ *                       take s_camera_mutex (blocks new captures), then
+ *                       drain_outstanding_fbs() waits for holders to return
+ *                       their fbs before calling esp_camera_deinit().
+ * ────────────────────────────────────────────────────────────────── */
+static portMUX_TYPE s_fb_count_lock = portMUX_INITIALIZER_UNLOCKED;
+static volatile uint32_t s_outstanding_fbs = 0;
+
 /* ── Helpers ── */
 
 static framesize_t resolution_to_framesize(camera_resolution_t res)
@@ -51,6 +65,27 @@ static const char* resolution_to_string(camera_resolution_t res)
     }
 }
 
+/* Wait for all outstanding frame buffers to be returned by consumers.
+ * Must be called AFTER taking s_camera_mutex (so no new captures can, 
+ * start) and BEFORE any esp_camera_deinit()/camera_deinit() call.
+ * @param timeout_ms Max wait time in milliseconds
+ */
+static void drain_outstanding_fbs(uint32_t timeout_ms)
+{
+    uint32_t waited = 0;
+    while (s_outstanding_fbs > 0 && waited < timeout_ms) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        waited += 10;
+    }
+    if (s_outstanding_fbs > 0) {
+        ESP_LOGW(TAG, "Drain timeout: %lu fb(s) still outstanding after %ums "
+                 "(proceeding with deinit — crash risk)",
+                 (unsigned long)s_outstanding_fbs, timeout_ms);
+    } else if (waited > 0) {
+        ESP_LOGI(TAG, "Drained %u fb(s) in %ums",
+                 (unsigned)s_outstanding_fbs, waited);
+    }
+}
 /* ── Public API ── */
 
 void camera_release_sd_bus(void)
@@ -222,6 +257,14 @@ esp_err_t camera_capture(camera_fb_t **fb)
 
     *fb = esp_camera_fb_get();
 
+    /* Reserve slot BEFORE releasing mutex — prevents apply_settings from
+     * seeing outstanding==0 between our mutex-give and the increment. */
+    if (*fb != NULL) {
+        portENTER_CRITICAL(&s_fb_count_lock);
+        s_outstanding_fbs++;
+        portEXIT_CRITICAL(&s_fb_count_lock);
+    }
+
     if (s_camera_mutex) {
         xSemaphoreGive(s_camera_mutex);
     }
@@ -240,6 +283,13 @@ esp_err_t camera_return_fb(camera_fb_t *fb)
     }
 
     esp_camera_fb_return(fb);
+
+    /* Notify drain gate that this fb is no longer held */
+    portENTER_CRITICAL(&s_fb_count_lock);
+    if (s_outstanding_fbs > 0) {
+        s_outstanding_fbs--;
+    }
+    portEXIT_CRITICAL(&s_fb_count_lock);
     return ESP_OK;
 }
 
@@ -286,6 +336,7 @@ esp_err_t camera_apply_vflip(uint8_t vflip)
 esp_err_t camera_apply_settings(camera_resolution_t resolution, uint8_t fps, uint8_t jpeg_quality)
 {
     if (s_camera_mutex) xSemaphoreTake(s_camera_mutex, portMAX_DELAY);
+    drain_outstanding_fbs(3000);
     esp_err_t ret = camera_deinit();
     if (ret != ESP_OK) {
         if (s_camera_mutex) xSemaphoreGive(s_camera_mutex);
@@ -303,6 +354,7 @@ esp_err_t camera_init_grayscale(void)
     if (s_camera_mutex) xSemaphoreTake(s_camera_mutex, portMAX_DELAY);
 
     if (s_camera_initialized) {
+        drain_outstanding_fbs(3000);
         esp_camera_deinit();
         s_camera_initialized = false;
     }
@@ -358,6 +410,7 @@ esp_err_t camera_restore_jpeg(void)
     ESP_LOGI(TAG, "Restoring camera to JPEG mode");
 
     if (s_camera_mutex) xSemaphoreTake(s_camera_mutex, portMAX_DELAY);
+    drain_outstanding_fbs(3000);
     esp_err_t ret = camera_deinit();
     if (ret != ESP_OK) {
         if (s_camera_mutex) xSemaphoreGive(s_camera_mutex);

@@ -23,6 +23,18 @@ void flash_led_on(void);
 void flash_led_off(void);
 
 /**
+ * @brief Check if flash LED is currently on (manual or auto-triggered)
+ * @return true if LED is on
+ */
+bool flash_led_is_on(void);
+
+/**
+ * @brief Toggle flash LED between on/off
+ * @return true if LED is now on, false if now off
+ */
+bool flash_led_toggle(void);
+
+/**
  * @brief Detect scene brightness from a JPEG frame buffer using JPEG size heuristic.
  * Dark scenes produce smaller JPEGs due to uniform compression.
  * @param fb  Captured frame buffer (must be JPEG format)

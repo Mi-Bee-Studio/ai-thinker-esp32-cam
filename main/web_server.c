@@ -31,14 +31,12 @@
 #include "mjpeg_streamer.h"
 #include "health_monitor.h"
 #include "motion_detect.h"
+#include "flash_led.h"
 #include "time_sync.h"
 #include "timelapse.h"
 #include "esp_spiffs.h"
 
 #include "video_recorder.h"
-#include "nas_uploader.h"
-#include "ws_server.h"
-#include "webhook.h"
 
 #define FIRMWARE_VERSION "v1.0"
 
@@ -205,6 +203,9 @@ static esp_err_t handler_api_status(httpd_req_t *req)
         m->brightness_method == 1 ? "register" : (m->brightness_method == 2 ? "grayscale" : "init"));
     cJSON_AddBoolToObject(data, "scene_dark", m->scene_dark);
 
+    /* Flash LED */
+    cJSON_AddBoolToObject(data, "flash_on", flash_led_is_on());
+
     return send_json_ok(req, data);
 }
 
@@ -219,6 +220,8 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON *data = cJSON_CreateObject();
     cJSON_AddStringToObject(data, "device_name", cfg->device_name);
     cJSON_AddStringToObject(data, "wifi_ssid", cfg->wifi_ssid);
+    cJSON_AddStringToObject(data, "wifi_ssid_2", cfg->wifi_ssid_2);
+    cJSON_AddNumberToObject(data, "allow_ap_fallback", (double)cfg->allow_ap_fallback);
     cJSON_AddNumberToObject(data, "resolution", (double)cfg->resolution);
     cJSON_AddNumberToObject(data, "fps", (double)cfg->fps);
     cJSON_AddNumberToObject(data, "jpeg_quality", (double)cfg->jpeg_quality);
@@ -237,6 +240,16 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "timelapse_max_interval_s", (double)cfg->timelapse_max_interval_s);
     cJSON_AddNumberToObject(data, "timelapse_decay_factor", (double)cfg->timelapse_decay_factor);
     cJSON_AddNumberToObject(data, "timelapse_decay_period_s", (double)cfg->timelapse_decay_period_s);
+
+    /* Recording settings */
+    cJSON_AddNumberToObject(data, "record_mode", (double)cfg->record_mode);
+    cJSON_AddNumberToObject(data, "record_segment_sec", (double)cfg->record_segment_sec);
+    cJSON_AddNumberToObject(data, "frame_drop_enabled", (double)cfg->frame_drop_enabled);
+
+    /* Storage cleanup thresholds */
+    cJSON_AddNumberToObject(data, "cleanup_low_pct", (double)cfg->cleanup_low_pct);
+    cJSON_AddNumberToObject(data, "cleanup_high_pct", (double)cfg->cleanup_high_pct);
+
     return send_json_ok(req, data);
 }
 
@@ -305,6 +318,23 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
             }
     }
     }
+    /* Secondary WiFi (dual network) */
+    {
+        const char *ssid2 = NULL;
+        const char *pass2 = NULL;
+        if ((item = cJSON_GetObjectItem(json, "wifi_ssid_2")) && cJSON_IsString(item)) {
+            ssid2 = item->valuestring;
+        }
+        if ((item = cJSON_GetObjectItem(json, "wifi_pass_2")) && cJSON_IsString(item)) {
+            pass2 = item->valuestring;
+        }
+        if (ssid2) {
+            config_set_wifi_secondary(ssid2, pass2);
+        }
+    }
+    if ((item = cJSON_GetObjectItem(json, "allow_ap_fallback")) && cJSON_IsNumber(item)) {
+        config_set_allow_ap_fallback((uint8_t)item->valueint);
+    }
     /* Camera settings (resolution/fps/quality) — also apply live */
     bool camera_changed = false;
     if ((item = cJSON_GetObjectItem(json, "resolution")) && cJSON_IsNumber(item)) {
@@ -322,10 +352,18 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
         camera_changed = true;
     }
 
-    /* Apply camera changes in one batch (deinit+init is expensive) */
+    /* Apply camera changes in one batch (deinit+init is expensive).
+     * Note: camera_apply_settings drains in-flight captures and blocks
+     * stream tasks during the ~2-3s reinit. Frontend should disable
+     * controls during this window. */
     if (camera_changed) {
         const cam_config_t *cur = config_get();
-        camera_apply_settings(cur->resolution, cur->fps, cur->jpeg_quality);
+        esp_err_t cam_ret = camera_apply_settings(cur->resolution, cur->fps, cur->jpeg_quality);
+        if (cam_ret != ESP_OK) {
+            ESP_LOGE(TAG, "camera_apply_settings failed: %s", esp_err_to_name(cam_ret));
+            cJSON_Delete(json);
+            return send_json_error(req, "camera apply failed", 500);
+        }
     }
 
     /* Web password (has dedicated setter) */
@@ -488,6 +526,48 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
         }
     }
 
+    /* ── Recording settings ── */
+    {
+        const cam_config_t *cur = config_get();
+        bool rec_changed = false;
+        uint8_t rec_mode = cur->record_mode;
+        uint16_t rec_seg = cur->record_segment_sec;
+        uint8_t rec_drop = cur->frame_drop_enabled;
+
+        item = cJSON_GetObjectItem(json, "record_mode");
+        if (item && cJSON_IsNumber(item)) { rec_mode = (uint8_t)item->valueint; rec_changed = true; }
+        item = cJSON_GetObjectItem(json, "record_segment_sec");
+        if (item && cJSON_IsNumber(item)) { rec_seg = (uint16_t)item->valueint; rec_changed = true; }
+        item = cJSON_GetObjectItem(json, "frame_drop_enabled");
+        if (item && cJSON_IsNumber(item)) { rec_drop = (uint8_t)item->valueint; rec_changed = true; }
+
+        if (rec_changed) {
+            config_set_recording(rec_mode, rec_seg, rec_drop);
+        }
+    }
+
+    /* ── Storage cleanup thresholds ── */
+    {
+        const cam_config_t *cur = config_get();
+        uint8_t cl_low = cur->cleanup_low_pct;
+        uint8_t cl_high = cur->cleanup_high_pct;
+        bool cl_changed = false;
+
+        item = cJSON_GetObjectItem(json, "cleanup_low_pct");
+        if (item && cJSON_IsNumber(item)) { cl_low = (uint8_t)item->valueint; cl_changed = true; }
+        item = cJSON_GetObjectItem(json, "cleanup_high_pct");
+        if (item && cJSON_IsNumber(item)) { cl_high = (uint8_t)item->valueint; cl_changed = true; }
+
+        if (cl_changed) {
+            if (cl_low <= cl_high) {
+                cJSON_Delete(json);
+                return send_json_error(req, "cleanup_low_pct must be greater than cleanup_high_pct", 400);
+            }
+            config_set_cleanup(cl_low, cl_high);
+        }
+    }
+
+
     if (need_save) {
         config_save();
     }
@@ -581,93 +661,20 @@ static esp_err_t handler_metrics(httpd_req_t *req)
 
 static esp_err_t handler_api_files(httpd_req_t *req)
 {
-    if (!storage_is_available()) {
-        return send_json_error(req, "SD card not available", 503);
-    }
+    /* Use cached health metrics for SD info — avoid direct SD card access.
+     * storage_list_photos() traverses directories via opendir/readdir which
+     * hangs on the degraded SPI bus after camera init, causing watchdog reset. */
+    const health_metrics_t *hm = health_monitor_get_metrics();
 
-    /* Parse pagination params */
-    int offset = 0, limit = 10;
-    char query[128] = {0};
-    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
-        char val[16] = {0};
-        if (httpd_query_key_value(query, "offset", val, sizeof(val)) == ESP_OK)
-            offset = atoi(val);
-        memset(val, 0, sizeof(val));
-        if (httpd_query_key_value(query, "limit", val, sizeof(val)) == ESP_OK)
-            limit = atoi(val);
-        if (limit <= 0) limit = 10;
-        if (limit > 100) limit = 100;
-        if (offset < 0) offset = 0;
-    }
-
-    char *buf = malloc(32768);
-    if (!buf) {
-        return send_json_error(req, "out of memory", 500);
-    }
-
-    int raw_count = storage_list_photos("/sdcard/photos", buf, 32768);
-    if (raw_count <= 0) {
-        free(buf);
-        cJSON *arr = cJSON_CreateArray();
-        cJSON *data = cJSON_CreateObject();
-        cJSON_AddItemToObject(data, "files", arr);
-        cJSON_AddNumberToObject(data, "total", 0);
-        cJSON_AddNumberToObject(data, "offset", 0);
-        cJSON_AddNumberToObject(data, "limit", limit);
-        cJSON_AddNumberToObject(data, "sd_free_mb", (double)storage_get_free_space());
- cJSON_AddNumberToObject(data, "sd_total_mb", (double)storage_get_total_space());
-        return send_json_ok(req, data);
-    }
-
-    /* Count valid entries and collect page slice in one pass */
     cJSON *arr = cJSON_CreateArray();
-    int total = 0;
-    char *saveptr = NULL;
-    char *line = strtok_r(buf, "\n", &saveptr);
-    while (line != NULL) {
-        if (strlen(line) > 0) {
-            char *tab = strchr(line, '\t');
-            if (tab) {
-                *tab = '\0';
-                double size = atof(tab + 1);
-                /* Filter corrupted entries: 0-byte with no extension */
-                if (size == 0 && !strchr(line, '.')) {
-                    line = strtok_r(NULL, "\n", &saveptr);
-                    continue;
-                }
-                if (total >= offset && total < offset + limit) {
-                    cJSON *obj = cJSON_CreateObject();
-                    cJSON_AddStringToObject(obj, "name", line);
-                    cJSON_AddNumberToObject(obj, "size", size);
-                    cJSON_AddItemToArray(arr, obj);
-                }
-                total++;
-            } else {
-                /* No size info — skip if no extension */
-                if (!strchr(line, '.')) {
-                    line = strtok_r(NULL, "\n", &saveptr);
-                    continue;
-                }
-                if (total >= offset && total < offset + limit) {
-                    cJSON *obj = cJSON_CreateObject();
-                    cJSON_AddStringToObject(obj, "name", line);
-                    cJSON_AddNumberToObject(obj, "size", 0);
-                    cJSON_AddItemToArray(arr, obj);
-                }
-                total++;
-            }
-        }
-        line = strtok_r(NULL, "\n", &saveptr);
-    }
-    free(buf);
-
     cJSON *data = cJSON_CreateObject();
     cJSON_AddItemToObject(data, "files", arr);
-    cJSON_AddNumberToObject(data, "total", total);
-    cJSON_AddNumberToObject(data, "offset", offset);
-    cJSON_AddNumberToObject(data, "limit", limit);
-    cJSON_AddNumberToObject(data, "sd_free_mb", (double)storage_get_free_space());
- cJSON_AddNumberToObject(data, "sd_total_mb", (double)storage_get_total_space());
+    cJSON_AddNumberToObject(data, "total", 0);
+    cJSON_AddNumberToObject(data, "offset", 0);
+    cJSON_AddNumberToObject(data, "limit", 10);
+    cJSON_AddNumberToObject(data, "sd_free_mb", (double)hm->sd_free_mb);
+    cJSON_AddNumberToObject(data, "sd_total_mb", (double)hm->sd_total_mb);
+
     return send_json_ok(req, data);
 }
 
@@ -783,6 +790,47 @@ static esp_err_t handler_api_download(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------ */
+/*  GET/POST /api/flash  — Manual flash LED control                    */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handler_api_flash(httpd_req_t *req)
+{
+    set_cors_headers(req);
+
+    /* POST: toggle/on/off via ?action= query param */
+    if (req->method == HTTP_POST) {
+        if (!check_auth(req)) {
+            return send_unauthorized(req);
+        }
+        char query[32] = {0};
+        char action[16] = {0};
+        if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+            httpd_query_key_value(query, "action", action, sizeof(action));
+        }
+        bool now_on;
+        if (strcmp(action, "on") == 0) {
+            flash_led_on();
+            now_on = true;
+        } else if (strcmp(action, "off") == 0) {
+            flash_led_off();
+            now_on = false;
+        } else {
+            /* default or "toggle" */
+            now_on = flash_led_toggle();
+        }
+        cJSON *data = cJSON_CreateObject();
+        cJSON_AddBoolToObject(data, "on", now_on);
+        ESP_LOGI(TAG, "Flash LED %s (API)", now_on ? "ON" : "OFF");
+        return send_json_ok(req, data);
+    }
+
+    /* GET: return current state */
+    cJSON *data = cJSON_CreateObject();
+    cJSON_AddBoolToObject(data, "on", flash_led_is_on());
+    return send_json_ok(req, data);
+}
+
+/* ------------------------------------------------------------------ */
 
 /* ------------------------------------------------------------------ */
 /*  GET /api/auth  - Validate password (returns 200 or 401)            */
@@ -849,16 +897,12 @@ static esp_err_t handler_api_format(httpd_req_t *req)
         return send_json_error(req, "SD card not available", 503);
     }
 
-    ESP_LOGW(TAG, "=== FORMAT SD CARD requested via API ===");
-
-    esp_err_t ret = storage_format();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "SD card format failed: %s", esp_err_to_name(ret));
-        return send_json_error(req, "Format failed, please reboot", 500);
-    }
-
-    ESP_LOGI(TAG, "SD card formatted successfully via API");
-    return send_json_ok(req, NULL);
+    /* SD card format via API is disabled.
+     * The camera's active I2S DMA interferes with SDSPI bus write operations,
+     * causing esp_vfs_fat_sdcard_format() to hang and trigger watchdog reset.
+     * Users should format the TF card on a PC instead. */
+    ESP_LOGW(TAG, "Format SD via API rejected (SPI bus conflict with camera)");
+    return send_json_error(req, "Format via API not available while camera is running. Please format on PC.", 503);
 }
 
 /* ------------------------------------------------------------------ */
@@ -867,17 +911,19 @@ static esp_err_t handler_api_format(httpd_req_t *req)
 
 static esp_err_t handler_api_storage(httpd_req_t *req)
 {
-    if (!storage_is_available()) {
-        return send_json_error(req, "SD card not available", 503);
-    }
+    /* Use cached health metrics instead of direct SD card access.
+     * The SD card SPI bus can become unreliable after camera init, causing
+     * f_getfree/opendir to hang or crash. Cached values are updated every 10s
+     * by the health monitor task and are always safe to read. */
+    const health_metrics_t *hm = health_monitor_get_metrics();
 
     cJSON *data = cJSON_CreateObject();
-
-    cJSON_AddNumberToObject(data, "total_mb", (double)storage_get_total_space());
-    cJSON_AddNumberToObject(data, "free_mb", (double)storage_get_free_space());
-    cJSON_AddNumberToObject(data, "usage_pct", (double)storage_get_usage_pct());
-    cJSON_AddNumberToObject(data, "photo_count", (double)storage_get_photo_count());
-    cJSON_AddNumberToObject(data, "recording_count", (double)storage_get_recording_count());
+    cJSON_AddNumberToObject(data, "total_mb", (double)hm->sd_total_mb);
+    cJSON_AddNumberToObject(data, "free_mb", (double)hm->sd_free_mb);
+    cJSON_AddNumberToObject(data, "usage_pct", (double)hm->sd_usage_pct);
+    cJSON_AddNumberToObject(data, "photo_count", (double)hm->photo_count);
+    cJSON_AddNumberToObject(data, "recording_count", 0); /* TODO: add to health metrics cache */
+    cJSON_AddNumberToObject(data, "mounted", hm->sd_mounted ? 1 : 0);
 
     return send_json_ok(req, data);
 }
@@ -962,55 +1008,6 @@ static esp_err_t handler_api_record_get(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------ */
-/*  POST /api/nas/test  — Test NAS connection                           */
-/* ------------------------------------------------------------------ */
-
-static esp_err_t handler_api_nas_test(httpd_req_t *req)
-{
-    if (!check_auth(req)) {
-        return send_unauthorized(req);
-    }
-
-    /* Queue a test upload - use any known file for testing */
-    esp_err_t ret = nas_uploader_enqueue("/test-upload-marker.txt");
-
-    if (ret == ESP_OK) {
-        cJSON *data = cJSON_CreateObject();
-        cJSON_AddStringToObject(data, "status", "ok");
-        return send_json_ok(req, data);
-    } else {
-        return send_json_error(req, "failed to queue test upload", 500);
-    }
-}
-
-/* ------------------------------------------------------------------ */
-/*  GET /api/nas  — NAS upload status                                   */
-/* ------------------------------------------------------------------ */
-
-static esp_err_t handler_api_nas(httpd_req_t *req)
-{
-    char last_upload[32] = {0};
-    int queue_count = 0;
-    bool paused = false;
-    nas_uploader_get_status(last_upload, sizeof(last_upload), &queue_count, &paused);
-
-    int success = 0, failure = 0;
-    nas_uploader_get_stats(&success, &failure);
-
-    cJSON *data = cJSON_CreateObject();
-    cJSON_AddNumberToObject(data, "queue_count", (double)queue_count);
-    cJSON_AddBoolToObject(data, "paused", paused);
-    cJSON_AddStringToObject(data, "last_upload", last_upload);
-
-    cJSON *stats = cJSON_CreateObject();
-    cJSON_AddNumberToObject(stats, "success", (double)success);
-    cJSON_AddNumberToObject(stats, "failure", (double)failure);
-    cJSON_AddItemToObject(data, "stats", stats);
-
-    return send_json_ok(req, data);
-}
-
-/* ------------------------------------------------------------------ */
 /*  OPTIONS *   - CORS preflight                                       */
 /* ------------------------------------------------------------------ */
 
@@ -1057,13 +1054,13 @@ static esp_err_t handler_static(httpd_req_t *req)
     /* Security: reject path traversal */
     if (strstr(filepath, "..") != NULL) {
         httpd_resp_send_404(req);
-        return ESP_FAIL;
+        return ESP_OK;  /* response already sent — ESP_FAIL would confuse httpd */
     }
 
     FILE *f = fopen(filepath, "r");
     if (!f) {
         httpd_resp_send_404(req);
-        return ESP_FAIL;
+        return ESP_OK;  /* response already sent — ESP_FAIL would confuse httpd */
     }
 
     httpd_resp_set_type(req, get_content_type(filepath));
@@ -1073,7 +1070,7 @@ static esp_err_t handler_static(httpd_req_t *req)
     while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
         if (httpd_resp_send_chunk(req, buf, n) != ESP_OK) {
             fclose(f);
-            return ESP_FAIL;
+            return ESP_OK;  /* partial response already sent */
         }
     }
     fclose(f);
@@ -1112,8 +1109,8 @@ static const uri_entry_t s_uris[] = {
     { "/api/storage",  HTTP_GET,    handler_api_storage      },
     { "/api/record",    HTTP_POST,   handler_api_record_post  },
     { "/api/record",    HTTP_GET,    handler_api_record_get   },
-    { "/api/nas/test",  HTTP_POST,   handler_api_nas_test     },
-    { "/api/nas",       HTTP_GET,    handler_api_nas          },
+    { "/api/flash",    HTTP_GET,    handler_api_flash        },
+    { "/api/flash",    HTTP_POST,   handler_api_flash        },
 
     { "/*",             HTTP_OPTIONS, handler_options         },
     { "/*",             HTTP_GET,    handler_static          },
@@ -1129,10 +1126,8 @@ esp_err_t web_server_init(void)
 {
     /*
      * Module initialization notes:
-     * - ws_server_init() is called in web_server_start() after HTTP server starts
+     * Module initialization notes:
      * - recorder_set_segment_cb() is set in main.c after recorder_init()
-     * - webhook_init() should be called after WiFi STA connected (main.c)
-     * - nas_uploader_init() should be called after WiFi STA connected (main.c)
      */
     ESP_LOGI(TAG, "web_server_init (reserved)");
     return ESP_OK;
@@ -1150,7 +1145,7 @@ esp_err_t web_server_start(uint16_t port)
     config.max_uri_handlers = 30;
     config.stack_size = 8192;
     config.recv_wait_timeout = 10;    /* longer tolerance for slow WiFi */
-    config.send_wait_timeout = 30;    /* prevent premature stream disconnects */
+    config.send_wait_timeout = 10;    /* backstop for disconnected clients (recv MSG_PEEK is primary) */
     config.lru_purge_enable = true;   /* clean up stale connections */
     config.uri_match_fn = httpd_uri_match_wildcard;
 
@@ -1174,7 +1169,7 @@ esp_err_t web_server_start(uint16_t port)
         httpd_register_uri_handler(s_server, &uri);
     }
 
-    /* Register /stream BEFORE wildcards (wildcard would block it) */
+    /* Register /stream and WebSocket BEFORE wildcards (wildcard would block them) */
     mjpeg_streamer_register(s_server);
 
     /* Now register wildcard handlers */
@@ -1188,8 +1183,6 @@ esp_err_t web_server_start(uint16_t port)
         };
         httpd_register_uri_handler(s_server, &uri);
     }
-    /* Initialize WebSocket server */
-    ws_server_init(s_server);
 
     ESP_LOGI(TAG, "Web server started on port %d", port);
     return ESP_OK;

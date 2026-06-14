@@ -155,6 +155,7 @@ static void timelapse_task(void *arg)
             }
         }
 
+
         size_t fb_len = fb->len;
         size_t sample_count = (fb_len + SAMPLE_STEP - 1) / SAMPLE_STEP;
         uint8_t *samples = (uint8_t *)malloc(sample_count);

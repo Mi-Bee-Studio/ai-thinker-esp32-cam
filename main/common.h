@@ -6,7 +6,7 @@
 #include "esp_err.h"
 
 // Config version and magic
-#define CONFIG_VERSION  8
+#define CONFIG_VERSION  9
 #define CONFIG_MAGIC    0xA5B6C7D8
 
 // Default values
@@ -109,6 +109,10 @@ typedef struct {
     char     alert_webhook_url[257];  /* webhook URL (default empty) */
     uint8_t  cleanup_low_pct;         /* start cleanup when used% > this (default 80) */
     uint8_t  cleanup_high_pct;        /* stop cleanup when used% < this (default 70) */
+    /* V9: Dual WiFi (secondary fallback network) */
+    char     wifi_ssid_2[33];         /* secondary WiFi SSID (empty = disabled) */
+    char     wifi_pass_2[65];         /* secondary WiFi password */
+    uint8_t  allow_ap_fallback;       /* 1=fall back to AP mode if STA fails, 0=keep retrying */
     uint32_t magic;
     uint32_t version;
 } cam_config_t;

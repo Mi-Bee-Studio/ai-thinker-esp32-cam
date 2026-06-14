@@ -40,7 +40,7 @@ static const char *TAG = "motion_detect";
 #define MOTION_TASK_STACK_SIZE 8192
 
 #define CAPTURE_INTERVAL_MS    500   /* ~2 FPS detection loop */
-#define STOP_WAIT_MS           2000  /* Max wait for task exit on stop */
+#define STOP_WAIT_MS           5000  /* Max wait for task exit on stop */
 
 /* ---- Static state ---- */
 static TaskHandle_t s_motion_task_handle = NULL;
@@ -89,6 +89,8 @@ static void handle_motion_event(bool dark_scene)
     ESP_LOGI(TAG, "Motion detected!%s (scene %s)", dark_scene ? " (auto-flash)" : "", dark_scene ? "DARK" : "bright");
     health_monitor_incr_motion_events();
 
+    if (!s_running) return;  /* bail out if motion detect was stopped while we were waiting */
+
     if (!storage_is_available()) {
         ESP_LOGW(TAG, "SD card not available, skipping photo save");
         return;
@@ -127,6 +129,8 @@ static void handle_motion_event(bool dark_scene)
     } else {
         snprintf(filename, sizeof(filename), "motion_unknown_%03u.jpg", (unsigned)s_unknown_seq++);
     }
+
+    if (!s_running) { camera_return_fb(fb); return; }  /* stopped during capture */
 
     esp_err_t err = storage_save_photo(fb, filename);
     camera_return_fb(fb);

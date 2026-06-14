@@ -39,15 +39,12 @@ static void apply_defaults(cam_config_t *cfg)
     cfg->record_mode = 0;           /* continuous */
     cfg->record_segment_sec = 300;
     cfg->frame_drop_enabled = 1;
-    cfg->webdav_enabled = 0;
-    memset(cfg->webdav_url, 0, sizeof(cfg->webdav_url));
-    memset(cfg->webdav_user, 0, sizeof(cfg->webdav_user));
-    memset(cfg->webdav_pass, 0, sizeof(cfg->webdav_pass));
-    strncpy(cfg->upload_base_path, "/mibee-cam", sizeof(cfg->upload_base_path) - 1);
-    cfg->alert_webhook_enabled = 0;
-    memset(cfg->alert_webhook_url, 0, sizeof(cfg->alert_webhook_url));
     cfg->cleanup_low_pct = 80;
     cfg->cleanup_high_pct = 70;
+    /* V9: Dual WiFi defaults */
+    memset(cfg->wifi_ssid_2, 0, sizeof(cfg->wifi_ssid_2));
+    memset(cfg->wifi_pass_2, 0, sizeof(cfg->wifi_pass_2));
+    cfg->allow_ap_fallback = 1;
     cfg->magic = CONFIG_MAGIC;
     cfg->version = CONFIG_VERSION;
 }
@@ -122,15 +119,14 @@ esp_err_t config_init(void)
                             s_config.record_mode = 0;
                             s_config.record_segment_sec = 300;
                             s_config.frame_drop_enabled = 1;
-                            s_config.webdav_enabled = 0;
-                            memset(s_config.webdav_url, 0, sizeof(s_config.webdav_url));
-                            memset(s_config.webdav_user, 0, sizeof(s_config.webdav_user));
-                            memset(s_config.webdav_pass, 0, sizeof(s_config.webdav_pass));
-                            strncpy(s_config.upload_base_path, "/mibee-cam", sizeof(s_config.upload_base_path) - 1);
-                            s_config.alert_webhook_enabled = 0;
-                            memset(s_config.alert_webhook_url, 0, sizeof(s_config.alert_webhook_url));
                             s_config.cleanup_low_pct = 80;
                             s_config.cleanup_high_pct = 70;
+                        }
+                        /* V8→V9: dual WiFi fields */
+                        if (s_config.version <= 8) {
+                            memset(s_config.wifi_ssid_2, 0, sizeof(s_config.wifi_ssid_2));
+                            memset(s_config.wifi_pass_2, 0, sizeof(s_config.wifi_pass_2));
+                            s_config.allow_ap_fallback = 1;
                         }
                         ESP_LOGI(TAG, "Config migrated V%d->V%d (blob %u->%u), saving",
                                  s_config.version, CONFIG_VERSION, (unsigned)cur_len, (unsigned)sizeof(cam_config_t));
@@ -143,6 +139,45 @@ esp_err_t config_init(void)
                 }
         }
     }
+    }
+
+    /* Version-based migration: blob read OK but version/magic mismatch */
+    if (ret == ESP_OK && s_config.magic == CONFIG_MAGIC && s_config.version < CONFIG_VERSION) {
+        ESP_LOGW(TAG, "Config version mismatch (V%d, expected V%d), migrating fields",
+                 s_config.version, CONFIG_VERSION);
+        if (s_config.version <= 6) {
+            s_config.timelapse_min_interval_s = 3;
+            s_config.timelapse_max_interval_s = 300;
+            s_config.timelapse_decay_factor = 2;
+            s_config.timelapse_decay_period_s = 10;
+        }
+        if (s_config.version <= 7) {
+            s_config.record_mode = 0;
+            s_config.record_segment_sec = 300;
+            s_config.frame_drop_enabled = 1;
+            s_config.cleanup_low_pct = 80;
+            s_config.cleanup_high_pct = 70;
+        }
+        if (s_config.version <= 8) {
+            memset(s_config.wifi_ssid_2, 0, sizeof(s_config.wifi_ssid_2));
+            memset(s_config.wifi_pass_2, 0, sizeof(s_config.wifi_pass_2));
+            s_config.allow_ap_fallback = 1;
+        }
+        ESP_LOGI(TAG, "Config migrated V%d->V%d (same-size blob), saving",
+                 s_config.version, CONFIG_VERSION);
+        config_save();
+    } else if (ret == ESP_OK && s_config.magic != CONFIG_MAGIC) {
+        /* Blob exists but magic is wrong — likely from different firmware build */
+        ESP_LOGW(TAG, "Config blob has bad magic (0x%08X), erasing and using defaults",
+                 s_config.magic);
+        nvs_handle_t h;
+        if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
+            nvs_set_blob(h, NVS_CONFIG_KEY, NULL, 0);
+            nvs_commit(h);
+            nvs_close(h);
+        }
+        apply_defaults(&s_config);
+        config_save();
     }
 
     if (ret == ESP_OK && s_config.magic == CONFIG_MAGIC && s_config.version == CONFIG_VERSION) {
@@ -225,6 +260,30 @@ esp_err_t config_set_wifi(const char *ssid, const char *pass)
     strncpy(s_config.wifi_pass, pass, sizeof(s_config.wifi_pass) - 1);
     s_config.wifi_pass[sizeof(s_config.wifi_pass) - 1] = '\0';
     ESP_LOGI(TAG, "WiFi set (ssid=%s, pass=***)", s_config.wifi_ssid);
+    return config_save();
+}
+
+esp_err_t config_set_wifi_secondary(const char *ssid, const char *pass)
+{
+    if (!ssid) {
+        memset(s_config.wifi_ssid_2, 0, sizeof(s_config.wifi_ssid_2));
+        memset(s_config.wifi_pass_2, 0, sizeof(s_config.wifi_pass_2));
+    } else {
+        strncpy(s_config.wifi_ssid_2, ssid, sizeof(s_config.wifi_ssid_2) - 1);
+        s_config.wifi_ssid_2[sizeof(s_config.wifi_ssid_2) - 1] = '\0';
+        if (pass && strlen(pass) > 0) {
+            strncpy(s_config.wifi_pass_2, pass, sizeof(s_config.wifi_pass_2) - 1);
+            s_config.wifi_pass_2[sizeof(s_config.wifi_pass_2) - 1] = '\0';
+        }
+    }
+    ESP_LOGI(TAG, "Secondary WiFi set (ssid=%s)", s_config.wifi_ssid_2);
+    return config_save();
+}
+
+esp_err_t config_set_allow_ap_fallback(uint8_t allow)
+{
+    s_config.allow_ap_fallback = allow ? 1 : 0;
+    ESP_LOGI(TAG, "AP fallback set to %d", s_config.allow_ap_fallback);
     return config_save();
 }
 
@@ -354,6 +413,30 @@ esp_err_t config_set_timezone(const char *tz)
     ESP_LOGI(TAG, "Timezone set to %s", s_config.timezone);
     return config_save();
 }
+
+#YP|/* ── New feature setters (recording, cleanup) ── */
+
+esp_err_t config_set_recording(uint8_t mode, uint16_t segment_sec, uint8_t frame_drop)
+{
+    if (mode > 2) mode = 0;
+    if (segment_sec < 10) segment_sec = 10;
+    s_config.record_mode = mode;
+    s_config.record_segment_sec = segment_sec;
+    s_config.frame_drop_enabled = frame_drop ? 1 : 0;
+    ESP_LOGI(TAG, "Recording set (mode=%u, segment=%us, frame_drop=%u)", mode, segment_sec, frame_drop);
+    return config_save();
+}
+
+esp_err_t config_set_cleanup(uint8_t low_pct, uint8_t high_pct)
+{
+    if (low_pct > 99) low_pct = 99;
+    if (high_pct > 99) high_pct = 99;
+    s_config.cleanup_low_pct = low_pct;
+    s_config.cleanup_high_pct = high_pct;
+    ESP_LOGI(TAG, "Cleanup set (low=%u%%, high=%u%%)", low_pct, high_pct);
+    return config_save();
+}
+
 
 /*
  * Load WiFi config from /sdcard/config.txt

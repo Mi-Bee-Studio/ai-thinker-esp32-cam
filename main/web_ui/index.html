@@ -97,6 +97,15 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 </div>
 </div>
 
+<div class="grid">
+<div class="card">
+<div class="ct">录像状态</div>
+<div class="row"><span class="l">状态</span><span class="v" id="rState">--</span></div>
+<div class="row"><span class="l">当前文件</span><span class="v" id="rFile">--</span></div>
+<div class="row"><span class="l">丢帧数</span><span class="v" id="rDrop">--</span></div>
+</div>
+</div>
+
 </div>
 <script>
 function $(s){return document.getElementById(s)}
@@ -106,8 +115,16 @@ function dot(c,pls){return '<span class="dot '+c+(pls?' pulse':'')+'"></span>'}
 function badge(c,t){return '<span class="badge '+c+'">'+t+'</span>'}
 function rssiInfo(v){if(v==null)return '--';if(v>-50)return dot('g')+' '+v+'dBm 极好';if(v>-70)return dot('g')+' '+v+'dBm 良好';if(v>-80)return dot('y')+' '+v+'dBm 一般';return dot('r')+' '+v+'dBm 较差'}
 
+var fetchWithTimeout=function(url,opts,ms){
+  opts=opts||{};ms=ms||8000;
+  var ctrl=new AbortController();
+  var to=setTimeout(function(){ctrl.abort()},ms);
+  opts.signal=ctrl.signal;
+  return fetch(url,opts).then(function(r){clearTimeout(to);return r},function(e){clearTimeout(to);throw e});
+};
+
 function refresh(){
-fetch('/api/status').then(function(r){return r.json()}).then(function(d){
+fetchWithTimeout('/api/status',{},5000).then(function(r){return r.json()}).then(function(d){
 if(!d||!d.ok)return;var v=d.data;
 $('dName').textContent=v.device_name||'Mi&Bee CAM';
 $('devName').textContent=v.device_name||'';
@@ -140,6 +157,16 @@ $('mEvt').textContent=(v.motion_events!=null?v.motion_events:'--')+' 次';
 
 $('hFree').textContent=v.free_heap!=null?fmtB(v.free_heap):'--';
 $('hMin').textContent=v.min_heap!=null?fmtB(v.min_heap):'--';
+
+/* Recording status */
+fetchWithTimeout('/api/record',{},5000).then(function(r){return r.json()}).then(function(d){
+if(!d||!d.ok)return;var v=d.data;
+var rs={'IDLE':'空闲','RECORDING':dot('r',true)+' 录制中','PAUSED':'已暂停','ERROR':badge('r','错误')};
+$('rState').innerHTML=rs[v.state]||v.state||'--';
+$('rFile').textContent=v.current_file?v.current_file.split('/').pop():'--';
+$('rDrop').textContent=v.frames_dropped!=null?v.frames_dropped:'--';
+}).catch(function(){});
+
 }).catch(function(e){console.error('Status fetch failed:',e)});
 }
 setInterval(refresh,10000);

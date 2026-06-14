@@ -202,6 +202,14 @@ function togPw(el){
  if(i.type==='password'){i.type='text';el.textContent='\uD83D\uDC41'}
  else{i.type='password';el.textContent='\uD83D\uDC40'}
 }
+var fetchWithTimeout=function(url,opts,ms){
+  opts=opts||{};ms=ms||8000;
+  var ctrl=new AbortController();
+  var to=setTimeout(function(){ctrl.abort()},ms);
+  opts.signal=ctrl.signal;
+  return fetch(url,opts).then(function(r){clearTimeout(to);return r},function(e){clearTimeout(to);throw e});
+};
+
 
 function updateSteps(){
  for(var i=1;i<=totalSteps;i++){
@@ -263,7 +271,7 @@ function scanWifi(){
  $('noNetworks').style.display='none';
  selectedSsid='';
 
- fetch('/api/scan').then(function(r){return r.json()}).then(function(d){
+ fetchWithTimeout('/api/scan').then(function(r){return r.json()}).then(function(d){
   btn.disabled=false;
   btn.textContent='\uD83D\uDD0D Scan for Networks';
   var nets=d.networks||d.data||d;
@@ -300,13 +308,14 @@ function scanWifi(){
 }
 
 function saveConfig(){
+ var btn=document.querySelector('.btn-p');if(btn)btn.disabled=true;
  var cfg={
   wifi_ssid:$('cfgSsid').value.trim(),
   wifi_pass:$('cfgPass').value,
   device_name:$('cfgName').value.trim()||'MiBeeCam',
   timezone:$('cfgTz').value
  };
- fetch('/api/config',{
+ fetchWithTimeout('/api/config',{
   method:'POST',
   headers:{'Content-Type':'application/json'},
   body:JSON.stringify(cfg)
@@ -324,7 +333,7 @@ function saveConfig(){
   showToast('Connection lost — device may be rebooting','err');
   $('okSub').textContent='Device is rebooting. Redirecting...';
   setTimeout(function(){window.location.href='/'},5000);
- });
+ }).finally(function(){if(btn)btn.disabled=false});
 }
 
 /* Auto-scan on load */

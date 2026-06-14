@@ -18,10 +18,8 @@
 #include "video_recorder.h"
 #include "camera_driver.h"
 #include "storage_manager.h"
-#include "frame_broadcaster.h"
 #include "config_manager.h"
 #include "time_sync.h"
-#include "sha256.h"
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -451,45 +449,10 @@ static void close_segment(void)
         if (remove(s_current_file) != 0) {
             ESP_LOGE(TAG, "Failed to delete zero-frame file: %s (errno=%d)", s_current_file, errno);
         }
-        /* Also remove SHA256 file if it exists */
-        char sha_path[256];
-        snprintf(sha_path, sizeof(sha_path), "%s.sha256", s_current_file);
-        remove(sha_path);
         idx1_free(&s_seg.idx);
         return;
     }
 
-    /* Compute SHA256 for integrity verification */
-    /* DISABLED: re-reading file after recording causes heap corruption crash */
-    /* TODO: investigate root cause of heap corruption and re-enable */
-    if (false && file_size > 0 && s_current_file[0] != '\0') {
-        FILE *f = fopen(s_current_file, "rb");
-        if (f) {
-            sha256_ctx_t ctx;
-            sha256_init(&ctx);
-            uint8_t buf[4096];
-            size_t n;
-            while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
-                sha256_update(&ctx, buf, n);
-            }
-            unsigned char hash[32];
-            sha256_finish(&ctx, hash);
-            fclose(f);
-
-            char sha_path[256];
-            snprintf(sha_path, sizeof(sha_path), "%s.sha256", s_current_file);
-            FILE *sf = fopen(sha_path, "w");
-            if (sf) {
-                char hex[65];
-                for (int i = 0; i < 32; i++) {
-                    sprintf(hex + i * 2, "%02x", hash[i]);
-                }
-                hex[64] = '\n';
-                fwrite(hex, 1, 65, sf);
-                fclose(sf);
-            }
-        }
-    }
 
     /* Calculate actual file size from file_size variable */
     float mb = (float)file_size / (1024.0f * 1024.0f);
@@ -580,8 +543,19 @@ static void recording_task(void *arg)
             jpeg_data = jpeg_copy;
             camera_return_fb(fb);
         } else {
-            ESP_LOGW(TAG, "PSRAM alloc %zu failed, holding camera fb", fb->len);
-            jpeg_data = fb->buf;
+            /* OOM: cannot safely hold fb across publish/write —
+             * camera_apply_settings could deinit and free fb mid-use.
+             * Return fb immediately and skip this frame. */
+            ESP_LOGW(TAG, "PSRAM alloc %zu failed, skipping frame", fb->len);
+            camera_return_fb(fb);
+            s_frames_dropped++;
+            if (cycle_start_us - s_last_drop_log_us > 1000000) {
+                ESP_LOGW(TAG, "Frame dropped: OOM, total_dropped=%lu",
+                         (unsigned long)s_frames_dropped);
+                s_last_drop_log_us = cycle_start_us;
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
         }
 
         /* Publish frame to streamer subscribers (RTSP, MJPEG) */
@@ -592,11 +566,7 @@ static void recording_task(void *arg)
         int64_t drop_threshold_us = (record_mode == 2) ? 2000000 : 500000;
         int64_t cycle_elapsed_us = esp_timer_get_time() - cycle_start_us;
         if (cycle_elapsed_us > drop_threshold_us && cfg->frame_drop_enabled) {
-            if (jpeg_copy) {
-                free(jpeg_copy);
-            } else {
-                camera_return_fb(fb);
-            }
+            free(jpeg_copy);
             s_frames_dropped++;
             /* Throttle warning to max 1/sec */
             if (cycle_start_us - s_last_drop_log_us > 1000000) {
@@ -615,15 +585,11 @@ static void recording_task(void *arg)
                 }
             }
             continue;
-        }
+}
 
         /* Write frame to AVI */
         err = write_avi_frame(jpeg_data, jpeg_data_len);
-        if (jpeg_copy) {
-            free(jpeg_copy);
-        } else {
-            camera_return_fb(fb);
-        }
+        free(jpeg_copy);
 
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "SD write failed — closing segment, attempting cleanup");

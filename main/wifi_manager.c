@@ -19,6 +19,11 @@ static wifi_state_t s_state = WIFI_STATE_AP;
 static char s_ip_str[16] = "0.0.0.0";
 static bool s_sta_active = false;
 
+/* Dual WiFi failover state */
+static int s_sta_retry_count = 0;
+static bool s_using_secondary = false;
+#define MAX_RETRIES_PER_NETWORK 10
+
 // Callbacks (up to 4)
 typedef struct {
     wifi_state_cb_t cb;
@@ -110,10 +115,32 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
             break;
 
         case WIFI_EVENT_STA_DISCONNECTED:
-            ESP_LOGW(TAG, "STA disconnected");
+            ESP_LOGW(TAG, "STA disconnected (retry %d/%d)", s_sta_retry_count + 1, MAX_RETRIES_PER_NETWORK);
             stop_reconnect_timer();
             set_state(WIFI_STATE_STA_DISCONNECTED);
-            // Start reconnect timer (5s from now)
+            s_sta_retry_count++;
+
+            /* Dual WiFi failover: try secondary network after max retries on primary */
+            if (s_sta_retry_count >= MAX_RETRIES_PER_NETWORK) {
+                const cam_config_t *cfg = config_get();
+                if (!s_using_secondary && cfg->wifi_ssid_2[0] != '\0') {
+                    ESP_LOGW(TAG, "Primary WiFi failed %d times, switching to secondary: %s",
+                             s_sta_retry_count, cfg->wifi_ssid_2);
+                    s_using_secondary = true;
+                    s_sta_retry_count = 0;
+                    wifi_start_sta(cfg->wifi_ssid_2, cfg->wifi_pass_2);
+                    return;
+                } else if (s_using_secondary) {
+                    /* Failed on secondary too — try primary again */
+                    ESP_LOGW(TAG, "Secondary WiFi also failed, retrying primary: %s", cfg->wifi_ssid);
+                    s_using_secondary = false;
+                    s_sta_retry_count = 0;
+                    wifi_start_sta(cfg->wifi_ssid, cfg->wifi_pass);
+                    return;
+                }
+                /* No secondary configured or alternating — keep retrying with reconnect timer */
+            }
+
             start_reconnect_timer();
             break;
 
@@ -136,6 +163,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
             ESP_LOGI(TAG, "STA got IP: %s", s_ip_str);
             stop_reconnect_timer();
             set_state(WIFI_STATE_STA_CONNECTED);
+            s_sta_retry_count = 0;  /* reset failover counter on success */
         }
     }
 }

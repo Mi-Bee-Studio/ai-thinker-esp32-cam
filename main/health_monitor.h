@@ -18,6 +18,7 @@ typedef struct {
     uint32_t photo_count;         // Total photos on SD card
     uint32_t sd_free_mb;          // SD card free space in MB
     uint32_t sd_total_mb;         // SD card total space in MB (cached)
+    uint8_t  sd_usage_pct;        // SD card usage percentage (0-100)
     size_t   spiffs_total;        // SPIFFS total bytes
     size_t   spiffs_free;         // SPIFFS free bytes
     bool camera_initialized;      // Camera status

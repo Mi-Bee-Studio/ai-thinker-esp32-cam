@@ -14,6 +14,7 @@ static const char *TAG = "flash_led";
 #define FLASH_PWM_DUTY         205
 
 static bool s_initialized = false;
+static bool s_manual_on = false;  /* tracks manual on/off state (not auto-flash) */
 
 void flash_led_init(void)
 {
@@ -56,12 +57,30 @@ void flash_led_on(void)
     flash_led_init();
     ledc_set_duty(FLASH_LEDC_SPEED, FLASH_LEDC_CHANNEL, FLASH_PWM_DUTY);
     ledc_update_duty(FLASH_LEDC_SPEED, FLASH_LEDC_CHANNEL);
+    s_manual_on = true;
 }
 
 void flash_led_off(void)
 {
     ledc_set_duty(FLASH_LEDC_SPEED, FLASH_LEDC_CHANNEL, 0);
     ledc_update_duty(FLASH_LEDC_SPEED, FLASH_LEDC_CHANNEL);
+    s_manual_on = false;
+}
+
+bool flash_led_is_on(void)
+{
+    return s_manual_on;
+}
+
+bool flash_led_toggle(void)
+{
+    if (s_manual_on) {
+        flash_led_off();
+        return false;
+    } else {
+        flash_led_on();
+        return true;
+    }
 }
 
 uint8_t flash_brightness_detect(camera_fb_t *fb)

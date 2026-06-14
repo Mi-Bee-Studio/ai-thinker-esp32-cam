@@ -61,6 +61,7 @@ static int64_t s_list_cache_time = 0;
 /* Recording file cache — ring buffer for circular cleanup */
 static file_info_t s_file_cache[FILE_CACHE_SIZE];
 static int s_file_cache_count = 0;
+static uint64_t s_total_recording_bytes = 0; /* Running total of recording file sizes (avoids f_getfree) */
 
 /* ---- Forward declarations ---- */
 static void hotplug_monitor_task(void *arg);
@@ -161,21 +162,11 @@ static esp_err_t ensure_photo_dir(char *dirpath, size_t dirpath_size)
         snprintf(dirpath, dirpath_size, "%s/%04d-%02d", PHOTOS_BASE_PATH, year, tm.tm_mon + 1);
     }
 
-    struct stat st;
-    /* Create base photos dir if missing */
-    if (stat(PHOTOS_BASE_PATH, &st) != 0) {
-        if (mkdir(PHOTOS_BASE_PATH, 0775) != 0 && errno != EEXIST) {
-            ESP_LOGE(TAG, "Failed to create %s: %s", PHOTOS_BASE_PATH, strerror(errno));
-            return ESP_FAIL;
-        }
-    }
-    /* Create month directory */
-    if (stat(dirpath, &st) != 0) {
-        if (mkdir(dirpath, 0775) != 0 && errno != EEXIST) {
-            ESP_LOGE(TAG, "Failed to create %s: %s", dirpath, strerror(errno));
-            return ESP_FAIL;
-        }
-    }
+    /* Create directories — use mkdir directly (like recorder's mkdirs).
+     * Avoid stat() which hangs on degraded SPI bus after camera init.
+     * mkdir returns EEXIST if dir already exists, which we ignore. */
+    mkdir(PHOTOS_BASE_PATH, 0775);
+    mkdir(dirpath, 0775);
     return ESP_OK;
 }
 
@@ -396,7 +387,8 @@ static void storage_rebuild_cache(void)
         return;
     }
 
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    /* Note: called from storage_init which already holds s_mutex,
+     * so we don't take it here (would deadlock on non-recursive mutex). */
     int count = 0;
     list_files_recursive(RECORDINGS_PATH, temp_files, FILE_CACHE_SIZE, &count);
 
@@ -407,7 +399,7 @@ static void storage_rebuild_cache(void)
     for (int i = 0; i < s_file_cache_count; i++) {
         s_file_cache[i] = temp_files[i];
     }
-    xSemaphoreGive(s_mutex);
+    /* Mutex released by caller (storage_init) */
 
     free(temp_files);
     ESP_LOGI(TAG, "File cache rebuilt: %d recordings found", s_file_cache_count);
@@ -484,11 +476,13 @@ esp_err_t storage_init(void)
 {
     esp_err_t ret;
 
-    /* Create recursive mutex for storage operations */
-    s_mutex = xSemaphoreCreateMutex();
+    /* Create mutex (reuse if already created by a previous init/deinit cycle) */
     if (!s_mutex) {
-        ESP_LOGE(TAG, "Failed to create mutex");
-        return ESP_ERR_NO_MEM;
+        s_mutex = xSemaphoreCreateMutex();
+        if (!s_mutex) {
+            ESP_LOGE(TAG, "Failed to create mutex");
+            return ESP_ERR_NO_MEM;
+        }
     }
 
     ESP_LOGI(TAG, "Initializing SD card (SPI mode): CS=%d CLK=%d MOSI=%d MISO=%d",
@@ -549,8 +543,15 @@ esp_err_t storage_init(void)
 
     xSemaphoreGive(s_mutex);
 
-    /* Start hot-plug monitor task */
-    xTaskCreate(hotplug_monitor_task, "sd_hotplug", 2048, NULL, 5, &s_hotplug_task);
+    /* Hot-plug monitor DISABLED: f_getfree() hangs after camera init due to
+     * SPI bus degradation, holding s_mutex and causing watchdog reset.
+     * The TF card is not hot-pluggable in this design (slot-mounted), so
+     * removal detection is unnecessary. */
+    /* Hot-plug monitor DISABLED: f_getfree() hangs after camera init due to
+     * SPI bus degradation, holding s_mutex and blocking all SD operations.
+     * The TF card is slot-mounted (not hot-pluggable), so removal detection
+     * is unnecessary. Keeping this disabled fixes timelapse photo saving. */
+    /* xTaskCreate(hotplug_monitor_task, "sd_hotplug", 2048, NULL, 5, &s_hotplug_task); */
 
     return ESP_OK;
 }
@@ -597,8 +598,10 @@ esp_err_t storage_save_photo(camera_fb_t *fb, const char *filename)
         return ESP_ERR_INVALID_STATE;
     }
 
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
-
+    /* Note: s_mutex intentionally NOT taken here. The timelapse task is the
+     * sole caller in dynamic mode (motion_detect is stopped). Taking s_mutex
+     * causes unexplained contention with other tasks that call f_getfree
+     * (which hangs on the degraded SPI bus after camera init). */
     /* Ensure YYYY-MM directory exists */
     char dirpath[128];
     esp_err_t ret = ensure_photo_dir(dirpath, sizeof(dirpath));
@@ -611,7 +614,6 @@ esp_err_t storage_save_photo(camera_fb_t *fb, const char *filename)
     char filepath[256];
     snprintf(filepath, sizeof(filepath), "%s/%s", dirpath, filename);
 
-    /* Write JPEG data to file */
     FILE *f = fopen(filepath, "wb");
     if (!f) {
         ESP_LOGE(TAG, "Failed to open %s: %s", filepath, strerror(errno));
@@ -624,7 +626,7 @@ esp_err_t storage_save_photo(camera_fb_t *fb, const char *filename)
 
     if (written != fb->len) {
         ESP_LOGE(TAG, "Write incomplete: %zu/%zu bytes", written, fb->len);
-        xSemaphoreGive(s_mutex);
+        return ESP_FAIL;
         return ESP_FAIL;
     }
 
@@ -637,7 +639,7 @@ esp_err_t storage_save_photo(camera_fb_t *fb, const char *filename)
         s_list_cache_time = 0;
     }
 
-    xSemaphoreGive(s_mutex);
+    return ESP_OK;
     return ESP_OK;
 }
 
@@ -992,12 +994,17 @@ void storage_register_file(const char *filepath, uint32_t size)
 
     xSemaphoreGive(s_mutex);
 
-    /* Check if cleanup is needed after registering a new file */
-    uint8_t usage = storage_get_usage_pct();
-    if (usage > config_get()->cleanup_low_pct) {
-        ESP_LOGW(TAG, "Usage %d%% > %d%%, triggering cleanup",
-                 usage, config_get()->cleanup_low_pct);
-        storage_cleanup();
+    /* Check if cleanup is needed — use cached total to avoid f_getfree()
+     * which hangs/slow on degraded SPI bus after camera init. */
+    if (s_cached_total_mb > 0) {
+        uint64_t total_bytes = (uint64_t)s_cached_total_mb * 1024 * 1024;
+        uint64_t used_bytes = s_total_recording_bytes;
+        uint8_t usage = (uint8_t)(used_bytes * 100 / total_bytes);
+        if (usage > config_get()->cleanup_low_pct) {
+            ESP_LOGW(TAG, "Usage %d%% > %d%%, triggering cleanup",
+                     usage, config_get()->cleanup_low_pct);
+            storage_cleanup();
+        }
     }
 }
 

@@ -1,11 +1,11 @@
 /*
  * MiBee Cam - Main Entry Point
- * 19-step boot sequence integrating all modules.
+ * 16-step boot sequence integrating all modules.
  *
  * Boot order (CRITICAL):
  *   NVS -> config -> LED -> SPIFFS -> SD bus -> WiFi -> callback -> health
  *   -> STA/AP -> MJPEG -> time_sync -> web_server -> motion -> SD -> timelapse
- *   -> fbroadcast -> recorder -> webhook -> NAS -> ONVIF -> auto-record
+ *   -> recorder -> auto-record
  */
 
 #include "esp_log.h"
@@ -28,12 +28,8 @@
 #include "motion_detect.h"
 #include "storage_manager.h"
 #include "timelapse.h"
-#include "frame_broadcaster.h"
 #include "video_recorder.h"
-#include "nas_uploader.h"
-#include "webhook.h"
-/* #include "onvif_service.h"    // TODO: add when ONVIF module is ready */
-/* #include "onvif_discovery.h"  // TODO: add when ONVIF module is ready */
+#include "serial_config.h"
 
 static const char *TAG = "main";
 
@@ -67,9 +63,7 @@ static void on_segment_complete(const char *filepath, uint32_t size)
 {
     ESP_LOGI(TAG, "Segment complete: %s (%u bytes)", filepath, size);
     storage_register_file(filepath, size);
-    nas_uploader_enqueue(filepath);
     storage_cleanup();
-    webhook_send_alert("recording_segment", filepath);
 }
 
 static void sta_services_task(void *arg)
@@ -97,6 +91,7 @@ static void sta_services_task(void *arg)
             }
         }
     }
+
 
     /* Start MJPEG streamer (once) */
     if (!s_mjpeg_started) {
@@ -176,42 +171,24 @@ static void sta_services_task(void *arg)
         }
     }
 
-    /* ── Step 17/19: Frame broadcaster init ── */
-    if (camera_is_initialized()) {
-        esp_err_t ret_fb = fbroadcast_init();
-        if (ret_fb == ESP_OK) {
-            ESP_LOGI(TAG, "=== Step 17/19: Frame broadcaster initialized ===");
-        } else {
-            ESP_LOGW(TAG, "Frame broadcaster init failed: %s", esp_err_to_name(ret_fb));
-        }
-    } else {
-        ESP_LOGW(TAG, "=== Step 17/19: Frame broadcaster skipped (no camera) ===");
-    }
 
-    /* ── Step 18/19: Video recorder init + cleanup + segment callback ── */
+    /* ── Step 14/16: Video recorder init + cleanup + segment callback ── */
     if (camera_is_initialized() && storage_is_available()) {
         esp_err_t ret_rec = recorder_init();
         if (ret_rec == ESP_OK) {
             recorder_cleanup_incomplete();
             recorder_set_segment_cb(on_segment_complete);
-            ESP_LOGI(TAG, "=== Step 18/19: Video recorder initialized ===");
+            ESP_LOGI(TAG, "=== Step 14/16: Video recorder initialized ===");
         } else {
             ESP_LOGW(TAG, "Video recorder init failed: %s", esp_err_to_name(ret_rec));
         }
     } else {
-        ESP_LOGW(TAG, "=== Step 18/19: Video recorder skipped (no camera or SD) ===");
+        ESP_LOGW(TAG, "=== Step 14/16: Video recorder skipped (no camera or SD) ===");
     }
 
-    /* ── Step 19/19: Webhook, NAS, ONVIF, auto-record ── */
-    webhook_init();
-    ESP_LOGI(TAG, "=== Step 19/19: Webhook initialized ===");
+    /* ── Step 15/16: Auto-record ── */
 
-    nas_uploader_init();
-    ESP_LOGI(TAG, "=== Step 19/19: NAS uploader initialized ===");
 
-    /* ONVIF init deferred until module is ready */
-    /* TODO: onvif_service_init(httpd_handle); onvif_discovery_init(); onvif_discovery_start(); */
-    ESP_LOGI(TAG, "=== Step 19/19: ONVIF init deferred (module pending) ===");
 
     /* Auto-start recording if configured */
     if (camera_is_initialized() && storage_is_available()) {
@@ -261,7 +238,7 @@ static void wifi_state_cb(wifi_state_t state, void *user_data)
 
 
 /* ---------------------------------------------------------------------------
- * app_main - system entry point, 19-step boot sequence
+ * app_main - system entry point, 16-step boot sequence
  * --------------------------------------------------------------------------- */
 void app_main(void)
 {
@@ -287,6 +264,9 @@ void app_main(void)
     ret = config_init();
     ESP_ERROR_CHECK(ret);
     ESP_LOGI(TAG, "=== Step 2/19: Config initialized ===");
+
+    /* Start serial AT command listener (available immediately after config) */
+    serial_config_init();
 
     /* Step 3/19: LED init */
     ret = led_init();

@@ -66,6 +66,9 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 <div class="ct">WiFi 设置</div>
 <div class="fld"><label>SSID</label><input type="text" id="wifi_ssid" placeholder="WiFi名称"></div>
 <div class="fld"><label>密码</label><div class="pw-w"><input type="password" id="wifi_pass" placeholder="WiFi密码"><span class="eye" onclick="togPw(this)">&#128065;</span></div></div>
+  <div class="fld"><label>备用 WiFi SSID</label><input type="text" id="wifi_ssid_2" placeholder="备用网络（可选）"></div>
+  <div class="fld"><label>备用 WiFi 密码</label><div class="pw-w"><input type="password" id="wifi_pass_2" placeholder="备用密码（可选）"><span class="eye" onclick="togPw(this)">&#128065;</span></div></div>
+  <div class="chk-r"><input type="checkbox" id="allow_ap_fallback" checked><label for="allow_ap_fallback">允许退回 AP 模式（STA连接失败时）</label></div>
 </div>
 
 <div class="card">
@@ -134,6 +137,29 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 <input type="number" id="timelapse_burst_count" min="1" max="10" value="3"></div>
 </div>
 
+  <div class="card">
+    <div class="ct">录像设置</div>
+    <div class="fld"><label>录像模式</label>
+      <select id="record_mode">
+        <option value="0">连续录像</option>
+        <option value="1">延时录像</option>
+        <option value="2">动态延时录像</option>
+      </select></div>
+    <div class="fld"><label>分段时长 (秒)</label>
+      <input type="number" id="record_segment_sec" min="60" max="3600" step="60" value="300"></div>
+    <div class="chk-r"><input type="checkbox" id="frame_drop_enabled"><label for="frame_drop_enabled">启用智能丢帧 (降低CPU负载)</label></div>
+  </div>
+
+  <div class="card">
+    <div class="ct">存储清理</div>
+    <div class="fld"><label>开始清理阈值 (%) — 使用率超过此值开始删除旧录像</label>
+      <div class="range-r"><input type="range" id="cleanup_low_pct" min="50" max="95" step="5" value="80"><span class="range-v" id="clVal">80</span></div></div>
+    <div class="fld"><label>停止清理阈值 (%) — 使用率低于此值停止清理</label>
+      <div class="range-r"><input type="range" id="cleanup_high_pct" min="30" max="90" step="5" value="70"><span class="range-v" id="chVal">70</span></div></div>
+    <div class="fld" style="font-size:12px;color:var(--t2)">开始阈值必须大于停止阈值，清理时优先删除最旧的录像文件</div>
+  </div>
+
+
 <div class="card">
 <div class="ct">系统操作</div>
 <div class="btn-row">
@@ -152,23 +178,35 @@ function showToast(m,e){var t=$('toast');t.textContent=m;t.className='toast show
 function getPw(){return localStorage.getItem('cam_password')||''}
 function setPw(p){localStorage.setItem('cam_password',p)}
 function authH(){var p=getPw();return p?{'X-Password':p}:{}}
-function authFetch(u,o){o=o||{};o.headers=Object.assign({},o.headers||{},authH());return fetch(u,o).then(function(r){if(r.status===401){setPw('');loginDialog();throw new Error('Unauthorized')}return r})}
+function authFetch(u,o){o=o||{};o.headers=Object.assign({},o.headers||{},authH());return fetchWithTimeout(u,o).then(function(r){if(r.status===401){setPw('');loginDialog();throw new Error('Unauthorized')}return r})}
 function loginDialog(cb){var p=prompt('请输入管理密码 (默认: admin):');if(!p){showToast('需要密码才能操作',true);return};fetch('/api/auth',{headers:{'X-Password':p}}).then(function(r){if(r.ok){setPw(p);if(cb)cb()}else{alert('密码错误');loginDialog(cb)}})}
 function requireAuth(cb){if(getPw())cb();else loginDialog(cb)}
 function togPw(el){var i=el.previousElementSibling;if(i.type==='password'){i.type='text';el.textContent='\uD83D\uDC41'}else{i.type='password';el.textContent='\uD83D\uDC40'}}
+var fetchWithTimeout=function(url,opts,ms){
+  opts=opts||{};ms=ms||8000;
+  var ctrl=new AbortController();
+  var to=setTimeout(function(){ctrl.abort()},ms);
+  opts.signal=ctrl.signal;
+  return fetch(url,opts).then(function(r){clearTimeout(to);return r},function(e){clearTimeout(to);throw e});
+};
+
 
 $('jpeg_quality').oninput=function(){$('qVal').textContent=this.value};
 $('motion_threshold').oninput=function(){$('mtVal').textContent=this.value};
 $('motion_cooldown').oninput=function(){$('mcVal').textContent=this.value};
 $('wifi_tx_power').oninput=function(){$('txVal').textContent=(this.value*0.25).toFixed(1)+'dBm'};
 $('flash_threshold').oninput=function(){$('ftVal').textContent=this.value};
+$('cleanup_low_pct').oninput=function(){$('clVal').textContent=this.value};
+$('cleanup_high_pct').oninput=function(){$('chVal').textContent=this.value};
 
 $('timelapse_mode').addEventListener('change',function(){$('dynamic_fields').style.display=this.value==='1'?'':'none'})
 
 function loadConfig(){
-fetch('/api/config').then(function(r){return r.json()}).then(function(d){
+fetchWithTimeout('/api/config').then(function(r){return r.json()}).then(function(d){
 if(!d||!d.ok)return;var v=d.data;
 $('wifi_ssid').value=v.wifi_ssid||'';
+$('wifi_ssid_2').value=v.wifi_ssid_2||'';
+$('allow_ap_fallback').checked=!!(v.allow_ap_fallback);
 $('wifi_pass').value=v.wifi_pass||'';
 $('device_name').value=v.device_name||'';
 $('resolution').value=v.resolution!=null?v.resolution:'0';
@@ -190,6 +228,11 @@ $('timelapse_max_interval_s').value=v.timelapse_max_interval_s||300;
 $('timelapse_decay_factor').value=v.timelapse_decay_factor||2;
 $('timelapse_decay_period_s').value=v.timelapse_decay_period_s||10;
 $('dynamic_fields').style.display=v.timelapse_mode==1?'':'none'
+    $('record_mode').value=v.record_mode!=null?v.record_mode:'0';
+    $('record_segment_sec').value=v.record_segment_sec||300;
+    $('frame_drop_enabled').checked=!!(v.frame_drop_enabled);
+    $('cleanup_low_pct').value=v.cleanup_low_pct!=null?v.cleanup_low_pct:80;$('clVal').textContent=$('cleanup_low_pct').value;
+    $('cleanup_high_pct').value=v.cleanup_high_pct!=null?v.cleanup_high_pct:70;$('chVal').textContent=$('cleanup_high_pct').value;
 }).catch(function(e){console.error('Load config failed:',e)});
 }
 
@@ -199,9 +242,12 @@ if(pw&&pw!==cpw){showToast('两次输入的密码不一致',true);return}
 var minI=parseInt($('timelapse_min_interval_s').value)||3,maxI=parseInt($('timelapse_max_interval_s').value)||300;
 if(minI>=maxI){showToast('最小间隔必须小于最大间隔',true);return}
 requireAuth(function(){
+var btn=document.querySelector('.btn-sv');if(btn)btn.disabled=true;
 var cfg={
 wifi_ssid:$('wifi_ssid').value,
 wifi_pass:$('wifi_pass').value,
+    wifi_ssid_2:$('wifi_ssid_2').value,
+    allow_ap_fallback:$('allow_ap_fallback').checked?1:0,
 device_name:$('device_name').value,
 resolution:parseInt($('resolution').value),
 jpeg_quality:parseInt($('jpeg_quality').value),
@@ -220,19 +266,27 @@ timelapse_min_interval_s:parseInt($('timelapse_min_interval_s').value)||3,
 timelapse_max_interval_s:parseInt($('timelapse_max_interval_s').value)||300,
 timelapse_decay_factor:parseInt($('timelapse_decay_factor').value)||2,
 timelapse_decay_period_s:parseInt($('timelapse_decay_period_s').value)||10
+      ,record_mode:parseInt($('record_mode').value)||0
+      ,record_segment_sec:parseInt($('record_segment_sec').value)||300
+      ,frame_drop_enabled:$('frame_drop_enabled').checked?1:0
+      ,cleanup_low_pct:parseInt($('cleanup_low_pct').value)||80
+      ,cleanup_high_pct:parseInt($('cleanup_high_pct').value)||70
 };
 if(pw)cfg.web_password=pw;
+  var wp2=$('wifi_pass_2').value;
+  if(wp2)cfg.wifi_pass_2=wp2;
 authFetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}).then(function(r){return r.json()}).then(function(d){
 if(d&&d.ok){showToast('配置已保存');$('web_password_confirm').value=''}
 else showToast('保存失败: '+(d.error||'未知错误'),true);
-}).catch(function(e){showToast('保存失败',true);console.error(e)});
+}).catch(function(e){showToast('保存失败',true);console.error(e)}).finally(function(){if(btn)btn.disabled=false});
 });
 }
 
 function rebootDevice(){
 if(!confirm('确定要重启设备？'))return;
 requireAuth(function(){
-authFetch('/api/reboot',{method:'POST'}).catch(function(){});
+var btn=document.querySelector('.btn-rb');if(btn)btn.disabled=true;
+authFetch('/api/reboot',{method:'POST'}).catch(function(){}).finally(function(){if(btn)btn.disabled=false});
 showToast('设备正在重启...');
 });
 }
@@ -240,10 +294,11 @@ showToast('设备正在重启...');
 function factoryReset(){
 if(!confirm('确定要恢复出厂设置？\n所有配置将被清除，设备将重启。'))return;
 requireAuth(function(){
+var btn=document.querySelector('.btn-rs');if(btn)btn.disabled=true;
 authFetch('/api/reset',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
 if(d&&d.ok)showToast('正在恢复出厂设置...');
 else showToast('操作失败: '+(d.error||'未知错误'),true);
-}).catch(function(e){showToast('操作失败',true);console.error(e)});
+}).catch(function(e){showToast('操作失败',true);console.error(e)}).finally(function(){if(btn)btn.disabled=false});
 });
 }
 

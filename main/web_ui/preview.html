@@ -42,6 +42,15 @@ select,button{font-family:inherit}
 .range-row input[type="range"]{width:80px}
 .range-val{min-width:28px;font-weight:600;color:var(--c)}
 #stream:fullscreen,#stream:-webkit-full-screen{max-height:100vh;object-fit:contain}
+.btn-rec{background:#DC2626;color:#fff}
+.btn-rec:hover{background:#B91C1C}
+.btn-rec.active{background:#059669}
+.btn-rec.active:hover{background:#047857}
+.btn-flash{background:#6B7280;color:#fff}
+.btn-flash:hover{background:#4B5563}
+.btn-flash.active{background:#F59E0B}
+.btn-flash.active:hover{background:#D97706}
+
 </style>
 </head>
 <body>
@@ -70,6 +79,8 @@ select,button{font-family:inherit}
 <div class="ctrl-item"><span class="cl">客户端:</span><span class="cv" id="clients">--</span></div>
 </div>
 <div class="ctrl-right">
+<button class="btn btn-rec" id="recBtn" onclick="toggleRec()">开始录像</button>
+
 <select class="sel" id="resSel" onchange="changeRes()">
 <option value="0">VGA (640x480)</option>
 <option value="1">SVGA (800x600)</option>
@@ -81,6 +92,7 @@ select,button{font-family:inherit}
 <input type="range" id="qSlider" min="1" max="63" value="10" onchange="changeQuality()">
 <span class="range-val" id="qVal">10</span>
 </div>
+      <button class="btn btn-flash" id="flashBtn" onclick="toggleFlash()">闪光灯</button>
 <button class="btn btn-cap" onclick="capture()">拍照</button>
 </div>
 </div>
@@ -95,6 +107,14 @@ var clientsEl=document.getElementById('clients');
 var connected=false;
 var retryT=null;
 var capturing=false;
+
+var fetchWithTimeout=function(url,opts,ms){
+  opts=opts||{};ms=ms||8000;
+  var ctrl=new AbortController();
+  var to=setTimeout(function(){ctrl.abort()},ms);
+  opts.signal=ctrl.signal;
+  return fetch(url,opts).then(function(r){clearTimeout(to);return r},function(e){clearTimeout(to);throw e});
+};
 
 function onConn(){
 connected=true;clearTimeout(retryT);
@@ -121,7 +141,7 @@ img.src='/stream';
 // Status polling — only update client count, do NOT trigger reconnect from here
 // (let img.onerror handle reconnection to avoid duplicate stream connections)
 setInterval(function(){
-fetch('/api/status').then(function(r){return r.json()}).then(function(d){
+fetchWithTimeout('/api/status',{},5000).then(function(r){return r.json()}).then(function(d){
 if(d&&d.data){
 var sc=d.data.stream_clients!=null?d.data.stream_clients:'--';
 clientsEl.textContent=sc;
@@ -131,30 +151,42 @@ if(sc>0&&connected){fpsEl.textContent='实时';fpsEl.style.color='#059669'}
 },10000);
 
 function changeRes(){
-var v=document.getElementById('resSel').value;
-var h={'Content-Type':'application/json'};
-var pw=localStorage.getItem('cam_password')||'';
-if(pw)h['X-Password']=pw;
-fetch('/api/config',{method:'POST',headers:h,body:JSON.stringify({resolution:parseInt(v)})})
-  .then(function(r){if(r.status===401){localStorage.setItem('cam_password','');var p=prompt('请输入管理密码 (默认: admin):');if(p){localStorage.setItem('cam_password',p);changeRes()}}})
-  .catch(function(){});
+  var sel=document.getElementById('resSel');
+  var slider=document.getElementById('qSlider');
+  var v=sel.value;
+  var pt=sTxt.textContent,pc=sTxt.style.color;
+  sel.disabled=true;slider.disabled=true;
+  sTxt.textContent='切换中...';sTxt.style.color='#D97706';
+  var h={'Content-Type':'application/json'};
+  var pw=localStorage.getItem('cam_password')||'';
+  if(pw)h['X-Password']=pw;
+  fetchWithTimeout('/api/config',{method:'POST',headers:h,body:JSON.stringify({resolution:parseInt(v)})})
+    .then(function(r){if(r.status===401){localStorage.setItem('cam_password','');var p=prompt('请输入管理密码 (默认: admin):');if(p){localStorage.setItem('cam_password',p);changeRes()}}})
+    .catch(function(){alert('切换失败')})
+    .finally(function(){sel.disabled=false;slider.disabled=false;sTxt.textContent=pt;sTxt.style.color=pc});
 }
 function changeQuality(){
-var v=document.getElementById('qSlider').value;
-document.getElementById('qVal').textContent=v;
-var h={'Content-Type':'application/json'};
-var pw=localStorage.getItem('cam_password')||'';
-if(pw)h['X-Password']=pw;
-fetch('/api/config',{method:'POST',headers:h,body:JSON.stringify({jpeg_quality:parseInt(v)})})
-  .then(function(r){if(r.status===401){localStorage.setItem('cam_password','');var p=prompt('请输入管理密码 (默认: admin):');if(p){localStorage.setItem('cam_password',p);changeQuality()}}})
-  .catch(function(){});
+  var sel=document.getElementById('resSel');
+  var slider=document.getElementById('qSlider');
+  var v=slider.value;
+  document.getElementById('qVal').textContent=v;
+  var pt=sTxt.textContent,pc=sTxt.style.color;
+  sel.disabled=true;slider.disabled=true;
+  sTxt.textContent='切换中...';sTxt.style.color='#D97706';
+  var h={'Content-Type':'application/json'};
+  var pw=localStorage.getItem('cam_password')||'';
+  if(pw)h['X-Password']=pw;
+  fetchWithTimeout('/api/config',{method:'POST',headers:h,body:JSON.stringify({jpeg_quality:parseInt(v)})})
+    .then(function(r){if(r.status===401){localStorage.setItem('cam_password','');var p=prompt('请输入管理密码 (默认: admin):');if(p){localStorage.setItem('cam_password',p);changeQuality()}}})
+    .catch(function(){alert('切换失败')})
+    .finally(function(){sel.disabled=false;slider.disabled=false;sTxt.textContent=pt;sTxt.style.color=pc});
 }
 function capture(){
 if(capturing)return;
 capturing=true;
 var btn=document.querySelector('.btn-cap');
 if(btn)btn.disabled=true;
-fetch('/capture').then(function(r){
+fetchWithTimeout('/capture').then(function(r){
   if(!r.ok)throw new Error('HTTP '+r.status);
   return r.blob();
 }).then(function(b){
@@ -182,7 +214,7 @@ a.addEventListener('click',function(e){e.preventDefault();stopStream();setTimeou
 window.addEventListener('beforeunload',stopStream);
 window.addEventListener('pagehide',stopStream);
 // Load current resolution/quality from config
-fetch('/api/config').then(function(r){return r.json()}).then(function(d){
+fetchWithTimeout('/api/config').then(function(r){return r.json()}).then(function(d){
 if(d&&d.ok&&d.data){
 var c=d.data;
 if(c.resolution!=null)document.getElementById('resSel').value=c.resolution;
@@ -191,6 +223,65 @@ document.getElementById('qSlider').value=c.jpeg_quality;
 document.getElementById('qVal').textContent=c.jpeg_quality;
 }
 }
+}).catch(function(){});
+
+var recording=false;
+function toggleRec(){
+var pw=localStorage.getItem('cam_password')||'';
+var h={'Content-Type':'application/json'};
+if(pw)h['X-Password']=pw;
+var btn=document.getElementById('recBtn');
+var action=recording?'stop':'start';
+btn.disabled=true;
+fetchWithTimeout('/api/record?action='+action,{method:'POST',headers:h}).then(function(r){return r.json()}).then(function(d){
+if(d&&d.ok){
+recording=!recording;
+btn.textContent=recording?'停止录像':'开始录像';
+btn.className=recording?'btn btn-rec active':'btn btn-rec';
+}else{
+alert('操作失败: '+(d&&d.error||'未知错误'));
+}
+}).catch(function(e){alert('请求失败')}).finally(function(){btn.disabled=false});
+}
+function toggleFlash(){
+  var btn=document.getElementById('flashBtn');
+  var h={};
+  var pw=localStorage.getItem('cam_password')||'';
+  if(pw)h['X-Password']=pw;
+  btn.disabled=true;
+  fetchWithTimeout('/api/flash',{method:'POST',headers:h})
+    .then(function(r){
+      if(r.status===401){localStorage.setItem('cam_password','');var p=prompt('请输入管理密码 (默认: admin):');if(p){localStorage.setItem('cam_password',p);toggleFlash()}return null}
+      return r.json();
+    })
+    .then(function(d){
+      if(d&&d.data&&d.data.on!=null){
+        var on=d.data.on;
+        btn.textContent=on?'关闭闪光':'闪光灯';
+        btn.className=on?'btn btn-flash active':'btn btn-flash';
+      }
+    })
+    .catch(function(){})
+    .finally(function(){btn.disabled=false});
+}
+// Check recording state on load
+fetchWithTimeout('/api/record').then(function(r){return r.json()}).then(function(d){
+if(d&&d.ok&&d.data){
+if(d.data.state==='RECORDING'){
+recording=true;
+var btn=document.getElementById('recBtn');
+btn.textContent='停止录像';
+btn.className='btn btn-rec active';
+}
+}
+}).catch(function(){});
+// Check flash LED state
+fetchWithTimeout('/api/flash').then(function(r){return r.json()}).then(function(d){
+  if(d&&d.data&&d.data.on){
+    var btn=document.getElementById('flashBtn');
+    btn.textContent='关闭闪光';
+    btn.className='btn btn-flash active';
+  }
 }).catch(function(){});
 </script>
 </body>

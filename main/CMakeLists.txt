@@ -11,18 +11,11 @@ idf_component_register(
         "storage_manager.c"
         "timelapse.c"
         "time_sync.c"
-        "frame_broadcaster.c"
         "web_server.c"
         "wifi_manager.c"
         "cJSON.c"
-        "sha256.c"
-        "webhook.c"
-        "nas_uploader.c"
-        "onvif_discovery.c"
-        "onvif_service.c"
         "video_recorder.c"
-        "ws_server.c"
-        "webdav_client.c"
+        "serial_config.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi
@@ -30,6 +23,7 @@ idf_component_register(
         esp_http_server
         espressif__esp32-camera
         driver
+        esp_driver_uart
         esp_driver_i2c
         spiffs
         fatfs

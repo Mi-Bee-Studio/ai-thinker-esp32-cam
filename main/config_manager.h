@@ -41,6 +41,17 @@ bool config_is_valid(void);
 esp_err_t config_set_wifi(const char *ssid, const char *pass);
 
 /**
+ * @brief Set secondary (fallback) WiFi credentials, save immediately
+ * Pass NULL or empty ssid to disable secondary network.
+ */
+esp_err_t config_set_wifi_secondary(const char *ssid, const char *pass);
+
+/**
+ * @brief Set AP fallback behavior (1=allow AP mode on STA failure, 0=retry only)
+ */
+esp_err_t config_set_allow_ap_fallback(uint8_t allow);
+
+/**
  * @brief Set camera resolution, save immediately
  */
 esp_err_t config_set_resolution(camera_resolution_t res);
@@ -94,6 +105,19 @@ esp_err_t config_set_flash_threshold(uint8_t threshold);
 
 esp_err_t config_set_timelapse(uint8_t enabled, uint16_t interval_s, uint8_t burst_count);
 esp_err_t config_set_timelapse_dynamic(uint8_t mode, uint16_t min_interval, uint16_t max_interval, uint8_t decay_factor, uint16_t decay_period);
+
+/**
+ * @brief Set recording settings, save immediately
+ * @param mode 0=continuous, 1=timelapse, 2=dynamic
+ * @param segment_sec segment duration in seconds
+ * @param frame_drop 1=enable smart frame drop
+ */
+esp_err_t config_set_recording(uint8_t mode, uint16_t segment_sec, uint8_t frame_drop);
+
+/**
+ * @brief Set storage cleanup thresholds, save immediately
+ */
+esp_err_t config_set_cleanup(uint8_t low_pct, uint8_t high_pct);
 
 /**
  * @brief Load WiFi config from /sdcard/config.txt (key=value format)

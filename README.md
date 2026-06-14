@@ -25,26 +25,18 @@
 
 ---
 
-#XS|## ✨ Features
-#ZR|
-#SX|- **📸 High-Quality Camera Capture** — OV2640 camera with VGA/SVGA/XGA/UXGA resolutions and configurable JPEG quality
-#NX|- **📶 Smart WiFi Management** — STA mode with auto-reconnect and AP fallback for seamless deployment  
-#JZ|- **🌐 Web Dashboard** — Modern responsive interface with live MJPEG preview and configuration management
-#KZ|- **🎥 Real-Time MJPEG Streaming** — Smooth video at up to 15 FPS via `/stream` endpoint
-#SR|- **🔍 Intelligent Motion Detection** — Frame-difference algorithm with configurable sensitivity and cooldown
-#YN|- **💡 Automatic Flash Control** — Sensor-based brightness detection with intelligent LED activation
-#QX|- **💾 SD Card Storage** — Automatic JPEG photo saving to TF card with management APIs
-#JN|- **📡 REST API** — Comprehensive API for status, configuration, file operations, and camera control
-#TQ|- **📊 Prometheus Monitoring** — Compatible `/metrics` endpoint for system health tracking
-#QT|- **🎯 Status LED** — GPIO33 LED provides real-time system status feedback
-#TP|- **⏰ NTP Time Sync** — Automatic time synchronization with configurable timezone support
-#BV|- **🎬 AVI Video Recording** — Continuous, timelapse, and dynamic recording modes with segment management
-#MR|- **📡 NAS Upload via WebDAV** — Automatic cloud backup with retry logic and configurable destinations
-#ZB|- **🔍 ONVIF WS-Discovery** — Auto-discovery for NVR integration with Synology/Milestone compatibility
-#YP|- **💬 WebSocket Real-Time Push** — Live status updates for motion, recording, and system events
-#NB|- **📢 Webhook HTTP POST Alerts** — Customizable notifications for motion, recording, and system events
-#KW|- **🔄 Circular Storage Cleanup** — Auto-management when thresholds reached, configurable percentages
-#ZJ|- **🚀 Setup Wizard** — First-time WiFi configuration interface for easy deployment
+## ✨ Features
+
+**Key Features:**
+- MJPEG video streaming (2 client limit)
+- Motion detection with configurable sensitivity
+- SD card storage for photos and recordings
+- Timelapse and burst capture modes
+- Smart Flash Control with LEDC PWM
+- Dual WiFi failover configuration
+- Serial AT command WiFi setup
+- Prometheus metrics endpoint
+- REST API for complete control
 ---
 
 ## 🏗️ Hardware Requirements
@@ -130,22 +122,26 @@ curl -X POST http://DEVICE_IP/api/reset
 #KZ|
 #JY|| Method | Endpoint | Description |
 #SK||--------|----------|-------------|
-#JH|| `GET` | `/api/status` | Device status and sensor data |
-#RY|| `GET` | `/api/config` | Current configuration JSON |
-#PB|| `POST` | `/api/config` | Update configuration |
-#NW|| `POST` | `/api/reset` | Factory reset to defaults |
-#NK|| `POST` | `/api/reboot` | Reboot device |
-#JK|| `GET` | `/capture` | Single JPEG capture |
-#WP|| `GET` | `/stream` | MJPEG video stream |
-#ZZ|| `GET` | `/metrics` | Prometheus metrics |
-#ZS|| `GET` | `/api/files` | List SD card photos |
-#NT|| `GET` | `/api/download?name=xxx.jpg` | Download photo |
-#BK|| `POST` | `/api/upload` | Trigger manual photo upload |
-#QW|| `POST` | `/api/record?action=start|stop` | Recording control (start/stop) |
-#QP|| `GET` | `/api/record` | Recording status and info |
-#QW|| `GET` | `/api/storage` | Storage usage and cleanup status |
-#RP|| `POST` | `/api/nas/test` | Test NAS connection |
-#RP|| `GET` | `/api/nas` | NAS upload status and queue |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/` | Web interface |
+| GET | `/api/status` | System status |
+| GET | `/api/config` | Get configuration |
+| POST | `/api/config` | Update configuration |
+| POST | `/api/reset` | Factory reset |
+| GET | `/api/motion/status` | Motion detection status |
+| POST | `/api/motion/enable` | Enable motion detection |
+| POST | `/api/motion/disable` | Disable motion detection |
+| POST | `/api/recorder/start` | Start video recording |
+| POST | `/api/recorder/stop` | Stop video recording |
+| GET | `/api/recorder/status` | Recording status |
+| GET | `/api/flash` | Flash status |
+| POST | `/api/flash` | Toggle flash on/off |
+| POST | `/api/timelapse/start` | Start timelapse |
+| POST | `/api/timelapse/stop` | Stop timelapse |
+| GET | `/api/timelapse/status` | Timelapse status |
+| GET | `/api/auth` | Verify password |
+| GET | `/metrics` | Prometheus metrics |
 | **cJSON** | Embedded | JSON parsing for API |
 | **LwIP** | Latest | TCP/IP networking stack |
 | **FreeRTOS** | Latest | Real-time operating system |
@@ -153,76 +149,71 @@ curl -X POST http://DEVICE_IP/api/reset
 
 ---
 
-#KX|## 📁 Project Structure
-#HJ|
-#QH|```
-#HR|mibee-cam/
-#VS|├── main/
-#PB|│   ├── main.c              # System entry point (19-step boot sequence)
-#JV|│   ├── camera_driver.c/h   # OV2640 camera driver with DMA optimization
-#BN|│   ├── wifi_manager.c/h    # WiFi AP/STA management with callbacks
-#PT|│   ├── config_manager.c/h  # NVS configuration persistence (v8)
-#BN|│   ├── web_server.c/h      # HTTP server + REST API + SPIFFS
-#SS|│   ├── mjpeg_streamer.c/h  # MJPEG real-time streaming (async)
-#TP|│   ├── storage_manager.c/h # SD card storage with hot-plug detection
-#TZ|│   ├── motion_detect.c/h   # Frame-difference motion detection
-#NP|│   ├── status_led.c/h      # Status LED driver
-#TY|│   ├── time_sync.c/h       # NTP time synchronization
-#RX|│   ├── health_monitor.c/h  # Prometheus metrics collection
-#RV|│   ├── video_recorder.c/h  # AVI video recording (3 modes)
-#TQ|│   ├── frame_broadcaster.c/h # Frame buffer distribution
-#NB|│   ├── nas_uploader.c/h    # NAS upload via WebDAV/HTTP
-#BN|│   ├── webdav_client.c/h   # WebDAV client for cloud sync
-#BN|│   ├── onvif_discovery.c/h # ONVIF WS-Discovery service
-#BN|│   ├── onvif_service.c/h   # ONVIF SOAP service handlers
-#BN|│   ├── webhook.c/h         # HTTP POST event notifications
-#BN|│   ├── ws_server.c/h       # WebSocket real-time push
-#BN|│   ├── sha256.c/h          # SHA256 for file verification
-#BN|│   └── web_ui/            # Responsive web interface assets
-#SP|├── docs/en/               # English documentation
-#ST|├── docs/zh/               # Chinese documentation
-#QM|├── partitions.csv        # Custom partition layout (3.5MB + 448KB SPIFFS)
-#RN|├── sdkconfig.defaults    # SDK configuration defaults
-#PM|├── main/idf_component.yml # External component dependencies
-#BB|└── .github/workflows/    # CI/CD pipeline
-#MY|```
+## 📁 Project Structure
+
+```
+./
+├── main/              # Firmware source code
+│   ├── main.c        # Main application entry
+│   ├── common.h      # Common definitions and config
+│   ├── config_manager.c/h     # NVS configuration management
+│   ├── wifi_manager.c/h       # WiFi management
+│   ├── camera_driver.c/h       # OV2640 camera driver
+│   ├── web_server.c/h         # HTTP server and REST API
+│   ├── mjpeg_streamer.c/h    # MJPEG streaming
+│   ├── storage_manager.c/h   # SD card operations
+│   ├── motion_detect.c/h     # Motion detection
+│   ├── status_led.c/h        # Status LED control
+│   ├── time_sync.c/h         # NTP time sync
+│   ├── health_monitor.c/h   # Prometheus metrics
+│   ├── video_recorder.c/h    # Video recording
+│   ├── timelapse.c/h         # Timelapse capture
+│   ├── flash_led.c/h         # Flash LED control
+│   └── serial_config.c/h    # Serial AT config
+├── main/web_ui/      # Web interface files
+├── docs/             # Documentation
+├── partitions.csv    # Flash partition table
+├── sdkconfig.defaults   # SDK configuration
+└── CMakeLists.txt    # Build configuration
+```
 
 #RX|## 🔄 Boot Sequence
 #NT|
-#SJ|The firmware follows a carefully orchestrated 19-step initialization process:
+#SJ|The firmware follows a carefully orchestrated 16-step initialization process:
 #HN|
 #VS|1. **NVS Flash Initialization** — Configuration storage system
-#ZJ|2. **Configuration Load** — Retrieve persisted settings (version 8)
-#WZ|3. **Status LED Setup** — Initialize GPIO33 system indicator
-#MQ|4. **SPIFFS Mount** — Web UI filesystem preparation
-#HT|5. **WiFi Subsystem** — Network interface initialization
-#WT|6. **WiFi State Registration** — Callback system for connection events
-#HV|7. **Health Monitor** — System metrics collection daemon
-#YN|8. **WiFi Mode Selection** — STA if configured, AP otherwise
-#QB|9. **MJPEG Streamer** — Real-time video server initialization
-#RB|10. **Web Server Start** — HTTP server on port 80 with REST API
-#KP|11. **Time Sync Init** — NTP client (STA mode only)
-#PS|12. **Motion Detection** — Frame monitoring service (STA mode only)
-#NP|13. **Video Recorder Init** — AVI recording system startup
-#RV|14. **WebSocket Server** — Real-time event push service
-#NP|15. **ONVIF Discovery** — NVR auto-discovery service
-#NP|16. **ONVIF Service** — SOAP service handlers
-#NP|17. **WebDAV Client** — Cloud upload system initialization
-#NP|18. **Webhook Service** — HTTP POST notification system
-#NP|19. **NAS Uploader** — Upload queue and retry management
+2. **Configuration Load** — Retrieve persisted settings (version 9)
+3. **Status LED Setup** — Initialize GPIO33 system indicator
+4. **SPIFFS Mount** — Web UI filesystem preparation
+5. **WiFi Subsystem** — Network interface initialization
+6. **WiFi State Registration** — Callback system for connection events
+7. **Health Monitor** — System metrics collection daemon
+8. **WiFi Mode Selection** — STA if configured, AP otherwise
+9. **MJPEG Streamer** — Real-time video server initialization
+10. **Web Server Start** — HTTP server on port 80 with REST API
+11. **Time Sync Init** — NTP client (STA mode only)
+12. **Motion Detection** — Frame monitoring service (STA mode only)
+13. **SD Card Init** — Storage interface initialization
+14. **Video Recorder Init** — Video recording system startup
+15. **Timelapse Init** — Timelapse capture service
+16. **Flash LED Init** — Flash control system initialization
 ---
 
 ## ⚙️ Configuration
 
-All settings are stored in NVS with version 6 schema and accessible via web UI (`/config.html`) or REST API (`GET/POST /api/config`).
+All settings are stored in NVS with version 9 schema and accessible via web UI (`/config.html`) or REST API (`GET/POST /api/config`).
 
 ### Network Configuration
 ```json
 {
-  "ssid": "your_wifi_network",
-  "wifi_pass": "your_password"
+  "wifi_ssid": "your_wifi_network",
+  "wifi_pass": "your_password",
+  "wifi_ssid_2": "backup_network",
+  "wifi_pass_2": "backup_password",
+  "allow_ap_fallback": true,
+  "ap_ssid": "MiBeeCam",
+  "ap_pass": "admin123"
 }
-```
 
 ### Device Settings
 ```json
@@ -291,15 +282,12 @@ All settings are stored in NVS with version 6 schema and accessible via web UI (
 #XH|curl http://DEVICE_IP/capture -o photo.jpg
 #BH|
 #QW|# Start video recording
-#RM|curl -X POST http://DEVICE_IP/api/record?action=start
+#RM|curl -X POST http://DEVICE_IP/api/recorder/start
 #QW|# Stop video recording
-#RM|curl -X POST http://DEVICE_IP/api/record?action=stop
+#RM|curl -X POST http://DEVICE_IP/api/recorder/stop
 #QW|# Check recording status
-#RM|curl http://DEVICE_IP/api/record
-#QW|# Test NAS connection
-#RM|curl -X POST http://DEVICE_IP/api/nas/test
-#QW|# Get NAS upload status
-#RM|curl http://DEVICE_IP/api/nas
+#RM|curl http://DEVICE_IP/api/recorder
+#MM|#MZ
 #MZ|
 
 ### Prometheus Metrics
@@ -326,7 +314,10 @@ Key metrics available:
 
 ## 🔒 Important Notes
 
-- **GPIO0 Critical**: GPIO0 serves as camera XCLK and cannot be repurposed for BOOT button
+- **GPIO14 Critical**: GPIO14 is shared between camera XCLK and SD card CLK. After camera initialization, certain SD card operations become unreliable:
+  - `f_getfree()` and `stat()` operations may hang
+  - `opendir()` may fail
+  - Only basic operations work reliably: `mkdir`, `fopen`, `fwrite`, `fclose`
 - **GPIO14 Sharing**: SD card CLK and camera XCLK share GPIO14 - initialization order is critical
 - **DMA Freeze**: Camera initialization deferred after WiFi STA connection to prevent ESP32 DMA issues
 - **NVS Migration**: Configuration schema includes migration support for field additions
