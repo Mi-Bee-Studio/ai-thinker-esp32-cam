@@ -53,6 +53,25 @@ static void reconnect_timer_cb(TimerHandle_t timer);
 
 // --- Helpers ---
 
+/** @brief Human-readable WiFi disconnect reason for diagnostics */
+static const char *wifi_disconnect_reason_str(uint8_t reason)
+{
+    switch (reason) {
+    case 2:   return "AUTH_EXPIRE";
+    case 15:  return "4WAY_HANDSHAKE_TIMEOUT (likely wrong password)";
+    case 200: return "BEACON_TIMEOUT (weak signal/interference)";
+    case 201: return "NO_AP_FOUND (wrong SSID or out of range)";
+    case 202: return "AUTH_FAIL (wrong password or auth mismatch)";
+    case 203: return "ASSOC_FAIL";
+    case 204: return "HANDSHAKE_TIMEOUT (likely wrong password)";
+    case 205: return "CONNECTION_FAIL";
+    case 210: return "NO_AP_FOUND_W_COMPATIBLE_SECURITY";
+    case 211: return "NO_AP_FOUND_IN_AUTHMODE_THRESHOLD (authmode mismatch)";
+    case 212: return "NO_AP_FOUND_IN_RSSI_THRESHOLD";
+    default:  return "OTHER";
+    }
+}
+
 static void set_state(wifi_state_t new_state)
 {
     if (s_state != new_state) {
@@ -114,8 +133,11 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
             ESP_LOGI(TAG, "STA connected to AP, waiting for IP...");
             break;
 
-        case WIFI_EVENT_STA_DISCONNECTED:
-            ESP_LOGW(TAG, "STA disconnected (retry %d/%d)", s_sta_retry_count + 1, MAX_RETRIES_PER_NETWORK);
+        case WIFI_EVENT_STA_DISCONNECTED: {
+            wifi_event_sta_disconnected_t *disc = (wifi_event_sta_disconnected_t *)event_data;
+            ESP_LOGW(TAG, "STA disconnected reason=%d %s (retry %d/%d)",
+                     disc->reason, wifi_disconnect_reason_str(disc->reason),
+                     s_sta_retry_count + 1, MAX_RETRIES_PER_NETWORK);
             stop_reconnect_timer();
             set_state(WIFI_STATE_STA_DISCONNECTED);
             s_sta_retry_count++;
@@ -143,6 +165,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 
             start_reconnect_timer();
             break;
+        }
 
         case WIFI_EVENT_AP_START:
             ESP_LOGI(TAG, "AP started");
@@ -240,7 +263,9 @@ esp_err_t wifi_start_sta(const char *ssid, const char *pass)
 
     wifi_config_t wifi_config = {
         .sta = {
-            .threshold.authmode = WIFI_AUTH_WPA2_PSK,
+            .threshold.authmode = WIFI_AUTH_OPEN,   /* auto-negotiate WPA2/WPA3/mixed/WPA/OPEN */
+            .pmf_cfg = { .capable = true, .required = false }, /* PMF capable, not required (802.11w) */
+            .sae_pwe_h2e = WPA3_SAE_PWE_BOTH,        /* WPA3 SAE: H2E + hunting-and-pecking */
         },
     };
 
@@ -297,6 +322,14 @@ esp_err_t wifi_start_sta(const char *ssid, const char *pass)
         ESP_LOGW(TAG, "set_ps failed: %s", esp_err_to_name(ret));
     } else {
         ESP_LOGI(TAG, "WiFi power save: %s", cam_cfg->wifi_power_save ? "MIN_MODEM" : "NONE");
+    }
+
+    /* HT20: ~3dB better RX sensitivity than HT40 — critical for weak-signal links */
+    ret = esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW20);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "set_bandwidth HT20 failed: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "WiFi bandwidth: HT20 (weak-signal optimized)");
     }
 
     ESP_LOGI(TAG, "STA starting, connecting to %s", ssid);

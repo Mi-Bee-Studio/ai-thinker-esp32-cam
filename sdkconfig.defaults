@@ -58,3 +58,12 @@ CONFIG_ESP32_DEBUG_OCDAWARE=n
 
 # WebSocket support (for real-time push to browser)
 CONFIG_HTTPD_WS_SUPPORT=y
+
+# WiFi PHY - force full RF calibration every boot
+# Board RF link is marginal (distance + antenna); stored partial calibration is unreliable.
+# See: esp_phy/Kconfig ESP_PHY_CALIBRATION_AND_DATA_STORAGE help (case 2)
+CONFIG_ESP_PHY_RF_CAL_FULL=y
+CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE=n
+
+# Increase esp_timer task stack (default 3584 too small — stack overflow on WiFi reconnect stress)
+CONFIG_ESP_TIMER_TASK_STACK_SIZE=6144

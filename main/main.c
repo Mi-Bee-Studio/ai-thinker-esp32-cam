@@ -436,7 +436,7 @@ void app_main(void)
         }
 
         /* Background cache warm-up so first /api/files call is fast */
-        xTaskCreate(storage_warm_cache_task, "warm_cache", 4096, NULL, 1, NULL);
+        xTaskCreate(storage_warm_cache_task, "warm_cache", 8192, NULL, 1, NULL);
     }
 
     /* Step 15/19: NAS uploader removed */

@@ -414,7 +414,7 @@ esp_err_t config_set_timezone(const char *tz)
     return config_save();
 }
 
-#YP|/* ── New feature setters (recording, cleanup) ── */
+/* ── New feature setters (recording, cleanup) ── */
 
 esp_err_t config_set_recording(uint8_t mode, uint16_t segment_sec, uint8_t frame_drop)
 {
@@ -452,8 +452,11 @@ esp_err_t config_load_from_sd(void)
     char line[128];
     char new_ssid[33] = {0};
     char new_pass[65] = {0};
+    char new_ssid_2[33] = {0};
+    char new_pass_2[65] = {0};
     bool ssid_found = false;
     bool pass_found = false;
+    bool ssid2_found = false;
 
     fp = fopen("/sdcard/config.txt", "r");
     if (!fp) {
@@ -482,6 +485,11 @@ esp_err_t config_load_from_sd(void)
         } else if (strcmp(key, "wifi.password") == 0) {
             strncpy(new_pass, value, sizeof(new_pass) - 1);
             pass_found = true;
+        } else if (strcmp(key, "wifi2.ssid") == 0) {
+            strncpy(new_ssid_2, value, sizeof(new_ssid_2) - 1);
+            ssid2_found = true;
+        } else if (strcmp(key, "wifi2.password") == 0) {
+            strncpy(new_pass_2, value, sizeof(new_pass_2) - 1);
         }
     }
     fclose(fp);
@@ -493,14 +501,20 @@ esp_err_t config_load_from_sd(void)
 
     // Skip if unchanged
     if (strcmp(new_ssid, s_config.wifi_ssid) == 0 &&
-        strcmp(new_pass, s_config.wifi_pass) == 0) {
+        strcmp(new_pass, s_config.wifi_pass) == 0 &&
+        strcmp(new_ssid_2, s_config.wifi_ssid_2) == 0 &&
+        strcmp(new_pass_2, s_config.wifi_pass_2) == 0) {
         ESP_LOGI(TAG, "WiFi config unchanged");
         return ESP_ERR_NOT_FOUND;
     }
 
-    ESP_LOGI(TAG, "WiFi from SD: ssid='%s'", new_ssid);
+    ESP_LOGI(TAG, "WiFi from SD: ssid='%s' ssid_2='%s'", new_ssid, new_ssid_2);
     esp_err_t ret = config_set_wifi(new_ssid, new_pass);
     if (ret != ESP_OK) return ret;
+
+    if (ssid2_found) {
+        config_set_wifi_secondary(new_ssid_2, new_pass_2);
+    }
 
     ESP_LOGI(TAG, "WiFi config saved to NVS (SD config preserved)");
     return ESP_OK;
