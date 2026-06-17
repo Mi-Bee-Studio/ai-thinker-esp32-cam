@@ -1,6 +1,6 @@
 # Contributing
 
-[![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/mibee-cam/release.yml?branch=main)](https://github.com/Mi-Bee-Studio/mibee-cam/actions) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Platform: ESP32](https://img.shields.io/badge/Platform-ESP32-blue.svg)](https://www.espressif.com/en/products/socs/esp32) [![Version: ESP-IDF 6.0.1](https://img.shields.io/badge/ESP--IDF-6.0.1-green.svg)](https://github.com/espressif/esp-idf)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/ai-thinker-esp32-cam/release.yml?branch=main)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/actions) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Platform: ESP32](https://img.shields.io/badge/Platform-ESP32-blue.svg)](https://www.espressif.com/en/products/socs/esp32) [![Version: ESP-IDF 6.0.1](https://img.shields.io/badge/ESP--IDF-6.0.1-green.svg)](https://github.com/espressif/esp-idf)
 
 
 Thank you for your interest in contributing to the MiBee Cam firmware project! We welcome contributions from developers worldwide to help improve this ESP32-based camera firmware solution.

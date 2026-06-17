@@ -1,4 +1,3 @@
-<!-- OMO_INTERNAL_INITIATOR -->
 <p align="center">
   <img src="https://img.shields.io/badge/ESP32--CAM-Firmware-blue?style=for-the-badge&logo=esp32&logoColor=white" alt="ESP32-CAM Firmware">
   <img src="https://img.shields.io/badge/ESP--IDF-v6.0.1-green?style=for-the-badge&logo=espressif&logoColor=white" alt="ESP-IDF v6.0.1">
@@ -9,8 +8,8 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-Production--Ready-brightgreen?style=for-the-badge" alt="Production Ready">
-  <img src="https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/mibee-cam/release.yml?style=for-the-badge&logo=github&logoColor=white" alt="Build Status">
-  <img src="https://img.shields.io/github/release/Mi-Bee-Studio/mibee-cam?style=for-the-badge&logo=github&logoColor=white" alt="Latest Release">
+  <img src="https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/ai-thinker-esp32-cam/release.yml?style=for-the-badge&logo=github&logoColor=white" alt="Build Status">
+  <img src="https://img.shields.io/github/release/Mi-Bee-Studio/ai-thinker-esp32-cam?style=for-the-badge&logo=github&logoColor=white" alt="Latest Release">
 </p>
 
 <h1 align="center">MiBee Cam Firmware</h1>
@@ -37,6 +36,7 @@
 - Serial AT command WiFi setup
 - Prometheus metrics endpoint
 - REST API for complete control
+
 ---
 
 ## 🏗️ Hardware Requirements
@@ -85,8 +85,8 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/Mi-Bee-Studio/mibee-cam.git
-cd mibee-cam
+git clone https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam.git
+cd ai-thinker-esp32-cam
 
 # Configure ESP-IDF environment
 export IDF_PATH=~/.espressif/v6.0.1/esp-idf
@@ -118,10 +118,8 @@ curl -X POST http://DEVICE_IP/api/reset
 
 ---
 
-#HQ|## 🌐 REST API
-#KZ|
-#JY|| Method | Endpoint | Description |
-#SK||--------|----------|-------------|
+## 🌐 REST API
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/` | Web interface |
@@ -129,74 +127,82 @@ curl -X POST http://DEVICE_IP/api/reset
 | GET | `/api/config` | Get configuration |
 | POST | `/api/config` | Update configuration |
 | POST | `/api/reset` | Factory reset |
+| POST | `/api/reboot` | Reboot device |
+| GET | `/capture` | Single JPEG photo |
+| GET | `/stream` | MJPEG live stream |
+| GET | `/metrics` | Prometheus metrics |
+| GET | `/api/files` | List SD card photos |
+| GET | `/api/download?name=xxx` | Download photo |
+| POST | `/api/record?action=start\|stop` | Recording control |
+| GET | `/api/record` | Recording status |
+| GET | `/api/storage` | Storage usage |
 | GET | `/api/motion/status` | Motion detection status |
 | POST | `/api/motion/enable` | Enable motion detection |
 | POST | `/api/motion/disable` | Disable motion detection |
-| POST | `/api/recorder/start` | Start video recording |
-| POST | `/api/recorder/stop` | Stop video recording |
-| GET | `/api/recorder/status` | Recording status |
 | GET | `/api/flash` | Flash status |
 | POST | `/api/flash` | Toggle flash on/off |
 | POST | `/api/timelapse/start` | Start timelapse |
 | POST | `/api/timelapse/stop` | Stop timelapse |
 | GET | `/api/timelapse/status` | Timelapse status |
 | GET | `/api/auth` | Verify password |
-| GET | `/metrics` | Prometheus metrics |
-| **cJSON** | Embedded | JSON parsing for API |
-| **LwIP** | Latest | TCP/IP networking stack |
-| **FreeRTOS** | Latest | Real-time operating system |
-| **Prometheus** | Latest | Metrics collection endpoint |
 
 ---
 
 ## 📁 Project Structure
 
 ```
-./
-├── main/              # Firmware source code
-│   ├── main.c        # Main application entry
-│   ├── common.h      # Common definitions and config
-│   ├── config_manager.c/h     # NVS configuration management
-│   ├── wifi_manager.c/h       # WiFi management
-│   ├── camera_driver.c/h       # OV2640 camera driver
-│   ├── web_server.c/h         # HTTP server and REST API
-│   ├── mjpeg_streamer.c/h    # MJPEG streaming
-│   ├── storage_manager.c/h   # SD card operations
-│   ├── motion_detect.c/h     # Motion detection
-│   ├── status_led.c/h        # Status LED control
-│   ├── time_sync.c/h         # NTP time sync
-│   ├── health_monitor.c/h   # Prometheus metrics
-│   ├── video_recorder.c/h    # Video recording
-│   ├── timelapse.c/h         # Timelapse capture
-│   ├── flash_led.c/h         # Flash LED control
-│   └── serial_config.c/h    # Serial AT config
-├── main/web_ui/      # Web interface files
-├── docs/             # Documentation
-├── partitions.csv    # Flash partition table
-├── sdkconfig.defaults   # SDK configuration
-└── CMakeLists.txt    # Build configuration
+ai-thinker-esp32-cam/
+├── main/
+│   ├── main.c              # System entry, 19-step boot sequence
+│   ├── common.h            # Pin mappings, cam_config_t, enums
+│   ├── camera_driver.c/h   # OV2640 camera driver (DMA optimized)
+│   ├── wifi_manager.c/h    # WiFi AP/STA management (callbacks)
+│   ├── config_manager.c/h  # NVS config persistence (version 9)
+│   ├── web_server.c/h      # HTTP server + REST API + SPIFFS
+│   ├── mjpeg_streamer.c/h  # MJPEG real-time streaming (async)
+│   ├── storage_manager.c/h # SD card storage (hot-plug detect)
+│   ├── motion_detect.c/h   # Motion detection (frame diff)
+│   ├── status_led.c/h      # Status LED driver
+│   ├── time_sync.c/h       # NTP time synchronization
+│   ├── health_monitor.c/h  # Prometheus metrics collection
+│   ├── video_recorder.c/h  # AVI video recording (3 modes)
+│   ├── timelapse.c/h       # Timelapse capture
+│   ├── flash_led.c/h       # Flash LED control (PWM)
+│   ├── serial_config.c/h   # Serial AT command config
+│   └── web_ui/             # Web interface files
+├── docs/                   # Documentation (en + zh)
+├── partitions.csv          # Flash partition table
+├── sdkconfig.defaults      # SDK configuration
+├── main/idf_component.yml  # Component dependencies
+└── CMakeLists.txt          # Build configuration
 ```
 
-#RX|## 🔄 Boot Sequence
-#NT|
-#SJ|The firmware follows a carefully orchestrated 16-step initialization process:
-#HN|
-#VS|1. **NVS Flash Initialization** — Configuration storage system
-2. **Configuration Load** — Retrieve persisted settings (version 9)
-3. **Status LED Setup** — Initialize GPIO33 system indicator
+---
+
+## 🔄 Boot Sequence
+
+The firmware follows a **19-step** initialization process. Steps marked *(deferred)* are executed in the deferred STA services task after WiFi connects.
+
+1. **NVS Flash Init** — Configuration storage system
+2. **Config Load** — Retrieve persisted settings (version 9)
+3. **Status LED** — Initialize GPIO33 system indicator
 4. **SPIFFS Mount** — Web UI filesystem preparation
-5. **WiFi Subsystem** — Network interface initialization
-6. **WiFi State Registration** — Callback system for connection events
-7. **Health Monitor** — System metrics collection daemon
-8. **WiFi Mode Selection** — STA if configured, AP otherwise
-9. **MJPEG Streamer** — Real-time video server initialization
-10. **Web Server Start** — HTTP server on port 80 with REST API
-11. **Time Sync Init** — NTP client (STA mode only)
-12. **Motion Detection** — Frame monitoring service (STA mode only)
-13. **SD Card Init** — Storage interface initialization
-14. **Video Recorder Init** — Video recording system startup
-15. **Timelapse Init** — Timelapse capture service
-16. **Flash LED Init** — Flash control system initialization
+5. **SD SPI Bus Release** — Free GPIO14 for camera/WiFi init
+6. **WiFi Subsystem** — Network interface and event loop
+7. **WiFi Callback** — Connection state change registration
+8. **Health Monitor** — System metrics collection daemon
+9. **WiFi Mode Selection** — STA if configured, AP otherwise
+10. **MJPEG Streamer** — Video server init *(deferred to WiFi connect)*
+11. **Time Sync** — NTP client *(deferred to WiFi connect)*
+12. **Web Server** — HTTP server on port 80 with REST API
+13. **Motion Detection** — Frame monitoring service *(deferred to WiFi connect)*
+14. **SD Card Init** — Storage interface (after camera, GPIO14 conflict)
+15. **Serial Config** — AT command interface over UART
+16. **NAS Uploader** — *Removed (not implemented)*
+17. **Boot Button** — *Disabled (GPIO0 = camera XCLK)*
+18. **Video Recorder** — AVI recording system *(deferred STA services)*
+19. **Timelapse & Flash LED** — Capture service + PWM flash *(deferred STA services)*
+
 ---
 
 ## ⚙️ Configuration
@@ -212,8 +218,9 @@ All settings are stored in NVS with version 9 schema and accessible via web UI (
   "wifi_pass_2": "backup_password",
   "allow_ap_fallback": true,
   "ap_ssid": "MiBeeCam",
-  "ap_pass": "admin123"
+  "ap_pass": "12345678"
 }
+```
 
 ### Device Settings
 ```json
@@ -226,24 +233,26 @@ All settings are stored in NVS with version 9 schema and accessible via web UI (
 ### Camera Configuration
 ```json
 {
-  "resolution": 6,        // 5=VGA, 6=SVGA, 7=XGA, 8=UXGA
-  "quality": 10          // JPEG quality 1-63 (lower=better)
+  "resolution": 6,
+  "quality": 10
 }
 ```
+- **Resolution**: 5=VGA, 6=SVGA (default), 7=XGA, 8=UXGA
+- **Quality**: JPEG 1-63 (lower = better, default: 10)
 
 ### Motion Detection
 ```json
 {
   "motion_enabled": true,
-  "motion_threshold": 30,    // 1-100 (higher=less sensitive)
-  "motion_cooldown": 5       // 1-60 seconds
+  "motion_threshold": 30,
+  "motion_cooldown": 5
 }
 ```
 
 ### Flash Control
 ```json
 {
-  "flash_threshold": 40      // 0-100 (brightness% for trigger)
+  "flash_threshold": 40
 }
 ```
 - **0** = Flash disabled
@@ -253,7 +262,7 @@ All settings are stored in NVS with version 9 schema and accessible via web UI (
 ### System Configuration
 ```json
 {
-  "timezone": "CST-8"     // Timezone string (e.g., "EST5EDT")
+  "timezone": "CST-8"
 }
 ```
 
@@ -261,34 +270,33 @@ All settings are stored in NVS with version 9 schema and accessible via web UI (
 
 ## 💡 Usage Examples
 
-### API Interaction
+```bash
+# Read current configuration
+curl http://DEVICE_IP/api/config
 
-#BV|```bash
-#MY|# Read current configuration
-#WP|curl http://DEVICE_IP/api/config
-#NB|
-#NK|# Adjust flash sensitivity
-#QQ|curl -X POST http://DEVICE_IP/api config \
-#TM|  -H 'Content-Type: application/json' \
-#XP|  -d '{"flash_threshold":60}'
-#RS|
-#QW|# Check system status
-#VV|curl http://DEVICE_IP/api/status | jq '.data'
-#QB|
-#BM|# Monitor brightness levels
-#HJ|curl http://DEVICE_IP/metrics | grep brightness
-#XR|
-#PW|# Capture single photo
-#XH|curl http://DEVICE_IP/capture -o photo.jpg
-#BH|
-#QW|# Start video recording
-#RM|curl -X POST http://DEVICE_IP/api/recorder/start
-#QW|# Stop video recording
-#RM|curl -X POST http://DEVICE_IP/api/recorder/stop
-#QW|# Check recording status
-#RM|curl http://DEVICE_IP/api/recorder
-#MM|#MZ
-#MZ|
+# Adjust flash sensitivity
+curl -X POST http://DEVICE_IP/api/config \
+  -H 'Content-Type: application/json' \
+  -d '{"flash_threshold":60}'
+
+# Check system status
+curl http://DEVICE_IP/api/status | jq '.data'
+
+# Monitor brightness levels
+curl http://DEVICE_IP/metrics | grep brightness
+
+# Capture single photo
+curl http://DEVICE_IP/capture -o photo.jpg
+
+# Start video recording
+curl -X POST "http://DEVICE_IP/api/record?action=start"
+
+# Stop video recording
+curl -X POST "http://DEVICE_IP/api/record?action=stop"
+
+# Check recording status
+curl http://DEVICE_IP/api/record
+```
 
 ### Prometheus Metrics
 
@@ -318,10 +326,10 @@ Key metrics available:
   - `f_getfree()` and `stat()` operations may hang
   - `opendir()` may fail
   - Only basic operations work reliably: `mkdir`, `fopen`, `fwrite`, `fclose`
-- **GPIO14 Sharing**: SD card CLK and camera XCLK share GPIO14 - initialization order is critical
-- **DMA Freeze**: Camera initialization deferred after WiFi STA connection to prevent ESP32 DMA issues
-- **NVS Migration**: Configuration schema includes migration support for field additions
+- **DMA Freeze**: Camera initialization deferred after WiFi STA connection to prevent ESP32 DMA freeze (esp32-camera#620)
+- **WiFi RF**: Board has marginal WiFi RF (PCB antenna). Full RF calibration forced every boot (`CONFIG_ESP_PHY_RF_CAL_FULL=y`). If WiFi won't connect, erase phy_init partition: `esptool.py erase_region 0xf000 0x1000`
 - **PSRAM Required**: 8MB PSRAM is mandatory for camera frame buffer allocation
+- **No OTA**: Single factory partition. Firmware updates via serial flash only
 
 ---
 
