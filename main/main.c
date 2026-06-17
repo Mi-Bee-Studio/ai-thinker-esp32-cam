@@ -30,6 +30,8 @@
 #include "timelapse.h"
 #include "video_recorder.h"
 #include "serial_config.h"
+#include "onvif_discovery.h"
+#include "onvif_service.h"
 
 static const char *TAG = "main";
 
@@ -140,6 +142,10 @@ static void sta_services_task(void *arg)
             ESP_LOGE(TAG, "Web server start failed: %s", esp_err_to_name(ret));
         }
     }
+
+    /* Start ONVIF WS-Discovery (once) — after web server so SOAP handlers are registered */
+    onvif_discovery_init();
+    ESP_LOGI(TAG, "ONVIF discovery started");
 
     /* Start motion detection (once) */
     if (!s_motion_started) {

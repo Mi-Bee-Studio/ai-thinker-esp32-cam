@@ -16,6 +16,8 @@ idf_component_register(
         "cJSON.c"
         "video_recorder.c"
         "serial_config.c"
+        "onvif_discovery.c"
+        "onvif_service.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi

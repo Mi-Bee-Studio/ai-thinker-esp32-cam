@@ -37,6 +37,7 @@
 #include "esp_spiffs.h"
 
 #include "video_recorder.h"
+#include "onvif_service.h"
 
 #define FIRMWARE_VERSION "v1.0"
 
@@ -1171,6 +1172,9 @@ esp_err_t web_server_start(uint16_t port)
 
     /* Register /stream and WebSocket BEFORE wildcards (wildcard would block them) */
     mjpeg_streamer_register(s_server);
+
+    /* Register ONVIF SOAP service handlers */
+    onvif_register_handlers(s_server);
 
     /* Now register wildcard handlers */
     for (size_t i = 0; i < NUM_URIS; i++) {
