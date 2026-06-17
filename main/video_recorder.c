@@ -558,9 +558,6 @@ static void recording_task(void *arg)
             continue;
         }
 
-        /* Publish frame to streamer subscribers (RTSP, MJPEG) */
-        fbroadcast_publish(jpeg_data, jpeg_data_len);
-
         /* Smart frame dropping: skip write if cycle exceeds threshold.
          * NOTE: For dynamic timelapse (record_mode==2), use higher threshold (2000ms). */
         int64_t drop_threshold_us = (record_mode == 2) ? 2000000 : 500000;

@@ -76,12 +76,11 @@ static void process_at_command(char *line)
         printf("{\"device\":\"%s\",\"ssid\":\"%s\",\"pass_set\":%s,"
                "\"resolution\":%d,\"fps\":%d,\"quality\":%d,"
                "\"motion_threshold\":%d,\"record_mode\":%d,"
-               "timezone":"%s","version":%lu}\
-OK\r\n",
+               "\"timezone\":\"%s\",\"version\":%lu}"
+               "\r\nOK\r\n",
                c->device_name, c->wifi_ssid, c->wifi_pass[0] ? "true" : "false",
                c->resolution, c->fps, c->jpeg_quality,
                c->motion_threshold, c->record_mode,
-               c->timezone, (unsigned long)c->version);
                c->timezone, (unsigned long)c->version);
         return;
     }
