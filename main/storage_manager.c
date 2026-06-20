@@ -399,6 +399,12 @@ static void storage_rebuild_cache(void)
     for (int i = 0; i < s_file_cache_count; i++) {
         s_file_cache[i] = temp_files[i];
     }
+
+    /* Rebuild running byte total from cached file sizes */
+    s_total_recording_bytes = 0;
+    for (int i = 0; i < s_file_cache_count; i++) {
+        s_total_recording_bytes += s_file_cache[i].size;
+    }
     /* Mutex released by caller (storage_init) */
 
     free(temp_files);
@@ -598,6 +604,11 @@ esp_err_t storage_save_photo(camera_fb_t *fb, const char *filename)
         return ESP_ERR_INVALID_STATE;
     }
 
+    if (!config_get()->save_to_sd) {
+        ESP_LOGI(TAG, "SD write disabled by config, skipping photo");
+        return ESP_OK;
+    }
+
     /* Note: s_mutex intentionally NOT taken here. The timelapse task is the
      * sole caller in dynamic mode (motion_detect is stopped). Taking s_mutex
      * causes unexplained contention with other tasks that call f_getfree
@@ -783,12 +794,25 @@ esp_err_t storage_delete_photo(const char *name)
     return ESP_OK;
 }
 
+/* Cached usage estimate: recording bytes vs cached SD total.
+ * Avoids f_getfree() which is unreliable after camera init (GPIO14 SPI conflict).
+ * Returns UINT8_MAX if the cache is unavailable, so callers can fall back. */
+static uint8_t get_cached_usage_pct(void)
+{
+    if (s_cached_total_mb == 0) {
+        return UINT8_MAX;
+    }
+    uint64_t total_bytes = (uint64_t)s_cached_total_mb * 1024 * 1024;
+    return (uint8_t)(s_total_recording_bytes * 100 / total_bytes);
+}
+
 esp_err_t storage_cleanup(void)
 {
     if (!s_mounted) return ESP_ERR_INVALID_STATE;
 
     const cam_config_t *cfg = config_get();
-    uint8_t usage = storage_get_usage_pct();
+    uint8_t usage = get_cached_usage_pct();
+    if (usage == UINT8_MAX) usage = storage_get_usage_pct();
 
     ESP_LOGI(TAG, "Storage usage: %d%% (cleanup threshold: %d%%)", usage, cfg->cleanup_low_pct);
 
@@ -800,7 +824,8 @@ esp_err_t storage_cleanup(void)
 
     int deleted = 0;
     while (true) {
-        usage = storage_get_usage_pct();
+        usage = get_cached_usage_pct();
+        if (usage == UINT8_MAX) usage = storage_get_usage_pct();
         if (usage < cfg->cleanup_high_pct) break;
 
         /* Find and delete oldest recording file from cache */
@@ -842,6 +867,7 @@ esp_err_t storage_cleanup(void)
             const char *rel = oldest_path + strlen(RECORDINGS_PATH) + 1;
             for (int i = 0; i < s_file_cache_count; i++) {
                 if (strcmp(s_file_cache[i].name, rel) == 0) {
+                    s_total_recording_bytes -= s_file_cache[i].size;
                     for (int j = i; j < s_file_cache_count - 1; j++) {
                         s_file_cache[j] = s_file_cache[j + 1];
                     }
@@ -858,7 +884,8 @@ esp_err_t storage_cleanup(void)
         if (deleted > 200) break;  /* Safety limit */
     }
 
-    uint8_t new_usage = storage_get_usage_pct();
+    uint8_t new_usage = get_cached_usage_pct();
+    if (new_usage == UINT8_MAX) new_usage = storage_get_usage_pct();
     ESP_LOGI(TAG, "Cleanup done: deleted %d files, usage now %d%%", deleted, new_usage);
     return ESP_OK;
 }
@@ -886,12 +913,10 @@ uint32_t storage_get_free_space(void)
 
 uint32_t storage_get_photo_count(void)
 {
-    if (!s_mounted) return 0;
-
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
-    uint32_t count = count_photos_recursive(PHOTOS_BASE_PATH);
-    xSemaphoreGive(s_mutex);
-    return count;
+    /* Note: Do NOT call count_photos_recursive() here — it uses opendir()
+     * which hangs after camera init (GPIO14 SPI conflict). The health monitor
+     * thread would deadlock and stop updating ALL metrics. Return 0 (safe). */
+    return 0;
 }
 
 uint32_t storage_get_total_space(void)
@@ -990,6 +1015,7 @@ void storage_register_file(const char *filepath, uint32_t size)
     strncpy(s_file_cache[idx].name, relpath, sizeof(s_file_cache[idx].name) - 1);
     s_file_cache[idx].name[sizeof(s_file_cache[idx].name) - 1] = '\0';
     s_file_cache[idx].size = size;
+    s_total_recording_bytes += size;
     s_file_cache[idx].time_str[0] = '\0';
 
     xSemaphoreGive(s_mutex);
@@ -1070,12 +1096,20 @@ static void cache_sd_total_mb(void)
     DWORD free_clusters = 0;
     FATFS *fs = NULL;
     FRESULT res = f_getfree("0:", &free_clusters, &fs);
-    if (res != FR_OK || !fs) {
+    if (res == FR_OK && fs) {
+        uint64_t total_sectors = (uint64_t)(fs->n_fatent - 2) * fs->csize;
+        uint64_t sector_size = (uint64_t)fs->ssize;
+        s_cached_total_mb = (uint32_t)(total_sectors * sector_size / (1024 * 1024));
+    } else if (s_card) {
+        /* f_getfree unreliable after camera init (GPIO14 conflict) —
+         * fall back to SDMMC hardware-reported capacity from CSD register */
+        s_cached_total_mb = (uint32_t)(((uint64_t)s_card->csd.capacity *
+                                         s_card->csd.sector_size) / (1024 * 1024));
+    } else {
         s_cached_total_mb = 0;
-        return;
     }
-    uint64_t total_sectors = (uint64_t)(fs->n_fatent - 2) * fs->csize;
-    uint64_t sector_size = (uint64_t)fs->ssize;
-    uint64_t total_bytes = total_sectors * sector_size;
-    s_cached_total_mb = (uint32_t)(total_bytes / (1024 * 1024));
+    ESP_LOGI(TAG, "Cached SD total: %luMB (f_getfree %s, %s)",
+             (unsigned long)s_cached_total_mb,
+             res == FR_OK ? "ok" : "fail",
+             s_card ? "hw" : "no-card");
 }
