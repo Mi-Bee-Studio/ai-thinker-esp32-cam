@@ -18,6 +18,8 @@ idf_component_register(
         "serial_config.c"
         "onvif_discovery.c"
         "onvif_service.c"
+        "frame_broker.c"
+        "sd_logger.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi

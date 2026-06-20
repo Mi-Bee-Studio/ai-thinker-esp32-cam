@@ -6,7 +6,7 @@
 #include "esp_err.h"
 
 // Config version and magic
-#define CONFIG_VERSION  9
+#define CONFIG_VERSION  12
 #define CONFIG_MAGIC    0xA5B6C7D8
 
 // Default values
@@ -113,6 +113,11 @@ typedef struct {
     char     wifi_ssid_2[33];         /* secondary WiFi SSID (empty = disabled) */
     char     wifi_pass_2[65];         /* secondary WiFi password */
     uint8_t  allow_ap_fallback;       /* 1=fall back to AP mode if STA fails, 0=keep retrying */
+    /* V10: SD card write enable */
+    uint8_t  save_to_sd;              /* 1=save photos/recordings (default), 0=NVR-only no writes */
+    /* V11: SD card error logging */
+    uint8_t  sd_log_enabled;          /* 1=log severe errors+WiFi anomalies to SD (default), 0=disabled */
+    uint16_t wifi_reconnect_hours;   /* periodic WiFi reconnect interval (0=disabled, default 24) */
     uint32_t magic;
     uint32_t version;
 } cam_config_t;

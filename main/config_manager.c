@@ -45,6 +45,11 @@ static void apply_defaults(cam_config_t *cfg)
     memset(cfg->wifi_ssid_2, 0, sizeof(cfg->wifi_ssid_2));
     memset(cfg->wifi_pass_2, 0, sizeof(cfg->wifi_pass_2));
     cfg->allow_ap_fallback = 1;
+    /* V10: SD card write enable */
+    cfg->save_to_sd = 1;
+    /* V11: SD card error logging (default ON) */
+    cfg->sd_log_enabled = 1;
+    cfg->wifi_reconnect_hours = 24;  /* periodic reconnect: default every 24h */
     cfg->magic = CONFIG_MAGIC;
     cfg->version = CONFIG_VERSION;
 }
@@ -128,6 +133,18 @@ esp_err_t config_init(void)
                             memset(s_config.wifi_pass_2, 0, sizeof(s_config.wifi_pass_2));
                             s_config.allow_ap_fallback = 1;
                         }
+                        /* V9→V10: SD card write enable */
+                        if (s_config.version <= 9) {
+                            s_config.save_to_sd = 1;
+                        }
+                        /* V10→V11: SD card error logging */
+                        if (s_config.version <= 10) {
+                            s_config.sd_log_enabled = 1;
+                        }
+                        /* V11→V12: periodic WiFi reconnect */
+                        if (s_config.version <= 11) {
+                            s_config.wifi_reconnect_hours = 24;
+                        }
                         ESP_LOGI(TAG, "Config migrated V%d->V%d (blob %u->%u), saving",
                                  s_config.version, CONFIG_VERSION, (unsigned)cur_len, (unsigned)sizeof(cam_config_t));
                         config_save();
@@ -162,6 +179,17 @@ esp_err_t config_init(void)
             memset(s_config.wifi_ssid_2, 0, sizeof(s_config.wifi_ssid_2));
             memset(s_config.wifi_pass_2, 0, sizeof(s_config.wifi_pass_2));
             s_config.allow_ap_fallback = 1;
+        }
+        if (s_config.version <= 9) {
+            s_config.save_to_sd = 1;
+        }
+        /* V10→V11: SD card error logging */
+        if (s_config.version <= 10) {
+            s_config.sd_log_enabled = 1;
+        }
+        /* V11→V12: periodic WiFi reconnect */
+        if (s_config.version <= 11) {
+            s_config.wifi_reconnect_hours = 24;
         }
         ESP_LOGI(TAG, "Config migrated V%d->V%d (same-size blob), saving",
                  s_config.version, CONFIG_VERSION);
@@ -376,6 +404,27 @@ esp_err_t config_set_flash_threshold(uint8_t threshold)
 {
     s_config.flash_threshold = threshold;
     ESP_LOGI(TAG, "Flash threshold set to %u", threshold);
+    return config_save();
+}
+
+esp_err_t config_set_save_to_sd(uint8_t enabled)
+{
+    s_config.save_to_sd = enabled ? 1 : 0;
+    ESP_LOGI(TAG, "SD card write %s", s_config.save_to_sd ? "enabled" : "disabled");
+    return config_save();
+}
+
+esp_err_t config_set_sd_log_enabled(uint8_t enabled)
+{
+    s_config.sd_log_enabled = enabled ? 1 : 0;
+    ESP_LOGI(TAG, "SD error logging %s", s_config.sd_log_enabled ? "enabled" : "disabled");
+    return config_save();
+}
+
+esp_err_t config_set_wifi_reconnect_interval(uint16_t hours)
+{
+    s_config.wifi_reconnect_hours = hours;
+    ESP_LOGI(TAG, "WiFi periodic reconnect set to %u hours", hours);
     return config_save();
 }
 

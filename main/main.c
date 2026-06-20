@@ -32,6 +32,8 @@
 #include "serial_config.h"
 #include "onvif_discovery.h"
 #include "onvif_service.h"
+#include "frame_broker.h"
+#include "sd_logger.h"
 
 static const char *TAG = "main";
 
@@ -91,6 +93,13 @@ static void sta_services_task(void *arg)
                 camera_deinit();
                 vTaskDelay(pdMS_TO_TICKS(500));
             }
+        }
+    }
+
+    if (camera_is_initialized()) {
+        esp_err_t fb_ret = frame_broker_init();
+        if (fb_ret == ESP_OK) {
+            ESP_LOGI(TAG, "Frame broker started");
         }
     }
 
@@ -320,6 +329,12 @@ void app_main(void)
         ESP_LOGI(TAG, "=== Step 8/19: Health monitor initialized ===");
     }
 
+    /* Step 8.5/19: SD logger init */
+    ret = sd_logger_init();
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "=== Step 8.5: SD logger initialized ===");
+    }
+
     /* Step 9/19: WiFi mode selection (STA or AP) */
     const cam_config_t *cfg = config_get();
     bool has_wifi = cfg->wifi_ssid[0] != '\0' && cfg->wifi_pass[0] != '\0';
@@ -355,6 +370,10 @@ void app_main(void)
                 cam_cfg->fps, cam_cfg->jpeg_quality);
             if (cam_ret == ESP_OK) {
                 ESP_LOGI(TAG, "Camera initialized (AP mode)");
+                esp_err_t fb_ret = frame_broker_init();
+                if (fb_ret == ESP_OK) {
+                    ESP_LOGI(TAG, "Frame broker started (AP mode)");
+                }
             } else {
                 ESP_LOGW(TAG, "Camera init failed in AP mode: %s", esp_err_to_name(cam_ret));
             }

@@ -120,6 +120,24 @@ esp_err_t config_set_recording(uint8_t mode, uint16_t segment_sec, uint8_t frame
 esp_err_t config_set_cleanup(uint8_t low_pct, uint8_t high_pct);
 
 /**
+ * @brief Set SD card write enable, save immediately
+ * @param enabled 1=enable writes (save photos+recordings), 0=NVR-only
+ */
+esp_err_t config_set_save_to_sd(uint8_t enabled);
+
+/**
+ * @brief Set SD card error logging enable, save immediately
+ * @param enabled 1=log severe errors+WiFi anomalies to SD, 0=disabled
+ */
+esp_err_t config_set_sd_log_enabled(uint8_t enabled);
+
+/**
+ * @brief Set periodic WiFi reconnect interval, save immediately
+ * @param hours Reconnect interval in hours (0=disabled, default 24)
+ */
+esp_err_t config_set_wifi_reconnect_interval(uint16_t hours);
+
+/**
  * @brief Load WiFi config from /sdcard/config.txt (key=value format)
  * Parses ssid and password, updates NVS if changed.
  * The config file is preserved on SD card for persistent use.
