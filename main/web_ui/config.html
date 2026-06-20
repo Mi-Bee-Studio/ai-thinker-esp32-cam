@@ -78,6 +78,17 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 <div class="fld" style="font-size:12px;color:var(--t2)">范围 2~20dBm，外置天线建议 20dBm</div>
 <div class="chk-r" style="margin-top:8px"><input type="checkbox" id="wifi_power_save"><label for="wifi_power_save">启用WiFi省电模式</label></div>
 <div class="fld" style="font-size:12px;color:var(--t2)">关闭可降低视频流延迟，建议常供电设备关闭</div>
+<div class="fld" style="margin-top:8px"><label>定期重连 (小时)</label>
+<select id="wifi_reconnect_hours">
+<option value="0">关闭</option>
+<option value="1">1 小时</option>
+<option value="4">4 小时</option>
+<option value="12">12 小时</option>
+<option value="24" selected>24 小时</option>
+<option value="48">48 小时</option>
+<option value="168">7 天</option>
+</select></div>
+<div class="fld" style="font-size:12px;color:var(--t2)">定期断开重连 WiFi，清理驱动状态防止长时间运行后网络变慢</div>
 </div>
 
 <div class="card">
@@ -148,6 +159,8 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
     <div class="fld"><label>分段时长 (秒)</label>
       <input type="number" id="record_segment_sec" min="60" max="3600" step="60" value="300"></div>
     <div class="chk-r"><input type="checkbox" id="frame_drop_enabled"><label for="frame_drop_enabled">启用智能丢帧 (降低CPU负载)</label></div>
+    <div class="chk-r"><input type="checkbox" id="save_to_sd"><label for="save_to_sd">写入 SD 卡 (关闭后仅提供 NVR 串流，不保存照片/录像)</label></div>
+    <div class="chk-r"><input type="checkbox" id="sd_log_enabled"><label for="sd_log_enabled">异常日志写入 SD 卡 (记录WiFi异常和摄像头严重错误)</label></div>
   </div>
 
   <div class="card">
@@ -218,6 +231,7 @@ $('vflip').checked=!!v.vflip;
 $('motion_cooldown').value=v.motion_cooldown||5;$('mcVal').textContent=$('motion_cooldown').value;
 $('wifi_tx_power').value=v.wifi_tx_power||80;$('txVal').textContent=(($('wifi_tx_power').value*0.25).toFixed(1))+'dBm';
 $('wifi_power_save').checked=!!(v.wifi_power_save);
+$('wifi_reconnect_hours').value=v.wifi_reconnect_hours!=null?v.wifi_reconnect_hours:24;
 $('flash_threshold').value=v.flash_threshold!=null?v.flash_threshold:40;$('ftVal').textContent=$('flash_threshold').value;
 $('timelapse_enabled').checked=!!(v.timelapse_enabled);
 $('timelapse_interval_s').value=v.timelapse_interval_s||30;
@@ -231,6 +245,8 @@ $('dynamic_fields').style.display=v.timelapse_mode==1?'':'none'
     $('record_mode').value=v.record_mode!=null?v.record_mode:'0';
     $('record_segment_sec').value=v.record_segment_sec||300;
     $('frame_drop_enabled').checked=!!(v.frame_drop_enabled);
+    $('save_to_sd').checked=!v.save_to_sd||v.save_to_sd==1;
+    $('sd_log_enabled').checked=v.sd_log_enabled==1;
     $('cleanup_low_pct').value=v.cleanup_low_pct!=null?v.cleanup_low_pct:80;$('clVal').textContent=$('cleanup_low_pct').value;
     $('cleanup_high_pct').value=v.cleanup_high_pct!=null?v.cleanup_high_pct:70;$('chVal').textContent=$('cleanup_high_pct').value;
 }).catch(function(e){console.error('Load config failed:',e)});
@@ -257,6 +273,7 @@ jpeg_quality:parseInt($('jpeg_quality').value),
 vflip:$('vflip').checked?1:0,
 wifi_tx_power:parseInt($('wifi_tx_power').value)||80,
 wifi_power_save:$('wifi_power_save').checked?1:0
+,wifi_reconnect_hours:parseInt($('wifi_reconnect_hours').value)||0
 ,flash_threshold:parseInt($('flash_threshold').value)||40,
 timelapse_enabled:$('timelapse_enabled').checked?1:0,
 timelapse_interval_s:parseInt($('timelapse_interval_s').value)||30,
@@ -269,6 +286,8 @@ timelapse_decay_period_s:parseInt($('timelapse_decay_period_s').value)||10
       ,record_mode:parseInt($('record_mode').value)||0
       ,record_segment_sec:parseInt($('record_segment_sec').value)||300
       ,frame_drop_enabled:$('frame_drop_enabled').checked?1:0
+      ,save_to_sd:$('save_to_sd').checked?1:0
+      ,sd_log_enabled:$('sd_log_enabled').checked?1:0
       ,cleanup_low_pct:parseInt($('cleanup_low_pct').value)||80
       ,cleanup_high_pct:parseInt($('cleanup_high_pct').value)||70
 };

@@ -38,12 +38,16 @@
 
 #include "video_recorder.h"
 #include "onvif_service.h"
+#include "frame_broker.h"
+#include "sd_logger.h"
 
 #define FIRMWARE_VERSION "v1.0"
 
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/socket.h>
+#include <netinet/tcp.h>
 #include <time.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -250,6 +254,11 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     /* Storage cleanup thresholds */
     cJSON_AddNumberToObject(data, "cleanup_low_pct", (double)cfg->cleanup_low_pct);
     cJSON_AddNumberToObject(data, "cleanup_high_pct", (double)cfg->cleanup_high_pct);
+
+    /* SD card write enable */
+    cJSON_AddNumberToObject(data, "save_to_sd", (double)cfg->save_to_sd);
+    cJSON_AddNumberToObject(data, "sd_log_enabled", (double)cfg->sd_log_enabled);
+    cJSON_AddNumberToObject(data, "wifi_reconnect_hours", (double)cfg->wifi_reconnect_hours);
 
     return send_json_ok(req, data);
 }
@@ -568,6 +577,24 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
         }
     }
 
+    /* ── SD card write enable ── */
+    item = cJSON_GetObjectItem(json, "save_to_sd");
+    if (item && cJSON_IsNumber(item)) {
+        config_set_save_to_sd((uint8_t)item->valueint);
+    }
+
+    /* ── SD card error logging ── */
+    item = cJSON_GetObjectItem(json, "sd_log_enabled");
+    if (item && cJSON_IsNumber(item)) {
+        config_set_sd_log_enabled((uint8_t)item->valueint);
+    }
+
+    /* ── Periodic WiFi reconnect interval ── */
+    item = cJSON_GetObjectItem(json, "wifi_reconnect_hours");
+    if (item && cJSON_IsNumber(item)) {
+        config_set_wifi_reconnect_interval((uint16_t)item->valueint);
+    }
+
 
     if (need_save) {
         config_save();
@@ -630,16 +657,15 @@ static esp_err_t handler_api_reboot(httpd_req_t *req)
 static esp_err_t handler_capture(httpd_req_t *req)
 {
     set_cors_headers(req);
-
     camera_fb_t *fb = NULL;
-    esp_err_t err = camera_capture(&fb);
+    esp_err_t err = frame_broker_get_copy(&fb, 3000);
     if (err != ESP_OK || fb == NULL) {
+        sd_logf(SD_LOG_ERROR, "http", "/capture failed: frame_broker timeout");
         return send_json_error(req, "camera capture failed", 500);
     }
-
     httpd_resp_set_type(req, "image/jpeg");
     esp_err_t ret = httpd_resp_send(req, (const char *)fb->buf, fb->len);
-    camera_return_fb(fb);
+    frame_broker_free(fb);
     return ret;
 }
 
@@ -1134,6 +1160,27 @@ esp_err_t web_server_init(void)
     return ESP_OK;
     }
 
+/* Set TCP_NODELAY + keepalive on every new HTTP connection.
+ * NODELAY: disable Nagle's algorithm so small HTTP writes (headers, MJPEG
+ * boundaries) aren't delayed by up to 1 RTT (~100-265ms on marginal WiFi).
+ * KEEPALIVE: detect dead connections in ~11s (5s idle + 3×2s probes),
+ * freeing up limited server sockets for new clients. */
+static esp_err_t on_session_open(httpd_handle_t hd, int sockfd)
+{
+    int enable = 1;
+    setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(enable));
+
+    int keepalive = 1;
+    int keepidle  = 5;  /* start probing after 5s idle */
+    int keepintvl = 2;  /* probe every 2s */
+    int keepcnt   = 3;  /* 3 failed probes = dead */
+    setsockopt(sockfd, SOL_SOCKET,  SO_KEEPALIVE,  &keepalive, sizeof(keepalive));
+    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPIDLE,  &keepidle,  sizeof(keepidle));
+    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl));
+    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPCNT,   &keepcnt,   sizeof(keepcnt));
+    return ESP_OK;
+}
+
 esp_err_t web_server_start(uint16_t port)
 {
     if (s_server) {
@@ -1146,9 +1193,10 @@ esp_err_t web_server_start(uint16_t port)
     config.max_uri_handlers = 30;
     config.stack_size = 8192;
     config.recv_wait_timeout = 10;    /* longer tolerance for slow WiFi */
-    config.send_wait_timeout = 10;    /* backstop for disconnected clients (recv MSG_PEEK is primary) */
+    config.send_wait_timeout = 5;     /* free stalled connections faster (keepalive is primary) */
     config.lru_purge_enable = true;   /* clean up stale connections */
     config.uri_match_fn = httpd_uri_match_wildcard;
+    config.open_fn = on_session_open;  /* TCP_NODELAY on all connections */
 
     esp_err_t ret = httpd_start(&s_server, &config);
     if (ret != ESP_OK) {
