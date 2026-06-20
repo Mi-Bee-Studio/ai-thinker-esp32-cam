@@ -67,3 +67,18 @@ CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE=n
 
 # Increase esp_timer task stack (default 3584 too small — stack overflow on WiFi reconnect stress)
 CONFIG_ESP_TIMER_TASK_STACK_SIZE=6144
+
+# TCP/lwIP tuning for marginal WiFi (high packet loss, high jitter)
+# TCP/lwIP tuning for marginal WiFi (high RTT ~1s, high jitter)
+# Larger send buffer + window: 23040 / 760 MSS = ~30 segments in flight
+# Theoretical throughput: 23040 / 1s RTT = ~23 KB/s (enough for 20KB JPEGs in <1s)
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=23040
+CONFIG_LWIP_TCP_WND_DEFAULT=23040
+# Faster retransmission: initial RTO 300ms (default 1500ms is 5x too slow)
+CONFIG_LWIP_TCP_RTO_TIME=300
+# Smaller MSS for lossy WiFi: shorter air time per frame = lower PER
+CONFIG_LWIP_TCP_MSS=760
+# More receive mailbox slots for out-of-order segment handling
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=12
+# Reduce max retransmissions (default 12 ≈ 20min hang, 6 ≈ 19s max)
+CONFIG_LWIP_TCP_MAXRTX=6

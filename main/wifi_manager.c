@@ -9,8 +9,10 @@
 #include "esp_netif.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
+#include "freertos/task.h"
 #include <string.h>
 #include "config_manager.h"
+#include "sd_logger.h"
 
 static const char *TAG = "wifi_manager";
 
@@ -42,7 +44,7 @@ static esp_event_handler_instance_t s_ip_handler = NULL;
 
 // Reconnect timer
 static TimerHandle_t s_reconnect_timer = NULL;
-#define RECONNECT_INTERVAL_MS (5000)
+#define RECONNECT_INTERVAL_MS (2000)
 
 // --- Forward declarations ---
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
@@ -138,6 +140,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
             ESP_LOGW(TAG, "STA disconnected reason=%d %s (retry %d/%d)",
                      disc->reason, wifi_disconnect_reason_str(disc->reason),
                      s_sta_retry_count + 1, MAX_RETRIES_PER_NETWORK);
+            sd_logf(SD_LOG_WARN, "wifi", "STA disconnected reason=%d (%s), retry %d/%d",
+                     disc->reason, wifi_disconnect_reason_str(disc->reason),
+                     s_sta_retry_count + 1, MAX_RETRIES_PER_NETWORK);
             stop_reconnect_timer();
             set_state(WIFI_STATE_STA_DISCONNECTED);
             s_sta_retry_count++;
@@ -148,6 +153,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                 if (!s_using_secondary && cfg->wifi_ssid_2[0] != '\0') {
                     ESP_LOGW(TAG, "Primary WiFi failed %d times, switching to secondary: %s",
                              s_sta_retry_count, cfg->wifi_ssid_2);
+                    sd_logf(SD_LOG_ERROR, "wifi", "Primary WiFi failed, switching to secondary: %s", cfg->wifi_ssid_2);
                     s_using_secondary = true;
                     s_sta_retry_count = 0;
                     wifi_start_sta(cfg->wifi_ssid_2, cfg->wifi_pass_2);
@@ -155,6 +161,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                 } else if (s_using_secondary) {
                     /* Failed on secondary too — try primary again */
                     ESP_LOGW(TAG, "Secondary WiFi also failed, retrying primary: %s", cfg->wifi_ssid);
+                    sd_logf(SD_LOG_ERROR, "wifi", "Secondary WiFi also failed, retrying primary: %s", cfg->wifi_ssid);
                     s_using_secondary = false;
                     s_sta_retry_count = 0;
                     wifi_start_sta(cfg->wifi_ssid, cfg->wifi_pass);
@@ -186,6 +193,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
             ESP_LOGI(TAG, "STA got IP: %s", s_ip_str);
             stop_reconnect_timer();
             set_state(WIFI_STATE_STA_CONNECTED);
+            if (s_sta_retry_count > 0) {
+                sd_logf(SD_LOG_WARN, "wifi", "STA reconnected after %d retries, IP: %s", s_sta_retry_count, s_ip_str);
+            }
             s_sta_retry_count = 0;  /* reset failover counter on success */
         }
     }
@@ -193,6 +203,49 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 
 // --- Public API ---
 
+
+/* WiFi watchdog: monitor RSSI, force reconnect on critical signal or periodic interval */
+static void wifi_watchdog_task(void *arg)
+{
+    int low_rssi_count = 0;
+    TickType_t last_reconnect_tick = xTaskGetTickCount();
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(30000));  /* 30s interval */
+        if (s_state != WIFI_STATE_STA_CONNECTED) continue;
+
+        /* --- Periodic reconnect: clear WiFi driver state every N hours --- */
+        uint16_t reconnect_hours = config_get()->wifi_reconnect_hours;
+        if (reconnect_hours > 0) {
+            TickType_t elapsed_ms = (xTaskGetTickCount() - last_reconnect_tick) * portTICK_PERIOD_MS;
+            uint32_t threshold_ms = (uint32_t)reconnect_hours * 3600U * 1000U;
+            if (elapsed_ms >= threshold_ms) {
+                ESP_LOGI(TAG, "Periodic WiFi reconnect (%uh interval)", reconnect_hours);
+                sd_logf(SD_LOG_WARN, "wifi", "Periodic reconnect (%uh interval)", reconnect_hours);
+                esp_wifi_disconnect();
+                last_reconnect_tick = xTaskGetTickCount();
+                continue;
+            }
+        }
+
+        /* --- RSSI watchdog --- */
+        wifi_ap_record_t ap;
+        if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) continue;
+
+        ESP_LOGI(TAG, "RSSI: %d dBm", ap.rssi);
+
+        if (ap.rssi < -90) {
+            if (++low_rssi_count >= 3) {  /* 90s of critical RSSI */
+                ESP_LOGW(TAG, "RSSI %d dBm for 90s, forcing reconnect", ap.rssi);
+                sd_logf(SD_LOG_WARN, "wifi", "RSSI %d dBm sustained, forcing reconnect", ap.rssi);
+                esp_wifi_disconnect();
+                last_reconnect_tick = xTaskGetTickCount();
+                low_rssi_count = 0;
+            }
+        } else {
+            low_rssi_count = 0;
+        }
+    }
+}
 esp_err_t wifi_init(void)
 {
     esp_err_t ret;
@@ -250,6 +303,7 @@ esp_err_t wifi_init(void)
     strcpy(s_ip_str, "0.0.0.0");
 
     ESP_LOGI(TAG, "WiFi manager initialized");
+    xTaskCreate(wifi_watchdog_task, "wifi_wd", 4096, NULL, 3, NULL);
     return ESP_OK;
 }
 
@@ -266,6 +320,7 @@ esp_err_t wifi_start_sta(const char *ssid, const char *pass)
             .threshold.authmode = WIFI_AUTH_OPEN,   /* auto-negotiate WPA2/WPA3/mixed/WPA/OPEN */
             .pmf_cfg = { .capable = true, .required = false }, /* PMF capable, not required (802.11w) */
             .sae_pwe_h2e = WPA3_SAE_PWE_BOTH,        /* WPA3 SAE: H2E + hunting-and-pecking */
+            .listen_interval = 1,                      /* listen to every beacon — prevent AP traffic buffering */
         },
     };
 
