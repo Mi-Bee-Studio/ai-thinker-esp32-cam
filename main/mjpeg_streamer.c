@@ -10,7 +10,7 @@
  */
 
 #include "mjpeg_streamer.h"
-#include "camera_driver.h"
+#include "frame_broker.h"
 #include "esp_log.h"
 #include "esp_http_server.h"
 #include "freertos/FreeRTOS.h"
@@ -112,7 +112,7 @@ static void stream_task_fn(void *arg)
         esp_err_t ret;
         int retries;
         for (retries = 0; retries < 3; retries++) {
-            ret = camera_capture(&fb);
+            ret = frame_broker_get_copy(&fb, 2000);
             if (ret == ESP_OK) break;
             vTaskDelay(pdMS_TO_TICKS(50));
         }
@@ -133,7 +133,7 @@ static void stream_task_fn(void *arg)
 
         /* Send part header */
         if (httpd_resp_send_chunk(req, part_hdr, hdrlen) != ESP_OK) {
-            camera_return_fb(fb);
+            frame_broker_free(fb);
             break;
         }
 
@@ -159,7 +159,7 @@ static void stream_task_fn(void *arg)
             }
         }
 
-        camera_return_fb(fb);
+        frame_broker_free(fb);
 
         if (!send_ok) break;
 

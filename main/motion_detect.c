@@ -23,6 +23,7 @@
 #include "freertos/task.h"
 #include "motion_detect.h"
 #include "camera_driver.h"
+#include "frame_broker.h"
 #include "config_manager.h"
 #include "storage_manager.h"
 #include "time_sync.h"
@@ -33,7 +34,7 @@ static const char *TAG = "motion_detect";
 
 /* ---- Tuning constants ---- */
 #define SAMPLE_STEP            10    /* Sample every 10th JPEG byte */
-#define PIXEL_DELTA            20    /* Byte difference threshold for "changed" (bright scene) */
+#define PIXEL_DELTA            150   /* Byte difference threshold for "changed" (bright scene) — filters JPEG entropy-coding noise */
 #define PIXEL_DELTA_DARK       180   /* Higher threshold for dark scenes — filters JPEG noise */
 
 #define MOTION_TASK_PRIORITY   5
@@ -102,7 +103,7 @@ static void handle_motion_event(bool dark_scene)
         ESP_LOGI(TAG, "Dark scene detected, enabling flash for photo");
         flash_led_on();
         vTaskDelay(pdMS_TO_TICKS(200));
-        if (camera_capture(&fb) != ESP_OK || fb == NULL) {
+        if (frame_broker_get_copy(&fb, 2000) != ESP_OK || fb == NULL) {
             ESP_LOGW(TAG, "Failed to capture with flash");
         }
         flash_led_off();
@@ -110,7 +111,7 @@ static void handle_motion_event(bool dark_scene)
 
     /* If no flash or flash recapture failed, capture normally */
     if (fb == NULL) {
-        if (camera_capture(&fb) != ESP_OK || fb == NULL) {
+        if (frame_broker_get_copy(&fb, 2000) != ESP_OK || fb == NULL) {
             ESP_LOGW(TAG, "Failed to capture frame for photo save");
             return;
         }
@@ -130,10 +131,10 @@ static void handle_motion_event(bool dark_scene)
         snprintf(filename, sizeof(filename), "motion_unknown_%03u.jpg", (unsigned)s_unknown_seq++);
     }
 
-    if (!s_running) { camera_return_fb(fb); return; }  /* stopped during capture */
+    if (!s_running) { frame_broker_free(fb); return; }
 
     esp_err_t err = storage_save_photo(fb, filename);
-    camera_return_fb(fb);
+    frame_broker_free(fb);
 
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "Motion photo saved: %s", filename);
@@ -165,7 +166,7 @@ static void motion_detection_task(void *arg)
 
         /* Capture reference frame */
         camera_fb_t *fb_a = NULL;
-        if (camera_capture(&fb_a) != ESP_OK || fb_a == NULL) {
+        if (frame_broker_get_copy(&fb_a, 2000) != ESP_OK || fb_a == NULL) {
             ESP_LOGW(TAG, "Failed to capture reference frame");
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
@@ -178,7 +179,7 @@ static void motion_detection_task(void *arg)
         if (samples_a == NULL) {
             ESP_LOGW(TAG, "Failed to allocate sample buffer (%u bytes)",
                      (unsigned)sample_count);
-            camera_return_fb(fb_a);
+            frame_broker_free(fb_a);
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
@@ -197,7 +198,7 @@ static void motion_detection_task(void *arg)
         bool dark_scene = s_scene_dark;
 
         /* Return fb_a immediately — free the frame buffer */
-        camera_return_fb(fb_a);
+        frame_broker_free(fb_a);
         fb_a = NULL;
 
         /* Wait between captures for detectable scene change */
@@ -207,7 +208,7 @@ static void motion_detection_task(void *arg)
          * Flash between ref/comp frames creates false 80%+ diffs.
          * Flash is used ONLY for the final photo capture in handle_motion_event(). */
         camera_fb_t *fb_b = NULL;
-        if (camera_capture(&fb_b) != ESP_OK || fb_b == NULL) {
+        if (frame_broker_get_copy(&fb_b, 2000) != ESP_OK || fb_b == NULL) {
             ESP_LOGW(TAG, "Failed to capture comparison frame");
             free(samples_a);
             vTaskDelay(pdMS_TO_TICKS(1000));
@@ -245,7 +246,7 @@ static void motion_detection_task(void *arg)
         }
 
         /* Free fb_b and sample buffer */
-        camera_return_fb(fb_b);
+        frame_broker_free(fb_b);
         free(samples_a);
 
         /* Trigger action on motion (if not in cooldown) */

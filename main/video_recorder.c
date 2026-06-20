@@ -16,7 +16,7 @@
  */
 
 #include "video_recorder.h"
-#include "camera_driver.h"
+#include "frame_broker.h"
 #include "storage_manager.h"
 #include "config_manager.h"
 #include "time_sync.h"
@@ -524,7 +524,7 @@ static void recording_task(void *arg)
 
         /* Capture frame */
         camera_fb_t *fb = NULL;
-        esp_err_t err = camera_capture(&fb);
+        esp_err_t err = frame_broker_get_copy(&fb, 2000);
         if (err != ESP_OK || fb == NULL) {
             ESP_LOGW(TAG, "Capture failed (0x%x)", err);
             vTaskDelay(pdMS_TO_TICKS(10));
@@ -541,13 +541,13 @@ static void recording_task(void *arg)
         if (jpeg_copy) {
             memcpy(jpeg_copy, fb->buf, fb->len);
             jpeg_data = jpeg_copy;
-            camera_return_fb(fb);
+            frame_broker_free(fb);
         } else {
             /* OOM: cannot safely hold fb across publish/write —
              * camera_apply_settings could deinit and free fb mid-use.
              * Return fb immediately and skip this frame. */
             ESP_LOGW(TAG, "PSRAM alloc %zu failed, skipping frame", fb->len);
-            camera_return_fb(fb);
+            frame_broker_free(fb);
             s_frames_dropped++;
             if (cycle_start_us - s_last_drop_log_us > 1000000) {
                 ESP_LOGW(TAG, "Frame dropped: OOM, total_dropped=%lu",
@@ -710,6 +710,11 @@ esp_err_t recorder_init(void)
 esp_err_t recorder_start(void)
 {
     if (!s_mutex) return ESP_ERR_INVALID_STATE;
+
+    if (!config_get()->save_to_sd) {
+        ESP_LOGI(TAG, "SD write disabled, not recording to card");
+        return ESP_OK;
+    }
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
 

@@ -6,6 +6,7 @@
 #include "freertos/task.h"
 #include "timelapse.h"
 #include "camera_driver.h"
+#include "frame_broker.h"
 #include "config_manager.h"
 #include "storage_manager.h"
 #include "time_sync.h"
@@ -60,10 +61,10 @@ static void do_burst_capture(const char *base_name, bool dark_scene, uint8_t bur
         if (dark_scene) {
             flash_led_on();
             vTaskDelay(pdMS_TO_TICKS(200));
-            camera_capture(&fb_burst);
+            frame_broker_get_copy(&fb_burst, 2000);
             flash_led_off();
         } else {
-            camera_capture(&fb_burst);
+            frame_broker_get_copy(&fb_burst, 2000);
         }
 
         if (fb_burst == NULL) {
@@ -75,7 +76,7 @@ static void do_burst_capture(const char *base_name, bool dark_scene, uint8_t bur
         snprintf(burst_name, sizeof(burst_name), "%s_burst_%u.jpg", base_name, b);
 
         esp_err_t err = storage_save_photo(fb_burst, burst_name);
-        camera_return_fb(fb_burst);
+        frame_broker_free(fb_burst);
 
         if (err == ESP_OK) {
             ESP_LOGI(TAG, "Burst photo saved: %s", burst_name);
@@ -121,7 +122,7 @@ static void timelapse_task(void *arg)
         flash_led_init();
 
         camera_fb_t *fb_test = NULL;
-        if (camera_capture(&fb_test) != ESP_OK || fb_test == NULL) {
+        if (frame_broker_get_copy(&fb_test, 2000) != ESP_OK || fb_test == NULL) {
             ESP_LOGW(TAG, "Failed to capture brightness test frame");
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
@@ -133,7 +134,7 @@ static void timelapse_task(void *arg)
         ESP_LOGI(TAG, "Brightness: jpeg=%uKB, pct=%u%%, dark=%s",
                  (unsigned)(fb_test->len / 1024), brightness_pct, dark_scene ? "YES" : "no");
 
-        camera_return_fb(fb_test);
+        frame_broker_free(fb_test);
         fb_test = NULL;
 
         camera_fb_t *fb = NULL;
@@ -141,14 +142,14 @@ static void timelapse_task(void *arg)
             ESP_LOGI(TAG, "Dark scene, enabling flash for photo");
             flash_led_on();
             vTaskDelay(pdMS_TO_TICKS(200));
-            if (camera_capture(&fb) != ESP_OK || fb == NULL) {
+            if (frame_broker_get_copy(&fb, 2000) != ESP_OK || fb == NULL) {
                 ESP_LOGW(TAG, "Failed to capture with flash");
             }
             flash_led_off();
         }
 
         if (fb == NULL) {
-            if (camera_capture(&fb) != ESP_OK || fb == NULL) {
+            if (frame_broker_get_copy(&fb, 2000) != ESP_OK || fb == NULL) {
                 ESP_LOGW(TAG, "Failed to capture timelapse photo");
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 continue;
@@ -162,7 +163,7 @@ static void timelapse_task(void *arg)
         if (samples == NULL) {
             ESP_LOGW(TAG, "Failed to allocate sample buffer (%u bytes)",
                      (unsigned)sample_count);
-            camera_return_fb(fb);
+            frame_broker_free(fb);
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
@@ -186,7 +187,7 @@ static void timelapse_task(void *arg)
         resolve_filename_conflict(filename, sizeof(filename), base_name);
 
         esp_err_t err = storage_save_photo(fb, filename);
-        camera_return_fb(fb);
+        frame_broker_free(fb);
         fb = NULL;
 
         if (err == ESP_OK) {
@@ -202,7 +203,7 @@ static void timelapse_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(COMPARE_INTERVAL_MS));
 
         camera_fb_t *fb_comp = NULL;
-        if (camera_capture(&fb_comp) != ESP_OK || fb_comp == NULL) {
+        if (frame_broker_get_copy(&fb_comp, 2000) != ESP_OK || fb_comp == NULL) {
             ESP_LOGW(TAG, "Failed to capture comparison frame");
             free(samples);
             continue;
@@ -221,7 +222,7 @@ static void timelapse_task(void *arg)
             }
         }
 
-        camera_return_fb(fb_comp);
+        frame_broker_free(fb_comp);
         free(samples);
 
         uint8_t effective_thresh = dark_scene
