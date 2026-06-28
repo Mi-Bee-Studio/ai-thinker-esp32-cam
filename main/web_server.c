@@ -230,6 +230,7 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "resolution", (double)cfg->resolution);
     cJSON_AddNumberToObject(data, "fps", (double)cfg->fps);
     cJSON_AddNumberToObject(data, "jpeg_quality", (double)cfg->jpeg_quality);
+    cJSON_AddNumberToObject(data, "xclk_freq_mhz", (double)cfg->xclk_freq_mhz);
     cJSON_AddStringToObject(data, "timezone", cfg->timezone);
     cJSON_AddNumberToObject(data, "motion_threshold", (double)cfg->motion_threshold);
     cJSON_AddNumberToObject(data, "motion_cooldown", (double)cfg->motion_cooldown);
@@ -360,6 +361,14 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
     if ((item = cJSON_GetObjectItem(json, "jpeg_quality")) && cJSON_IsNumber(item)) {
         config_set_jpeg_quality((uint8_t)item->valueint);
         camera_changed = true;
+    }
+
+    if ((item = cJSON_GetObjectItem(json, "xclk_freq_mhz")) && cJSON_IsNumber(item)) {
+        uint8_t new_xclk = (uint8_t)item->valueint;
+        if (new_xclk != config_get()->xclk_freq_mhz) {
+            config_set_xclk_freq(new_xclk);
+            camera_changed = true;
+        }
     }
 
     /* Apply camera changes in one batch (deinit+init is expensive).

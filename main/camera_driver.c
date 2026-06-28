@@ -121,8 +121,11 @@ esp_err_t camera_init(camera_resolution_t resolution, uint8_t fps, uint8_t jpeg_
         jpeg_quality = 63;
     }
 
-    /* XCLK frequency: 20MHz for all modes on AI_Thinker */
-    uint32_t xclk_freq_hz = 20000000;
+    /* XCLK frequency: configurable via NVS (10/16/20 MHz)
+     * 20 MHz = standard for genuine OV2640
+     * 10 MHz = more stable for clone/unstable modules (fixes NO-SOI) */
+    uint32_t xclk_freq_hz = (uint32_t)config_get()->xclk_freq_mhz * 1000000;
+    if (xclk_freq_hz == 0) xclk_freq_hz = 20000000; /* safety default */
 
     camera_config_t config = {
         .pin_pwdn     = CAM_PIN_PWDN,
@@ -300,20 +303,25 @@ bool camera_is_initialized(void)
 
 const char* camera_get_sensor_name(void)
 {
-    if (!s_camera_initialized) {
-        return "Unknown";
-    }
-
     sensor_t *sensor = esp_camera_sensor_get();
     if (sensor == NULL) {
         return "Unknown";
     }
 
-    if (sensor->id.PID == OV2640_PID) {
-        return "OV2640";
+    switch (sensor->id.PID) {
+        case OV2640_PID:  return "OV2640";
+        case OV5640_PID:  return "OV5640";
+        case OV3660_PID:  return "OV3660";
+        case OV7725_PID:  return "OV7725";
+        case OV7670_PID:  return "OV7670";
+        case GC2145_PID:  return "GC2145";
+        case GC032A_PID:  return "GC032A";
+        case GC0308_PID:  return "GC0308";
+        case NT99141_PID: return "NT99141";
+        case BF3005_PID:  return "BF3005";
+        case BF20A6_PID:  return "BF20A6";
+        default:           return "Unknown";
     }
-
-    return "Unknown";
 }
 
 camera_resolution_t camera_get_resolution(void)
@@ -377,7 +385,7 @@ esp_err_t camera_init_grayscale(void)
         .pin_href     = CAM_PIN_HREF,
         .pin_pclk     = CAM_PIN_PCLK,
 
-        .xclk_freq_hz = 20000000,
+        .xclk_freq_hz = (uint32_t)config_get()->xclk_freq_mhz * 1000000,
         .fb_location  = CAMERA_FB_IN_PSRAM,
         .pixel_format = PIXFORMAT_GRAYSCALE,
         .frame_size   = FRAMESIZE_QQVGA,
