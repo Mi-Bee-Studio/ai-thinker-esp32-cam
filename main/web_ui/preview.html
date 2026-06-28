@@ -107,6 +107,13 @@ var clientsEl=document.getElementById('clients');
 var connected=false;
 var retryT=null;
 var capturing=false;
+var snapshotMode=false;
+var snapshotTimer=null;
+var recoveryTimer=null;
+var streamFailCount=0;
+var STREAM_FAIL_THRESH=2;
+var SNAPSHOT_INTERVAL=1500;
+var RECOVERY_INTERVAL=30000;
 
 var fetchWithTimeout=function(url,opts,ms){
   opts=opts||{};ms=ms||8000;
@@ -117,25 +124,67 @@ var fetchWithTimeout=function(url,opts,ms){
 };
 
 function onConn(){
-connected=true;clearTimeout(retryT);
-ph.style.display='none';img.style.display='block';
-sDot.className='dot g';sTxt.textContent='已连接';sTxt.style.color='#059669';
-fpsEl.textContent='实时';fpsEl.style.color='#059669';
+  connected=true;clearTimeout(retryT);
+  streamFailCount=0;
+  if(snapshotMode){
+    snapshotMode=false;
+    clearInterval(snapshotTimer);snapshotTimer=null;
+    clearInterval(recoveryTimer);recoveryTimer=null;
+  }
+  ph.style.display='none';img.style.display='block';
+  sDot.className='dot g';sTxt.textContent='已连接';sTxt.style.color='#059669';
+  fpsEl.textContent='实时';fpsEl.style.color='#059669';
 }
 
-function onDisconn(msg){
-connected=false;
-sDot.className='dot r';sTxt.textContent=msg||'连接断开';sTxt.style.color='#DC2626';
-fpsEl.textContent='--';fpsEl.style.color='';
-if(retryT)clearTimeout(retryT);
-retryT=setTimeout(function(){
-  sDot.className='dot y';sTxt.textContent='重新连接中';sTxt.style.color='#D97706';
+function startSnapshotMode(){
+  snapshotMode=true;
+  clearTimeout(retryT);
+  connected=false;
+  sDot.className='dot y';sTxt.textContent='截图模式';sTxt.style.color='#D97706';
+  fpsEl.textContent='~1fps';fpsEl.style.color='#D97706';
+  fetchSnapshot();
+  snapshotTimer=setInterval(fetchSnapshot,SNAPSHOT_INTERVAL);
+  recoveryTimer=setInterval(tryStreamRecovery,RECOVERY_INTERVAL);
+}
+
+function fetchSnapshot(){
+  fetchWithTimeout('/capture',{},5000).then(function(r){
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    return r.blob();
+  }).then(function(b){
+    ph.style.display='none';img.style.display='block';
+    if(img.src&&img.src.indexOf('blob:')===0)URL.revokeObjectURL(img.src);
+    img.src=URL.createObjectURL(b);
+  }).catch(function(){});
+}
+
+function tryStreamRecovery(){
+  if(!snapshotMode)return;
+  clearInterval(snapshotTimer);snapshotTimer=null;
+  clearInterval(recoveryTimer);recoveryTimer=null;
+  snapshotMode=false;streamFailCount=0;
+  sDot.className='dot y';sTxt.textContent='恢复实时...';sTxt.style.color='#D97706';
   img.src='/stream?t='+Date.now();
-},3000);
 }
 
-img.onload=function(){onConn()};
-img.onerror=function(){onDisconn('连接断开')};
+function onStreamError(){
+  connected=false;
+  streamFailCount++;
+  if(streamFailCount>=STREAM_FAIL_THRESH){
+    startSnapshotMode();
+    return;
+  }
+  sDot.className='dot r';sTxt.textContent='连接断开';sTxt.style.color='#DC2626';
+  fpsEl.textContent='--';fpsEl.style.color='';
+  if(retryT)clearTimeout(retryT);
+  retryT=setTimeout(function(){
+    sDot.className='dot y';sTxt.textContent='重新连接中';sTxt.style.color='#D97706';
+    img.src='/stream?t='+Date.now();
+  },3000);
+}
+
+img.onload=function(){if(!snapshotMode)onConn()};
+img.onerror=function(){if(!snapshotMode)onStreamError()};
 img.src='/stream';
 
 // Status polling — only update client count, do NOT trigger reconnect from here
@@ -203,10 +252,13 @@ fetchWithTimeout('/capture').then(function(r){
 .finally(function(){capturing=false;if(btn)btn.disabled=false});
 }
 function stopStream(){
-if(retryT)clearTimeout(retryT);
-img.onload=null;img.onerror=null;
-img.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-connected=false;
+  if(retryT)clearTimeout(retryT);
+  if(snapshotTimer)clearInterval(snapshotTimer);
+  if(recoveryTimer)clearInterval(recoveryTimer);
+  snapshotTimer=null;recoveryTimer=null;
+  img.onload=null;img.onerror=null;
+  img.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+  connected=false;
 }
 document.querySelectorAll('.nav a').forEach(function(a){
 a.addEventListener('click',function(e){e.preventDefault();stopStream();setTimeout(function(){location.href=a.href},200)});
