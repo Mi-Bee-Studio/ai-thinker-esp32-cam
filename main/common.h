@@ -6,7 +6,7 @@
 #include "esp_err.h"
 
 // Config version and magic
-#define CONFIG_VERSION  12
+#define CONFIG_VERSION  13
 #define CONFIG_MAGIC    0xA5B6C7D8
 
 // Default values
@@ -118,6 +118,8 @@ typedef struct {
     /* V11: SD card error logging */
     uint8_t  sd_log_enabled;          /* 1=log severe errors+WiFi anomalies to SD (default), 0=disabled */
     uint16_t wifi_reconnect_hours;   /* periodic WiFi reconnect interval (0=disabled, default 24) */
+    /* V13: Camera XCLK frequency (10/16/20 MHz, 20=default, lower=more stable for clone modules) */
+    uint8_t  xclk_freq_mhz;          /* Camera master clock in MHz (default 20) */
     uint32_t magic;
     uint32_t version;
 } cam_config_t;

@@ -138,6 +138,12 @@ esp_err_t config_set_sd_log_enabled(uint8_t enabled);
 esp_err_t config_set_wifi_reconnect_interval(uint16_t hours);
 
 /**
+ * @brief Set camera XCLK frequency, save immediately
+ * @param mhz 10, 16, or 20 (20=standard, 10=stable for clone modules)
+ */
+esp_err_t config_set_xclk_freq(uint8_t mhz);
+
+/**
  * @brief Load WiFi config from /sdcard/config.txt (key=value format)
  * Parses ssid and password, updates NVS if changed.
  * The config file is preserved on SD card for persistent use.

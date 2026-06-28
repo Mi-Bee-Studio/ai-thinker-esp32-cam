@@ -50,6 +50,8 @@ static void apply_defaults(cam_config_t *cfg)
     /* V11: SD card error logging (default ON) */
     cfg->sd_log_enabled = 1;
     cfg->wifi_reconnect_hours = 24;  /* periodic reconnect: default every 24h */
+    /* V13: Camera XCLK frequency */
+    cfg->xclk_freq_mhz = CONFIG_MIBEE_CAM_DEFAULT_XCLK_MHZ;
     cfg->magic = CONFIG_MAGIC;
     cfg->version = CONFIG_VERSION;
 }
@@ -145,6 +147,10 @@ esp_err_t config_init(void)
                         if (s_config.version <= 11) {
                             s_config.wifi_reconnect_hours = 24;
                         }
+                        /* V12→V13: camera XCLK frequency */
+                        if (s_config.version <= 12) {
+                            s_config.xclk_freq_mhz = CONFIG_MIBEE_CAM_DEFAULT_XCLK_MHZ;
+                        }
                         ESP_LOGI(TAG, "Config migrated V%d->V%d (blob %u->%u), saving",
                                  s_config.version, CONFIG_VERSION, (unsigned)cur_len, (unsigned)sizeof(cam_config_t));
                         config_save();
@@ -190,6 +196,10 @@ esp_err_t config_init(void)
         /* V11→V12: periodic WiFi reconnect */
         if (s_config.version <= 11) {
             s_config.wifi_reconnect_hours = 24;
+        }
+        /* V12→V13: camera XCLK frequency */
+        if (s_config.version <= 12) {
+            s_config.xclk_freq_mhz = CONFIG_MIBEE_CAM_DEFAULT_XCLK_MHZ;
         }
         ESP_LOGI(TAG, "Config migrated V%d->V%d (same-size blob), saving",
                  s_config.version, CONFIG_VERSION);
@@ -425,6 +435,14 @@ esp_err_t config_set_wifi_reconnect_interval(uint16_t hours)
 {
     s_config.wifi_reconnect_hours = hours;
     ESP_LOGI(TAG, "WiFi periodic reconnect set to %u hours", hours);
+    return config_save();
+}
+
+esp_err_t config_set_xclk_freq(uint8_t mhz)
+{
+    if (mhz != 10 && mhz != 16 && mhz != 20) mhz = 20;
+    s_config.xclk_freq_mhz = mhz;
+    ESP_LOGI(TAG, "Camera XCLK set to %u MHz", mhz);
     return config_save();
 }
 

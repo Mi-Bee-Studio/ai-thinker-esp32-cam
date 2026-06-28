@@ -18,4 +18,13 @@ menu "mibee-cam Configuration"
         help
             Enable periodic health monitoring with Prometheus /metrics endpoint.
 
+    config MIBEE_CAM_DEFAULT_XCLK_MHZ
+        int "Default camera XCLK frequency (MHz)"
+        default 20
+        help
+            Master clock frequency for the camera sensor.
+            20 MHz is standard for genuine OV2640.
+            Use 10 MHz for unstable clone modules (fixes NO-SOI / white image).
+            The user can override at runtime via web UI.
+
 endmenu
