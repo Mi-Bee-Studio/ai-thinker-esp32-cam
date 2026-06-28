@@ -102,6 +102,12 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 </select></div>
 <div class="fld"><label>JPEG 质量 (1=最高 63=最低)</label>
 <div class="range-r"><input type="range" id="jpeg_quality" min="1" max="63" value="10"><span class="range-v" id="qVal">10</span></div></div>
+<div class="fld"><label>摄像头时钟 (XCLK)</label>
+<select id="xclk_freq">
+<option value="20">20 MHz (标准)</option>
+<option value="16">16 MHz</option>
+<option value="10">10 MHz (兼容片稳定)</option>
+</select></div>
 <div class="chk-r"><input type="checkbox" id="vflip"><label for="vflip">镜头上下翻转</label></div>
 </div>
 
@@ -224,6 +230,7 @@ $('wifi_pass').value=v.wifi_pass||'';
 $('device_name').value=v.device_name||'';
 $('resolution').value=v.resolution!=null?v.resolution:'0';
 $('jpeg_quality').value=v.jpeg_quality||10;$('qVal').textContent=$('jpeg_quality').value;
+$('xclk_freq').value=v.xclk_freq_mhz||20;
 $('web_password').value='';
 $('motion_enabled').checked=(v.motion_threshold>0);
 $('motion_threshold').value=v.motion_threshold||30;$('mtVal').textContent=$('motion_threshold').value;
@@ -267,6 +274,7 @@ wifi_pass:$('wifi_pass').value,
 device_name:$('device_name').value,
 resolution:parseInt($('resolution').value),
 jpeg_quality:parseInt($('jpeg_quality').value),
+xclk_freq_mhz:parseInt($('xclk_freq').value)||20,
       motion_enabled:$('motion_enabled').checked,
       motion_threshold:parseInt($('motion_threshold').value),
       motion_cooldown:parseInt($('motion_cooldown').value)||5,
