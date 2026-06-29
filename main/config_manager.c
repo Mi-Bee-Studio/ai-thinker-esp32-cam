@@ -52,6 +52,9 @@ static void apply_defaults(cam_config_t *cfg)
     cfg->wifi_reconnect_hours = 24;  /* periodic reconnect: default every 24h */
     /* V13: Camera XCLK frequency */
     cfg->xclk_freq_mhz = CONFIG_MIBEE_CAM_DEFAULT_XCLK_MHZ;
+    /* V14: WiFi RSSI-based roaming */
+    cfg->wifi_roam_rssi_threshold = -75;  /* scan for better AP below this */
+    cfg->wifi_roam_rssi_gap = 10;         /* switch when other AP is 10dBm+ stronger */
     cfg->magic = CONFIG_MAGIC;
     cfg->version = CONFIG_VERSION;
 }
@@ -151,6 +154,11 @@ esp_err_t config_init(void)
                         if (s_config.version <= 12) {
                             s_config.xclk_freq_mhz = CONFIG_MIBEE_CAM_DEFAULT_XCLK_MHZ;
                         }
+                        /* V13→V14: WiFi RSSI-based roaming */
+                        if (s_config.version <= 13) {
+                            s_config.wifi_roam_rssi_threshold = -75;
+                            s_config.wifi_roam_rssi_gap = 10;
+                        }
                         ESP_LOGI(TAG, "Config migrated V%d->V%d (blob %u->%u), saving",
                                  s_config.version, CONFIG_VERSION, (unsigned)cur_len, (unsigned)sizeof(cam_config_t));
                         config_save();
@@ -200,6 +208,11 @@ esp_err_t config_init(void)
         /* V12→V13: camera XCLK frequency */
         if (s_config.version <= 12) {
             s_config.xclk_freq_mhz = CONFIG_MIBEE_CAM_DEFAULT_XCLK_MHZ;
+        }
+        /* V13→V14: WiFi RSSI-based roaming */
+        if (s_config.version <= 13) {
+            s_config.wifi_roam_rssi_threshold = -75;
+            s_config.wifi_roam_rssi_gap = 10;
         }
         ESP_LOGI(TAG, "Config migrated V%d->V%d (same-size blob), saving",
                  s_config.version, CONFIG_VERSION);
@@ -437,6 +450,19 @@ esp_err_t config_set_wifi_reconnect_interval(uint16_t hours)
     ESP_LOGI(TAG, "WiFi periodic reconnect set to %u hours", hours);
     return config_save();
 }
+
+esp_err_t config_set_wifi_roam(int8_t rssi_threshold, uint8_t rssi_gap)
+{
+    if (rssi_threshold > -40) rssi_threshold = -40;   /* sane upper bound */
+    if (rssi_threshold < -100) rssi_threshold = -100;  /* sane lower bound */
+    if (rssi_gap < 3) rssi_gap = 3;                    /* avoid flapping */
+    if (rssi_gap > 30) rssi_gap = 30;
+    s_config.wifi_roam_rssi_threshold = rssi_threshold;
+    s_config.wifi_roam_rssi_gap = rssi_gap;
+    ESP_LOGI(TAG, "WiFi roam set (threshold=%d dBm, gap=%u dBm)", rssi_threshold, rssi_gap);
+    return config_save();
+}
+
 
 esp_err_t config_set_xclk_freq(uint8_t mhz)
 {

@@ -144,6 +144,13 @@ esp_err_t config_set_wifi_reconnect_interval(uint16_t hours);
 esp_err_t config_set_xclk_freq(uint8_t mhz);
 
 /**
+ * @brief Set WiFi RSSI-based roaming parameters, save immediately
+ * @param rssi_threshold Scan for better AP when current RSSI below this (default -75)
+ * @param rssi_gap Min RSSI difference (dBm) to trigger switch (default 10)
+ */
+esp_err_t config_set_wifi_roam(int8_t rssi_threshold, uint8_t rssi_gap);
+
+/**
  * @brief Load WiFi config from /sdcard/config.txt (key=value format)
  * Parses ssid and password, updates NVS if changed.
  * The config file is preserved on SD card for persistent use.

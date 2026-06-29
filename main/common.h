@@ -6,7 +6,7 @@
 #include "esp_err.h"
 
 // Config version and magic
-#define CONFIG_VERSION  13
+#define CONFIG_VERSION  14
 #define CONFIG_MAGIC    0xA5B6C7D8
 
 // Default values
@@ -120,6 +120,9 @@ typedef struct {
     uint16_t wifi_reconnect_hours;   /* periodic WiFi reconnect interval (0=disabled, default 24) */
     /* V13: Camera XCLK frequency (10/16/20 MHz, 20=default, lower=more stable for clone modules) */
     uint8_t  xclk_freq_mhz;          /* Camera master clock in MHz (default 20) */
+    /* V14: WiFi RSSI-based roaming (switch to stronger AP across SSIDs) */
+    int8_t  wifi_roam_rssi_threshold;  /* scan for better AP when RSSI below this (default -75) */
+    uint8_t wifi_roam_rssi_gap;        /* min RSSI gap (dBm) to trigger switch (default 10) */
     uint32_t magic;
     uint32_t version;
 } cam_config_t;
