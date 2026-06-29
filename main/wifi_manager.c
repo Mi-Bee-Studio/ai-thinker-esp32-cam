@@ -204,11 +204,13 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 // --- Public API ---
 
 
-/* WiFi watchdog: monitor RSSI, force reconnect on critical signal or periodic interval */
+/* WiFi watchdog: RSSI monitor, periodic reconnect, and smart SSID roaming */
 static void wifi_watchdog_task(void *arg)
 {
     int low_rssi_count = 0;
     TickType_t last_reconnect_tick = xTaskGetTickCount();
+    TickType_t last_roam_scan_tick = xTaskGetTickCount();
+
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(30000));  /* 30s interval */
         if (s_state != WIFI_STATE_STA_CONNECTED) continue;
@@ -227,7 +229,7 @@ static void wifi_watchdog_task(void *arg)
             }
         }
 
-        /* --- RSSI watchdog --- */
+        /* --- RSSI watchdog: critical signal check (-90 dBm) --- */
         wifi_ap_record_t ap;
         if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) continue;
 
@@ -243,6 +245,74 @@ static void wifi_watchdog_task(void *arg)
             }
         } else {
             low_rssi_count = 0;
+        }
+
+        /* --- V14: RSSI-based smart roaming across SSIDs --- */
+        const cam_config_t *cfg = config_get();
+        if (cfg->wifi_roam_rssi_threshold == 0) continue;  /* 0 = roaming disabled */
+        if (cfg->wifi_ssid[0] == '\0') continue;
+
+        /* Determine the "other" network to probe */
+        const char *other_ssid = s_using_secondary ? cfg->wifi_ssid : cfg->wifi_ssid_2;
+        const char *other_pass = s_using_secondary ? cfg->wifi_pass : cfg->wifi_pass_2;
+        if (!other_ssid || other_ssid[0] == '\0') continue;
+
+        /* Throttle roam scans to every 60s */
+        TickType_t roam_elapsed_ms = (xTaskGetTickCount() - last_roam_scan_tick) * portTICK_PERIOD_MS;
+        if (roam_elapsed_ms < 60000) continue;
+
+        /* Decide whether to scan:
+         * - On secondary: always check for primary (preferred network)
+         * - On primary: only scan when RSSI drops below threshold */
+        bool should_scan = s_using_secondary || (ap.rssi < cfg->wifi_roam_rssi_threshold);
+        if (!should_scan) continue;
+
+        last_roam_scan_tick = xTaskGetTickCount();
+
+        /* Scan for the other SSID */
+        ESP_LOGI(TAG, "Roam scan: probing '%s' (on %s, RSSI=%d)",
+                 other_ssid, s_using_secondary ? "secondary" : "primary", ap.rssi);
+
+        wifi_scan_config_t scan_cfg = {
+            .ssid = (uint8_t *)other_ssid,
+            .bssid = NULL,
+            .channel = 0,
+        };
+
+        if (esp_wifi_scan_start(&scan_cfg, true) != ESP_OK) {
+            ESP_LOGW(TAG, "Roam scan failed");
+            continue;
+        }
+
+        uint16_t ap_num = 0;
+        esp_wifi_scan_get_ap_num(&ap_num);
+        if (ap_num == 0) continue;
+
+        wifi_ap_record_t *aps = calloc(ap_num, sizeof(wifi_ap_record_t));
+        if (!aps) continue;
+        esp_wifi_scan_get_ap_records(&ap_num, aps);
+
+        int8_t best_rssi = -128;
+        for (int i = 0; i < ap_num; i++) {
+            if (aps[i].rssi > best_rssi) best_rssi = aps[i].rssi;
+        }
+        free(aps);
+
+        int8_t gap = best_rssi - ap.rssi;
+        ESP_LOGI(TAG, "Roam: '%s' RSSI=%d, current=%d, gap=%d (need>=%d)",
+                 other_ssid, best_rssi, ap.rssi, gap, cfg->wifi_roam_rssi_gap);
+
+        if (gap >= (int8_t)cfg->wifi_roam_rssi_gap) {
+            ESP_LOGI(TAG, "Smart roaming: switching to '%s' (%d dBm > current %d, gap=%d)",
+                     other_ssid, best_rssi, ap.rssi, gap);
+            sd_logf(SD_LOG_WARN, "wifi", "Smart roam: %s(%d) -> %s(%d), gap=%d",
+                    s_using_secondary ? "secondary" : "primary", ap.rssi,
+                    other_ssid, best_rssi, gap);
+
+            s_using_secondary = !s_using_secondary;
+            s_sta_retry_count = 0;
+            wifi_start_sta(other_ssid, other_pass);
+            last_reconnect_tick = xTaskGetTickCount();
         }
     }
 }
@@ -360,6 +430,9 @@ esp_err_t wifi_start_sta(const char *ssid, const char *pass)
         s_sta_active = false;
         return ret;
     }
+
+    /* Set DHCP hostname from device_name (replaces default "espressif") */
+    esp_netif_set_hostname(s_sta_netif, config_get()->device_name);
 
     /* Apply TX power from config (must be after wifi_start) */
     const cam_config_t *cam_cfg = config_get();
