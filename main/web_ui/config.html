@@ -89,7 +89,19 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 <option value="168">7 天</option>
 </select></div>
 <div class="fld" style="font-size:12px;color:var(--t2)">定期断开重连 WiFi，清理驱动状态防止长时间运行后网络变慢</div>
-</div>
+<div class="fld" style="margin-top:8px"><label>智能漫游 RSSI 阈值 (dBm)</label>
+<select id="wifi_roam_rssi_threshold">
+<option value="0">关闭</option>
+<option value="-65">-65 (很敏感)</option>
+<option value="-70">-70</option>
+<option value="-75" selected>-75 (推荐)</option>
+<option value="-80">-80</option>
+<option value="-85">-85 (不敏感)</option>
+</select></div>
+<div class="fld" style="font-size:12px;color:var(--t2)">信号低于此值时，扫描备用网络是否有更强的信号。0=关闭智能漫游</div>
+<div class="fld"><label>切换信号差值 (dBm)</label>
+<div class="range-r"><input type="range" id="wifi_roam_rssi_gap" min="3" max="30" step="1" value="10"><span class="range-v" id="gapVal">10</span></div></div>
+<div class="fld" style="font-size:12px;color:var(--t2)">备用网络信号比当前强此值时才切换，避免频繁跳转。建议 8~15 dBm</div>
 
 <div class="card">
 <div class="ct">摄像头</div>
@@ -114,6 +126,7 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-s
 <div class="card">
 <div class="ct">设备</div>
 <div class="fld"><label>设备名称</label><input type="text" id="device_name" placeholder="Mi&Bee CAM"></div>
+<div class="fld" style="font-size:12px;color:var(--t2)">此名称也会用作路由器 DHCP 设备名（取代默认的 espressif）</div>
 <div class="fld"><label>Web 管理密码</label><div class="pw-w"><input type="password" id="web_password" placeholder="留空则不修改"><span class="eye" onclick="togPw(this)">&#128065;</span></div></div>
 <div class="fld"><label>确认密码</label><div class="pw-w"><input type="password" id="web_password_confirm" placeholder="再次输入新密码"><span class="eye" onclick="togPw(this)">&#128065;</span></div></div>
 </div>
@@ -217,6 +230,7 @@ $('wifi_tx_power').oninput=function(){$('txVal').textContent=(this.value*0.25).t
 $('flash_threshold').oninput=function(){$('ftVal').textContent=this.value};
 $('cleanup_low_pct').oninput=function(){$('clVal').textContent=this.value};
 $('cleanup_high_pct').oninput=function(){$('chVal').textContent=this.value};
+$('wifi_roam_rssi_gap').oninput=function(){$('gapVal').textContent=this.value};
 
 $('timelapse_mode').addEventListener('change',function(){$('dynamic_fields').style.display=this.value==='1'?'':'none'})
 
@@ -239,6 +253,8 @@ $('motion_cooldown').value=v.motion_cooldown||5;$('mcVal').textContent=$('motion
 $('wifi_tx_power').value=v.wifi_tx_power||80;$('txVal').textContent=(($('wifi_tx_power').value*0.25).toFixed(1))+'dBm';
 $('wifi_power_save').checked=!!(v.wifi_power_save);
 $('wifi_reconnect_hours').value=v.wifi_reconnect_hours!=null?v.wifi_reconnect_hours:24;
+$('wifi_roam_rssi_threshold').value=v.wifi_roam_rssi_threshold!=null?v.wifi_roam_rssi_threshold:-75;
+$('wifi_roam_rssi_gap').value=v.wifi_roam_rssi_gap||10;$('gapVal').textContent=$('wifi_roam_rssi_gap').value;
 $('flash_threshold').value=v.flash_threshold!=null?v.flash_threshold:40;$('ftVal').textContent=$('flash_threshold').value;
 $('timelapse_enabled').checked=!!(v.timelapse_enabled);
 $('timelapse_interval_s').value=v.timelapse_interval_s||30;
@@ -282,6 +298,8 @@ vflip:$('vflip').checked?1:0,
 wifi_tx_power:parseInt($('wifi_tx_power').value)||80,
 wifi_power_save:$('wifi_power_save').checked?1:0
 ,wifi_reconnect_hours:parseInt($('wifi_reconnect_hours').value)||0
+      ,wifi_roam_rssi_threshold:parseInt($('wifi_roam_rssi_threshold').value)||0
+      ,wifi_roam_rssi_gap:parseInt($('wifi_roam_rssi_gap').value)||10
 ,flash_threshold:parseInt($('flash_threshold').value)||40,
 timelapse_enabled:$('timelapse_enabled').checked?1:0,
 timelapse_interval_s:parseInt($('timelapse_interval_s').value)||30,

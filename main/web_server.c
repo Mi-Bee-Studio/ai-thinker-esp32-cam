@@ -260,6 +260,8 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "save_to_sd", (double)cfg->save_to_sd);
     cJSON_AddNumberToObject(data, "sd_log_enabled", (double)cfg->sd_log_enabled);
     cJSON_AddNumberToObject(data, "wifi_reconnect_hours", (double)cfg->wifi_reconnect_hours);
+    cJSON_AddNumberToObject(data, "wifi_roam_rssi_threshold", (double)cfg->wifi_roam_rssi_threshold);
+    cJSON_AddNumberToObject(data, "wifi_roam_rssi_gap", (double)cfg->wifi_roam_rssi_gap);
 
     return send_json_ok(req, data);
 }
@@ -602,6 +604,17 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
     item = cJSON_GetObjectItem(json, "wifi_reconnect_hours");
     if (item && cJSON_IsNumber(item)) {
         config_set_wifi_reconnect_interval((uint16_t)item->valueint);
+    }
+
+    /* ── WiFi RSSI-based roaming ── */
+    {
+        cJSON *rt = cJSON_GetObjectItem(json, "wifi_roam_rssi_threshold");
+        cJSON *rg = cJSON_GetObjectItem(json, "wifi_roam_rssi_gap");
+        if (rt && cJSON_IsNumber(rt)) {
+            int8_t thresh = (int8_t)rt->valueint;
+            uint8_t gap = (rg && cJSON_IsNumber(rg)) ? (uint8_t)rg->valueint : config_get()->wifi_roam_rssi_gap;
+            config_set_wifi_roam(thresh, gap);
+        }
     }
 
 
