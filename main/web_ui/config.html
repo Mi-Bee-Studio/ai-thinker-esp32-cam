@@ -215,7 +215,7 @@ function loginDialog(cb){var p=prompt('请输入管理密码 (默认: admin):');
 function requireAuth(cb){if(getPw())cb();else loginDialog(cb)}
 function togPw(el){var i=el.previousElementSibling;if(i.type==='password'){i.type='text';el.textContent='\uD83D\uDC41'}else{i.type='password';el.textContent='\uD83D\uDC40'}}
 var fetchWithTimeout=function(url,opts,ms){
-  opts=opts||{};ms=ms||8000;
+  opts=opts||{};ms=ms||15000;
   var ctrl=new AbortController();
   var to=setTimeout(function(){ctrl.abort()},ms);
   opts.signal=ctrl.signal;
@@ -234,7 +234,7 @@ $('wifi_roam_rssi_gap').oninput=function(){$('gapVal').textContent=this.value};
 
 $('timelapse_mode').addEventListener('change',function(){$('dynamic_fields').style.display=this.value==='1'?'':'none'})
 
-function loadConfig(){
+function loadConfig(isRetry){
 fetchWithTimeout('/api/config').then(function(r){return r.json()}).then(function(d){
 if(!d||!d.ok)return;var v=d.data;
 $('wifi_ssid').value=v.wifi_ssid||'';
@@ -268,11 +268,11 @@ $('dynamic_fields').style.display=v.timelapse_mode==1?'':'none'
     $('record_mode').value=v.record_mode!=null?v.record_mode:'0';
     $('record_segment_sec').value=v.record_segment_sec||300;
     $('frame_drop_enabled').checked=!!(v.frame_drop_enabled);
-    $('save_to_sd').checked=!v.save_to_sd||v.save_to_sd==1;
+    $('save_to_sd').checked=(v.save_to_sd==1);
     $('sd_log_enabled').checked=v.sd_log_enabled==1;
     $('cleanup_low_pct').value=v.cleanup_low_pct!=null?v.cleanup_low_pct:80;$('clVal').textContent=$('cleanup_low_pct').value;
     $('cleanup_high_pct').value=v.cleanup_high_pct!=null?v.cleanup_high_pct:70;$('chVal').textContent=$('cleanup_high_pct').value;
-}).catch(function(e){console.error('Load config failed:',e)});
+}).catch(function(e){if(!isRetry){console.warn('Load config failed, retrying...',e);setTimeout(function(){loadConfig(true)},1500)}else{console.error('Load config failed:',e)}});
 }
 
 function saveConfig(){
