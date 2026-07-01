@@ -440,7 +440,11 @@ void app_main(void)
         ESP_LOGI(TAG, "=== Step 13/19: Motion detection started ===");
     }
 
-    /* Step 14/19: SD card init - AFTER camera (GPIO14 conflict) */
+    /* Step 14/19: SD card init. NOTE: in STA mode this runs in app_main BEFORE
+     * camera_init (which is deferred to sta_services_task after WiFi connects).
+     * GPIO14 (SD CLK) and GPIO0 (camera XCLK) are separate pins, so there is no
+     * init-time pin conflict. Runtime SD ops (f_getfree/opendir) degrade after
+     * camera init — see AGENTS.md "GPIO14" section. */
     ret = storage_init();
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "SD card init failed: %s", esp_err_to_name(ret));
