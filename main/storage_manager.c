@@ -617,7 +617,6 @@ esp_err_t storage_save_photo(camera_fb_t *fb, const char *filename)
     char dirpath[128];
     esp_err_t ret = ensure_photo_dir(dirpath, sizeof(dirpath));
     if (ret != ESP_OK) {
-        xSemaphoreGive(s_mutex);
         return ret;
     }
 
@@ -628,7 +627,6 @@ esp_err_t storage_save_photo(camera_fb_t *fb, const char *filename)
     FILE *f = fopen(filepath, "wb");
     if (!f) {
         ESP_LOGE(TAG, "Failed to open %s: %s", filepath, strerror(errno));
-        xSemaphoreGive(s_mutex);
         return ESP_FAIL;
     }
 
@@ -637,7 +635,6 @@ esp_err_t storage_save_photo(camera_fb_t *fb, const char *filename)
 
     if (written != fb->len) {
         ESP_LOGE(TAG, "Write incomplete: %zu/%zu bytes", written, fb->len);
-        return ESP_FAIL;
         return ESP_FAIL;
     }
 
@@ -650,7 +647,6 @@ esp_err_t storage_save_photo(camera_fb_t *fb, const char *filename)
         s_list_cache_time = 0;
     }
 
-    return ESP_OK;
     return ESP_OK;
 }
 
