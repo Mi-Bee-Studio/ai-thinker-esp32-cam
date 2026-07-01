@@ -1114,6 +1114,13 @@ static esp_err_t handler_static(httpd_req_t *req)
 
     httpd_resp_set_type(req, get_content_type(filepath));
 
+    /* Prevent browsers from caching stale HTML after firmware updates.
+     * SPIFFS content changes on every reflash; a cached old page sends
+     * field names/values the new firmware rejects (e.g. cleanup 400). */
+    if (strstr(filepath, ".html")) {
+        httpd_resp_set_hdr(req, "Cache-Control", "no-cache, must-revalidate");
+    }
+
     char buf[4096];
     size_t n;
     while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
