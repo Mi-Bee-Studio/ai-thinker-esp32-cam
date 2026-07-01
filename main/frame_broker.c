@@ -12,6 +12,8 @@
 
 #include "frame_broker.h"
 #include "camera_driver.h"
+#include "mjpeg_streamer.h"
+#include "config_manager.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
@@ -28,6 +30,20 @@ static const char *TAG = "frame_broker";
 #define BROKER_TASK_STACK    6144
 #define BROKER_TASK_PRIO     5
 #define DMA_STALL_WARN_THRESH 30  /* log warning after this many consecutive fails */
+
+/* Compute capture cadence from config fps (falls back to BROKER_FPS).
+ * ESP32 camera has no hardware FPS register; this throttles producer captures. */
+static TickType_t broker_frame_delay(void)
+{
+    uint8_t fps = config_get()->fps;
+    if (fps == 0) fps = BROKER_FPS;
+    /* When no stream clients are watching, slow to 2fps to cut CPU/WiFi/PSRAM
+     * load — motion detection only needs ~2fps. Full rate resumes on connect. */
+    if (mjpeg_streamer_get_client_count() == 0) {
+        fps = 2;
+    }
+    return pdMS_TO_TICKS(1000 / fps);
+}
 
 /* ---- Latest frame snapshot (producer writes, consumers read-copy) ---- */
 
@@ -71,7 +87,7 @@ static void producer_task(void *arg)
                         "frame_broker: %u consecutive capture failures (DMA stall suspected)",
                         (unsigned)s_fail_count);
             }
-            vTaskDelay(BROKER_FRAME_DELAY);
+            vTaskDelay(broker_frame_delay());
             continue;
         }
 
@@ -113,7 +129,7 @@ static void producer_task(void *arg)
         s_fail_count = 0;
         s_frame_count++;
 
-        vTaskDelay(BROKER_FRAME_DELAY);
+        vTaskDelay(broker_frame_delay());
     }
 
     ESP_LOGI(TAG, "Producer task exiting");
