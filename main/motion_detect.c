@@ -286,13 +286,14 @@ esp_err_t motion_detect_start(void)
     s_in_cooldown = false;
     s_cooldown_start_us = 0;
 
-    BaseType_t ret = xTaskCreate(
+    BaseType_t ret = xTaskCreatePinnedToCore(
         motion_detection_task,
         "motion_detect",
         MOTION_TASK_STACK_SIZE,
         NULL,
         MOTION_TASK_PRIORITY,
-        &s_motion_task_handle
+        &s_motion_task_handle,
+        tskNO_AFFINITY  /* no pinning — avoid Core 1 httpd starvation */
     );
 
     if (ret != pdPASS) {

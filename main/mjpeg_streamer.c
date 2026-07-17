@@ -38,6 +38,7 @@ static const char *TAG = "mjpeg_streamer";
 #define STREAM_FRAME_DELAY  pdMS_TO_TICKS(1000 / STREAM_FPS)
 #define STREAM_TASK_STACK   8192
 #define STREAM_TASK_PRIO    4
+#define STREAM_TASK_CORE    tskNO_AFFINITY  /* no pinning — httpd lock contention on Core 1 starved HTTP */
 
 /* ---------- Module state ---------- */
 
@@ -233,9 +234,9 @@ esp_err_t mjpeg_streamer_http_handler(httpd_req_t *req)
     /* Launch stream task */
     char task_name[16];
     snprintf(task_name, sizeof(task_name), "mjpeg_%d", slot);
-    BaseType_t tc = xTaskCreate(stream_task_fn, task_name,
-                                STREAM_TASK_STACK, &s_clients[slot],
-                                STREAM_TASK_PRIO, NULL);
+    BaseType_t tc = xTaskCreatePinnedToCore(stream_task_fn, task_name,
+                                             STREAM_TASK_STACK, &s_clients[slot],
+                                             STREAM_TASK_PRIO, NULL, STREAM_TASK_CORE);
     if (tc != pdPASS) {
         ESP_LOGE(TAG, "Failed to create stream task");
         xSemaphoreTake(s_slot_mutex, portMAX_DELAY);

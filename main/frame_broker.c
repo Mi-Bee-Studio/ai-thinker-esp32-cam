@@ -4,10 +4,16 @@
  * See frame_broker.h for architecture overview.
  *
  * The producer task is the ONLY runtime caller of camera_capture().
- * It holds the camera frame buffer for < 1ms (memcpy to PSRAM), then
- * returns it immediately.  This eliminates the buffer-exhaustion deadlock
- * where MJPEG stream + motion detect + /capture would consume all
- * fb_count=2 camera buffers and stall the DMA engine.
+ * It allocates a new refcounted frame in PSRAM and memcpy's the camera
+ * data OUTSIDE any lock, then publishes it via a brief spinlock-protected
+ * pointer swap.  Camera buffer is returned immediately.
+ *
+ * Consumers acquire a reference to the latest published frame under the
+ * same brief spinlock, then copy it OUTSIDE the lock.  No memcpy or malloc
+ * ever happens inside the critical section — the lock is held for
+ * nanoseconds (pointer swap + refcount inc), eliminating the cross-core
+ * lock contention that serialized producer and consumers under the old
+ * mutex-protected memcpy design.
  */
 
 #include "frame_broker.h"
@@ -19,17 +25,21 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/semphr.h"
 #include "sd_logger.h"
 #include <string.h>
 
 static const char *TAG = "frame_broker";
 
-#define BROKER_FPS           15
-#define BROKER_FRAME_DELAY   pdMS_TO_TICKS(1000 / BROKER_FPS)
-#define BROKER_TASK_STACK    6144
-#define BROKER_TASK_PRIO     5
-#define DMA_STALL_WARN_THRESH 30  /* log warning after this many consecutive fails */
+#define BROKER_FPS             15
+#define BROKER_FRAME_DELAY     pdMS_TO_TICKS(1000 / BROKER_FPS)
+#define BROKER_TASK_STACK      6144
+#define BROKER_TASK_PRIO       5
+/* No core pinning: let FreeRTOS scheduler distribute across both cores.
+ * Pinning all tasks to Core 1 caused httpd starvation when the stream task's
+ * blocking httpd_resp_send_chunk (slow WiFi) held session locks that prevented
+ * the httpd main thread from processing other requests. */
+#define BROKER_TASK_CORE       tskNO_AFFINITY
+#define DMA_STALL_WARN_THRESH  30  /* log warning after this many consecutive fails */
 
 /* Compute capture cadence from config fps (falls back to BROKER_FPS).
  * ESP32 camera has no hardware FPS register; this throttles producer captures. */
@@ -45,33 +55,70 @@ static TickType_t broker_frame_delay(void)
     return pdMS_TO_TICKS(1000 / fps);
 }
 
-/* ---- Latest frame snapshot (producer writes, consumers read-copy) ---- */
+/* ---- Refcounted immutable frame ---- */
+/* Published by producer via pointer swap; acquired by consumers via brief
+ * spinlock-protected retain.  Once published, the frame contents (buf/len/
+ * format) are immutable — consumers read freely without additional locking.
+ * The frame is freed only when the last reference is released. */
 
 typedef struct {
-    uint8_t     *buf;       /* PSRAM, reused across frames (grows as needed) */
-    size_t       len;       /* current frame byte length */
-    size_t       cap;       /* allocated capacity of buf */
+    uint8_t     *buf;          /* PSRAM */
+    size_t       len;
     pixformat_t  format;
-    uint32_t     timestamp; /* esp_timer seconds at capture */
-    bool         valid;     /* at least one frame captured */
-} latest_frame_t;
+    uint32_t     timestamp;    /* esp_timer seconds at capture */
+    volatile uint32_t refcount;
+} broker_frame_t;
 
-static latest_frame_t s_latest = {0};
-static SemaphoreHandle_t s_mutex = NULL;        /* protects s_latest */
+/* Currently published frame. Read with a volatile peek for polling; acquired
+ * (retain) only under s_lock.  32-bit aligned pointer reads are atomic on
+ * Xtensa LX6, so the volatile peek never sees a torn pointer. */
+static broker_frame_t * volatile s_current = NULL;
+
+/* Spinlock protecting s_current swaps and refcount inc/dec.
+ * Held for nanoseconds (pointer assign + integer op) — never during memcpy
+ * or malloc.  Uses portMUX_TYPE (SMP spinlock) instead of a FreeRTOS mutex
+ * because the critical section is too short to justify mutex overhead
+ * (context save, priority inheritance). */
+static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
+
 static TaskHandle_t      s_producer_task = NULL;
 static volatile bool     s_running = false;
 static volatile uint32_t s_frame_count = 0;
 static volatile uint32_t s_fail_count  = 0;
 
+/* Release a reference. If refcount drops to 0, free the frame.
+ * The decrement is under s_lock (nanoseconds); the actual free happens
+ * OUTSIDE the lock to avoid blocking other cores during heap_caps_free. */
+static void frame_release(broker_frame_t *f)
+{
+    if (f == NULL) return;
+
+    bool should_free = false;
+    taskENTER_CRITICAL(&s_lock);
+    if (f->refcount > 0) {
+        f->refcount--;
+        should_free = (f->refcount == 0);
+    }
+    taskEXIT_CRITICAL(&s_lock);
+
+    if (should_free) {
+        if (f->buf) {
+            heap_caps_free(f->buf);
+        }
+        free(f);
+    }
+}
+
 /* ---- Producer task ---- */
 
 static void producer_task(void *arg)
 {
-    ESP_LOGI(TAG, "Producer task started (%u fps)", BROKER_FPS);
+    ESP_LOGI(TAG, "Producer task started on core %d (%u fps)",
+             xPortGetCoreID(), BROKER_FPS);
 
     while (s_running) {
+        /* Skip if camera not ready (reinit in progress or not started) */
         if (!camera_is_initialized()) {
-            /* Camera not ready (reinit in progress or not started) */
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
@@ -91,31 +138,47 @@ static void producer_task(void *arg)
             continue;
         }
 
-        /* Update latest frame snapshot — quick memcpy under mutex */
-        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        /* ---- All expensive work OUTSIDE the lock ---- */
 
-        /* Grow buffer if needed (PSRAM) */
-        if (s_latest.cap < fb->len) {
-            if (s_latest.buf) {
-                heap_caps_free(s_latest.buf);
-                s_latest.buf = NULL;
-                s_latest.cap = 0;
-            }
-            s_latest.buf = heap_caps_malloc(fb->len, MALLOC_CAP_SPIRAM);
-            if (s_latest.buf) {
-                s_latest.cap = fb->len;
-            }
+        /* Allocate new frame struct (small, internal RAM) */
+        broker_frame_t *nf = (broker_frame_t *)calloc(1, sizeof(broker_frame_t));
+        if (nf == NULL) {
+            ESP_LOGE(TAG, "Failed to allocate broker frame struct");
+            camera_return_fb(fb);
+            vTaskDelay(broker_frame_delay());
+            continue;
         }
 
-        if (s_latest.buf) {
-            memcpy(s_latest.buf, fb->buf, fb->len);
-            s_latest.len       = fb->len;
-            s_latest.format    = fb->format;
-            s_latest.timestamp = (uint32_t)(esp_timer_get_time() / 1000000);
-            s_latest.valid     = true;
+        /* Allocate PSRAM buffer for frame data */
+        nf->buf = (uint8_t *)heap_caps_malloc(fb->len, MALLOC_CAP_SPIRAM);
+        if (nf->buf == NULL) {
+            ESP_LOGE(TAG, "Failed to allocate PSRAM frame buffer (%u bytes)",
+                     (unsigned)fb->len);
+            free(nf);
+            camera_return_fb(fb);
+            vTaskDelay(broker_frame_delay());
+            continue;
         }
 
-        xSemaphoreGive(s_mutex);
+        /* memcpy camera data OUTSIDE the lock (~5-10ms for 20-70KB PSRAM) */
+        memcpy(nf->buf, fb->buf, fb->len);
+        nf->len       = fb->len;
+        nf->format    = fb->format;
+        nf->timestamp = (uint32_t)(esp_timer_get_time() / 1000000);
+        nf->refcount  = 1;  /* publisher's reference (held via s_current) */
+
+        /* ---- Publish: brief critical section (pointer swap only) ---- */
+        broker_frame_t *old = NULL;
+        taskENTER_CRITICAL(&s_lock);
+        old = s_current;
+        s_current = nf;
+        taskEXIT_CRITICAL(&s_lock);
+
+        /* Release old published frame OUTSIDE the lock.
+         * If no consumers hold a ref (refcount was 1), it's freed immediately.
+         * If consumers are mid-copy (refcount > 1), it stays alive until they
+         * finish — no torn reads possible. */
+        frame_release(old);
 
         /* Return camera buffer IMMEDIATELY — this is the whole point */
         camera_return_fb(fb);
@@ -146,29 +209,23 @@ esp_err_t frame_broker_init(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    if (s_mutex == NULL) {
-        s_mutex = xSemaphoreCreateMutex();
-        if (!s_mutex) {
-            ESP_LOGE(TAG, "Failed to create mutex");
-            return ESP_ERR_NO_MEM;
-        }
-    }
-
     s_running = true;
     s_frame_count = 0;
     s_fail_count = 0;
-    s_latest.valid = false;
+    s_current = NULL;
 
-    BaseType_t ret = xTaskCreate(producer_task, "fb_broker",
-                                 BROKER_TASK_STACK, NULL,
-                                 BROKER_TASK_PRIO, &s_producer_task);
+    BaseType_t ret = xTaskCreatePinnedToCore(producer_task, "fb_broker",
+                                              BROKER_TASK_STACK, NULL,
+                                              BROKER_TASK_PRIO, &s_producer_task,
+                                              BROKER_TASK_CORE);
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create producer task");
         s_running = false;
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "Frame broker initialized");
+    ESP_LOGI(TAG, "Frame broker initialized (core %d)",
+             BROKER_TASK_CORE == tskNO_AFFINITY ? -1 : BROKER_TASK_CORE);
     return ESP_OK;
 }
 
@@ -187,16 +244,15 @@ esp_err_t frame_broker_stop(void)
         waited += 50;
     }
 
-    /* Free latest frame buffer */
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
-    if (s_latest.buf) {
-        heap_caps_free(s_latest.buf);
-        s_latest.buf = NULL;
-        s_latest.cap = 0;
-        s_latest.len = 0;
-        s_latest.valid = false;
-    }
-    xSemaphoreGive(s_mutex);
+    /* Release the currently published frame.
+     * Any consumers still mid-copy hold their own ref, so the frame stays
+     * alive until they finish — this just drops the publisher's reference. */
+    broker_frame_t *old = NULL;
+    taskENTER_CRITICAL(&s_lock);
+    old = s_current;
+    s_current = NULL;
+    taskEXIT_CRITICAL(&s_lock);
+    frame_release(old);
 
     ESP_LOGI(TAG, "Frame broker stopped");
     return ESP_OK;
@@ -209,7 +265,7 @@ bool frame_broker_is_running(void)
 
 esp_err_t frame_broker_get_copy(camera_fb_t **fb_out, uint32_t timeout_ms)
 {
-    if (!fb_out) {
+    if (fb_out == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
     *fb_out = NULL;
@@ -218,42 +274,63 @@ esp_err_t frame_broker_get_copy(camera_fb_t **fb_out, uint32_t timeout_ms)
         return ESP_FAIL;
     }
 
-    /* Wait for first frame if needed */
+    /* Wait for first published frame (volatile peek — cheap poll, no lock) */
     uint32_t waited = 0;
-    for (;;) {
-        xSemaphoreTake(s_mutex, portMAX_DELAY);
-        bool ready = s_latest.valid;
-        xSemaphoreGive(s_mutex);
-        if (ready) break;
+    while (s_current == NULL) {
         if (!s_running) return ESP_FAIL;
         if (waited >= timeout_ms) return ESP_ERR_TIMEOUT;
         vTaskDelay(pdMS_TO_TICKS(20));
         waited += 20;
     }
 
-    /* Allocate output frame struct (small, internal RAM) */
+    /* Acquire a reference to the current frame (brief critical section).
+     * This is the ONLY lock hold on the consumer side — pointer read +
+     * refcount inc, nanoseconds.  The actual malloc + memcpy happens below,
+     * OUTSIDE the lock. */
+    broker_frame_t *ref = NULL;
+    while (ref == NULL) {
+        taskENTER_CRITICAL(&s_lock);
+        ref = s_current;
+        if (ref != NULL) {
+            ref->refcount++;   /* retain under lock — atomic with pointer read */
+        }
+        taskEXIT_CRITICAL(&s_lock);
+
+        if (ref != NULL) break;
+        /* s_current was NULL (stop raced) — retry or bail */
+        if (!s_running) return ESP_FAIL;
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+
+    /* ---- All expensive work OUTSIDE the lock ---- */
+
+    /* Allocate output frame struct (small, internal RAM).
+     * Reuses camera_fb_t so downstream functions (storage_save_photo,
+     * flash_brightness_detect) need zero changes. */
     camera_fb_t *fb = (camera_fb_t *)calloc(1, sizeof(camera_fb_t));
-    if (!fb) {
+    if (fb == NULL) {
+        frame_release(ref);
         return ESP_ERR_NO_MEM;
     }
 
-    /* Copy latest frame under mutex (malloc + memcpy ~20KB, < 1ms) */
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
-
-    fb->buf = (uint8_t *)heap_caps_malloc(s_latest.len, MALLOC_CAP_SPIRAM);
-    if (!fb->buf) {
-        xSemaphoreGive(s_mutex);
+    /* Copy frame data OUTSIDE the lock (~5-10ms for 20-70KB PSRAM).
+     * Safe because 'ref' holds a retained reference — the producer cannot
+     * free or overwrite this buffer while we hold the ref. */
+    fb->buf = (uint8_t *)heap_caps_malloc(ref->len, MALLOC_CAP_SPIRAM);
+    if (fb->buf == NULL) {
         free(fb);
+        frame_release(ref);
         return ESP_ERR_NO_MEM;
     }
 
-    memcpy(fb->buf, s_latest.buf, s_latest.len);
-    fb->len    = s_latest.len;
-    fb->format = s_latest.format;
+    memcpy(fb->buf, ref->buf, ref->len);
+    fb->len    = ref->len;
+    fb->format = ref->format;
     /* width/height not tracked — no consumer uses them;
      * camera_fb_t zeroed by calloc so they read as 0 */
 
-    xSemaphoreGive(s_mutex);
+    /* Release our reference to the published frame */
+    frame_release(ref);
 
     *fb_out = fb;
     return ESP_OK;
@@ -261,7 +338,7 @@ esp_err_t frame_broker_get_copy(camera_fb_t **fb_out, uint32_t timeout_ms)
 
 void frame_broker_free(camera_fb_t *fb)
 {
-    if (!fb) return;
+    if (fb == NULL) return;
     if (fb->buf) {
         heap_caps_free(fb->buf);
     }

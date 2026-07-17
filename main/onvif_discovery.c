@@ -104,14 +104,20 @@ static bool extract_message_id(const char *body, size_t body_len,
 static bool is_probe_message(const char *body, size_t body_len)
 {
     (void)body_len;
-    /* Check for "wsdiscovery:Probe" or "ws-discovery:Probe" or just "Probe" */
-    if (strstr(body, "wsdiscovery:Probe") ||
-        strstr(body, "ws-discovery:Probe") ||
-        strstr(body, ":Probe")) {
-        /* Also verify it's not a ProbeMatches response */
-        if (!strstr(body, "ProbeMatches")) {
-            return true;
-        }
+
+    /* ProbeMatches / ProbeMatch responses also contain the "Probe" substring,
+     * so reject them up front (covers both singular and plural). */
+    if (strstr(body, "ProbeMatch")) {
+        return false;
+    }
+
+    /* Match the Probe element's opening tag. Two legal XML forms exist:
+     *   - default namespace:  <Probe xmlns="...">   (onvif-go / many NVRs send this)
+     *   - namespace prefix:   <wsd:Probe>, <wsdiscovery:Probe>, <ws-discovery:Probe>
+     * Matching on the tag boundary ("<Probe" / ":Probe") avoids false positives
+     * on the bare word "Probe" appearing elsewhere in the message. */
+    if (strstr(body, "<Probe") || strstr(body, ":Probe")) {
+        return true;
     }
     return false;
 }

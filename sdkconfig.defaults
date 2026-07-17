@@ -69,11 +69,12 @@ CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE=n
 CONFIG_ESP_TIMER_TASK_STACK_SIZE=6144
 
 # TCP/lwIP tuning for marginal WiFi (high packet loss, high jitter)
-# TCP/lwIP tuning for marginal WiFi (high RTT ~1s, high jitter)
-# Larger send buffer + window: 23040 / 760 MSS = ~30 segments in flight
-# Theoretical throughput: 23040 / 1s RTT = ~23 KB/s (enough for 20KB JPEGs in <1s)
-CONFIG_LWIP_TCP_SND_BUF_DEFAULT=23040
-CONFIG_LWIP_TCP_WND_DEFAULT=23040
+# Smaller TX buffer + window to conserve scarce internal RAM. The default 23040
+# exhausts internal RAM when the MJPEG stream fills pbufs that drain slowly over
+# ~4 KB/s WiFi. 6080 = 8 × 760 MSS; WiFi bandwidth (not buffer size) is the
+# bottleneck, so throughput is unchanged while saving ~17 KB per connection.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=6080
+CONFIG_LWIP_TCP_WND_DEFAULT=6080
 # Faster retransmission: initial RTO 300ms (default 1500ms is 5x too slow)
 CONFIG_LWIP_TCP_RTO_TIME=300
 # Smaller MSS for lossy WiFi: shorter air time per frame = lower PER

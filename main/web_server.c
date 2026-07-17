@@ -1226,6 +1226,8 @@ esp_err_t web_server_start(uint16_t port)
     config.lru_purge_enable = true;   /* clean up stale connections */
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.open_fn = on_session_open;  /* TCP_NODELAY on all connections */
+    /* No core pinning: httpd default (tskNO_AFFINITY) lets the scheduler */
+    /* place it on either core, avoiding starvation when stream blocks. */
 
     esp_err_t ret = httpd_start(&s_server, &config);
     if (ret != ESP_OK) {

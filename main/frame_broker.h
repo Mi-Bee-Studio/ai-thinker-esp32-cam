@@ -11,12 +11,15 @@
  * @brief Producer-consumer frame distribution for multi-consumer camera access.
  *
  * Architecture:
- *   - ONE producer task captures from camera at fixed FPS, copies frame to
- *     a single "latest frame" slot in PSRAM, returns camera fb immediately
- *     (hold time < 1ms).  Camera DMA never starves.
- *   - Multiple consumers call frame_broker_get_copy() to receive an
- *     independent PSRAM copy.  Slow consumers (e.g. MJPEG over weak WiFi)
- *     never block the camera or other consumers.
+ *   - ONE producer task captures from camera at fixed FPS, allocates a new
+ *     refcounted frame in PSRAM and memcpy's the camera data OUTSIDE any
+ *     lock, then publishes it via a brief spinlock-protected pointer swap.
+ *     Camera fb is returned immediately — DMA never starves.
+ *   - Multiple consumers acquire a reference to the latest published frame
+ *     under the same brief spinlock, then copy it OUTSIDE the lock.  No
+ *     memcpy or malloc ever happens inside the critical section, so slow
+ *     consumers (e.g. MJPEG over weak WiFi) never block the producer or
+ *     other consumers.
  *
  * Must call frame_broker_init() AFTER camera_init() succeeds.
  * The producer coordinates with camera_apply_settings() via the existing
