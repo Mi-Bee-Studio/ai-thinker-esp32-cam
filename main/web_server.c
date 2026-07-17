@@ -40,6 +40,7 @@
 #include "onvif_service.h"
 #include "frame_broker.h"
 #include "sd_logger.h"
+#include "ota_update.h"
 
 #define FIRMWARE_VERSION "v1.0"
 
@@ -1167,6 +1168,8 @@ static const uri_entry_t s_uris[] = {
     { "/api/record",    HTTP_GET,    handler_api_record_get   },
     { "/api/flash",    HTTP_GET,    handler_api_flash        },
     { "/api/flash",    HTTP_POST,   handler_api_flash        },
+    { "/api/ota/info",   HTTP_GET,    handler_api_ota_info     },
+    { "/api/ota/upload", HTTP_POST,   handler_api_ota_upload   },
 
     { "/*",             HTTP_OPTIONS, handler_options         },
     { "/*",             HTTP_GET,    handler_static          },

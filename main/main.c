@@ -10,6 +10,7 @@
 
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_ota_ops.h"
 #include "esp_spiffs.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
@@ -147,6 +148,10 @@ static void sta_services_task(void *arg)
         if (ret == ESP_OK) {
             s_web_server_started = true;
             ESP_LOGI(TAG, "Web server started on port 80");
+            /* Mark app valid — confirms new OTA firmware boots and serves.
+             * If new firmware crashes before this point, bootloader auto-reverts
+             * to the previous partition (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE). */
+            esp_ota_mark_app_valid_cancel_rollback();
         } else {
             ESP_LOGE(TAG, "Web server start failed: %s", esp_err_to_name(ret));
         }
