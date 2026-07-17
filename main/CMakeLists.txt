@@ -20,6 +20,7 @@ idf_component_register(
         "onvif_service.c"
         "frame_broker.c"
         "sd_logger.c"
+        "ota_update.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi
@@ -41,5 +42,6 @@ idf_component_register(
         lwip
         freertos
         esp_system
+        app_update
         log
     )
