@@ -70,7 +70,7 @@ static void set_cors_headers(httpd_req_t *req)
 }
 
 /** @brief Check X-Password header against stored web_password */
-static bool check_auth(httpd_req_t *req)
+bool check_auth(httpd_req_t *req)
 {
     char password[64] = {0};
     if (httpd_req_get_hdr_value_str(req, "X-Password", password, sizeof(password)) == ESP_OK) {

@@ -148,10 +148,7 @@ static void sta_services_task(void *arg)
         if (ret == ESP_OK) {
             s_web_server_started = true;
             ESP_LOGI(TAG, "Web server started on port 80");
-            /* Mark app valid — confirms new OTA firmware boots and serves.
-             * If new firmware crashes before this point, bootloader auto-reverts
-             * to the previous partition (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE). */
-            esp_ota_mark_app_valid_cancel_rollback();
+        /* OTA mark-valid moved to app_main Step 2 (early boot) for safety. */
         } else {
             ESP_LOGE(TAG, "Web server start failed: %s", esp_err_to_name(ret));
         }
@@ -284,6 +281,13 @@ void app_main(void)
     ret = config_init();
     ESP_ERROR_CHECK(ret);
     ESP_LOGI(TAG, "=== Step 2/19: Config initialized ===");
+
+    /* Mark firmware valid ASAP — if this is the first boot after OTA, the app
+     * is in PENDING_VERIFY state. Must mark valid before any potential reboot
+     * or the bootloader rolls back to the previous partition.
+     * Placed early (right after config) so even if WiFi/camera init fails,
+     * the OTA is confirmed and won't auto-revert. */
+    esp_ota_mark_app_valid_cancel_rollback();
 
     /* Start serial AT command listener (available immediately after config) */
     serial_config_init();
