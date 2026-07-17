@@ -83,3 +83,7 @@ CONFIG_LWIP_TCP_MSS=760
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=12
 # Reduce max retransmissions (default 12 ≈ 20min hang, 6 ≈ 19s max)
 CONFIG_LWIP_TCP_MAXRTX=6
+
+# OTA firmware update (A/B partitions + bootloader rollback)
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_APP_ROLLBACK_ENABLE=y
