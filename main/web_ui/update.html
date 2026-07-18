@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>固件升级 - Mi&Bee CAM</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--c:#0D9488;--cd:#0F766E;--bg:#F8FAFB;--card:#fff;--t:#1E293B;--t2:#64748B;--bdr:#E2E8F0;--red:#DC2626;--yel:#D97706;--grn:#059669}
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;background:var(--bg);color:var(--t);font-size:14px}
+.hdr{background:linear-gradient(135deg,#0F766E,#0D9488);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:10px}
+.hdr h1{font-size:17px;font-weight:700;letter-spacing:.3px}
+.hdr .sub{font-size:12px;opacity:.75;margin-left:auto}
+.nav{background:var(--card);border-bottom:1px solid var(--bdr);display:flex}
+.nav a{flex:1;text-align:center;padding:10px 0;font-size:13px;color:var(--t2);text-decoration:none;border-bottom:2px solid transparent;transition:all .15s}
+.nav a.act{color:var(--c);border-bottom-color:var(--c);font-weight:600}
+.nav a:hover{background:#F1F5F9}
+.main{padding:12px;max-width:600px;margin:0 auto;padding-bottom:20px}
+.card{background:var(--card);border-radius:10px;padding:14px 16px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.ct{font-size:13px;color:var(--t2);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.row{display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #F1F5F9}
+.row:last-child{border-bottom:none}
+.row .l{color:var(--t2)}
+.row .v{font-weight:500;color:var(--t);text-align:right;max-width:60%;word-break:break-all}
+.bar-w{background:#E2E8F0;border-radius:4px;height:10px;margin:8px 0;overflow:hidden}
+.bar-f{height:100%;border-radius:4px;transition:width .3s;background:var(--c);width:0%}
+.bar-t{font-size:12px;color:var(--t2);text-align:center;margin-top:2px}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.badge.g{background:#ECFDF5;color:var(--grn)}
+.badge.y{background:#FFFBEB;color:var(--yel)}
+.badge.r{background:#FEF2F2;color:var(--red)}
+.fld{margin-bottom:12px}
+.fld label{display:block;font-size:13px;color:var(--t2);margin-bottom:4px;font-weight:500}
+.fld input[type=file]{width:100%;padding:8px;border:1px dashed var(--bdr);border-radius:6px;font-size:13px;background:#FAFBFC}
+.btn{display:block;width:100%;padding:10px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:all .15s}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-p{background:var(--c);color:#fff}
+.btn-p:hover:not(:disabled){background:var(--cd)}
+.btn-p:active:not(:disabled){transform:scale(.98)}
+.warn{background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:10px 12px;font-size:12px;color:#92400E;line-height:1.6;margin-bottom:10px}
+.warn b{color:#78350F}
+.msg{padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:10px;display:none;line-height:1.5}
+.msg.ok{background:#ECFDF5;color:var(--grn);display:block}
+.msg.err{background:#FEF2F2;color:var(--red);display:block}
+.msg.info{background:#EFF6FF;color:#2563EB;display:block}
+.pw-w{position:relative}
+.pw-w input{width:100%;padding:8px 36px 8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:14px;background:#FAFBFC}
+.pw-w .eye{position:absolute;right:8px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:16px;opacity:.6}
+.reboot-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:999}
+.reboot-box{background:#fff;border-radius:12px;padding:24px 30px;text-align:center;max-width:320px}
+.reboot-box .ico{font-size:36px;margin-bottom:8px}
+.reboot-box h3{font-size:16px;margin-bottom:6px}
+.reboot-box p{font-size:13px;color:var(--t2);line-height:1.5}
+.spinner{width:32px;height:32px;border:3px solid #E2E8F0;border-top-color:var(--c);border-radius:50%;animation:spin 1s linear infinite;margin:12px auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="hdr">
+<h1>固件升级</h1>
+<span class="sub" id="devName">--</span>
+</div>
+<div class="nav">
+<a href="/">仪表盘</a>
+<a href="/preview.html">实时预览</a>
+<a href="/config.html">配置</a>
+<a href="/files.html">照片</a>
+<a href="/update.html" class="act">固件升级</a>
+</div>
+<div class="main">
+
+<div class="card">
+<div class="ct">当前固件信息</div>
+<div class="row"><span class="l">固件版本</span><span class="v" id="fwVer">--</span></div>
+<div class="row"><span class="l">运行分区</span><span class="v" id="runPart">--</span></div>
+<div class="row"><span class="l">目标分区</span><span class="v" id="nextPart">--</span></div>
+<div class="row"><span class="l">最大固件大小</span><span class="v" id="maxSize">--</span></div>
+<div class="row"><span class="l">回滚保护</span><span class="v" id="rollback">--</span></div>
+</div>
+
+<div class="warn">
+<b>⚠ 注意事项：</b><br>
+• 上传期间摄像头和所有服务将停止<br>
+• 上传完成后设备将<b>自动重启</b>到新固件<br>
+• 如果新固件无法启动，将自动回滚到当前版本<br>
+• 请仅上传 <b>.bin</b> 固件文件（本设备编译生成）
+</div>
+
+<div class="card">
+<div class="ct">上传新固件</div>
+<div id="msgBox" class="msg"></div>
+<div class="fld">
+<label>管理密码</label>
+<div class="pw-w"><input type="password" id="pwInput" placeholder="默认: admin"><span class="eye" onclick="togPw(this)">&#128065;</span></div>
+</div>
+<div class="fld">
+<label>固件文件 (.bin)</label>
+<input type="file" id="fileInput" accept=".bin">
+</div>
+<div id="progWrap" style="display:none">
+<div class="bar-w"><div class="bar-f" id="progBar"></div></div>
+<div class="bar-t" id="progTxt">0%</div>
+</div>
+<button class="btn btn-p" id="upBtn" disabled onclick="startUpload()">上传固件并重启</button>
+</div>
+
+</div>
+
+<div class="reboot-overlay" id="rebootOv">
+<div class="reboot-box">
+<div class="ico" id="rebootIco">📦</div>
+<h3 id="rebootTitle">固件上传完成</h3>
+<p id="rebootMsg">设备正在重启，请等待...</p>
+<div class="spinner" id="rebootSpin"></div>
+<p style="font-size:11px;color:var(--t2);margin-top:4px" id="rebootTimer"></p>
+</div>
+</div>
+
+<script>
+function $(s){return document.getElementById(s)}
+function fmtB(b){if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';return(b/1048576).toFixed(1)+'MB'}
+function getPw(){return localStorage.getItem('cam_password')||''}
+
+function togPw(el){var i=el.previousElementSibling;if(i.type==='password'){i.type='text';el.textContent='\uD83D\uDC41'}else{i.type='password';el.textContent='\uD83D\uDC40'}}
+
+function showMsg(t,c){var b=$('msgBox');b.textContent=t;b.className='msg '+(c||'info')}
+function hideMsg(){$('msgBox').className='msg';$('msgBox').textContent=''}
+
+var otaInfo=null;
+
+function loadInfo(){
+  fetch('/api/ota/info').then(function(r){return r.json()}).then(function(d){
+    if(!d||!d.ok)return;
+    var v=d.data;otaInfo=v;
+    $('fwVer').textContent=v.firmware_version||'--';
+    $('runPart').textContent=v.running_partition||'--';
+    $('nextPart').textContent=v.next_partition||'--';
+    $('maxSize').textContent=v.max_image_size?fmtB(v.max_image_size):'--';
+    $('rollback').innerHTML=v.rollback_enabled?'<span class="badge g">已启用</span>':'<span class="badge y">未启用</span>';
+  }).catch(function(){showMsg('无法获取固件信息，设备可能离线','err')});
+}
+
+$('fileInput').addEventListener('change',function(){
+  var f=this.files[0];
+  if(!f){$('upBtn').disabled=true;return}
+  if(otaInfo&&otaInfo.max_image_size&&f.size>otaInfo.max_image_size){
+    showMsg('文件大小 '+fmtB(f.size)+' 超过最大允许 '+fmtB(otaInfo.max_image_size),'err');
+    $('upBtn').disabled=true;return;
+  }
+  hideMsg();
+  $('upBtn').disabled=false;
+});
+
+// Pre-fill password from localStorage
+$('pwInput').value=getPw();
+
+function startUpload(){
+  var file=$('fileInput').files[0];
+  if(!file)return;
+  var pw=$('pwInput').value;
+  if(!pw){showMsg('请输入管理密码','err');return}
+
+  // Validate password first
+  fetch('/api/auth',{headers:{'X-Password':pw}}).then(function(r){
+    if(!r.ok){showMsg('密码错误','err');return}
+    localStorage.setItem('cam_password',pw);
+    doUpload(file,pw);
+  }).catch(function(){showMsg('密码验证失败，请重试','err')});
+}
+
+function doUpload(file,pw){
+  $('upBtn').disabled=true;
+  $('fileInput').disabled=true;
+  $('progWrap').style.display='block';
+  showMsg('正在上传 '+fmtB(file.size)+'，请勿关闭页面...','info');
+
+  var xhr=new XMLHttpRequest();
+  xhr.open('POST','/api/ota/upload');
+  xhr.setRequestHeader('X-Password',pw);
+
+  xhr.upload.onprogress=function(e){
+    if(e.lengthComputable){
+      var pct=Math.round(e.loaded/e.total*100);
+      $('progBar').style.width=pct+'%';
+      $('progTxt').textContent=pct+'% ('+fmtB(e.loaded)+' / '+fmtB(e.total)+')';
+    }
+  };
+
+  xhr.onload=function(){
+    if(xhr.status===200){
+      try{var d=JSON.parse(xhr.responseText);if(d&&d.ok){
+        $('progBar').style.width='100%';
+        $('progTxt').textContent='上传完成 ✓';
+        showRebootOverlay();
+        return;
+      }}catch(e){}
+      showMsg('上传完成但响应异常: '+xhr.responseText,'err');
+    }else{
+      var em='上传失败 (HTTP '+xhr.status+')';
+      try{var d=JSON.parse(xhr.responseText);if(d&&d.error)em=d.error;}catch(e){}
+      showMsg(em,'err');
+    }
+    resetForm();
+  };
+
+  xhr.onerror=function(){showMsg('网络错误，上传失败。WiFi信号可能不稳定，请重试。','err');resetForm()};
+  xhr.ontimeout=function(){showMsg('上传超时，请重试','err');resetForm()};
+  xhr.timeout=300000;
+
+  xhr.send(file);
+}
+
+function resetForm(){
+  $('upBtn').disabled=false;
+  $('fileInput').disabled=false;
+  $('progWrap').style.display='none';
+  $('progBar').style.width='0%';
+}
+
+var rebootStart=0;
+function showRebootOverlay(){
+  $('rebootOv').style.display='flex';
+  rebootStart=Date.now();
+  updateRebootTimer();
+  setTimeout(pollAfterReboot,8000);
+}
+
+function updateRebootTimer(){
+  var el=Math.floor((Date.now()-rebootStart)/1000);
+  $('rebootTimer').textContent='已等待 '+el+' 秒';
+  if($('rebootOv').style.display==='flex')setTimeout(updateRebootTimer,1000);
+}
+
+function pollAfterReboot(){
+  fetch('/api/ota/info',{signal:AbortSignal.timeout?undefined:undefined}).then(function(r){
+    if(!r.ok)throw new Error('bad status');
+    return r.json();
+  }).then(function(d){
+    if(d&&d.ok){
+      $('rebootSpin').style.display='none';
+      $('rebootIco').textContent='✅';
+      $('rebootTitle').textContent='升级成功！';
+      var prev=otaInfo?otaInfo.running_partition:'';
+      $('rebootMsg').textContent='设备已从 '+prev+' 切换到 '+d.data.running_partition+' 分区。页面将在3秒后刷新...';
+      $('rebootTimer').textContent='';
+      setTimeout(function(){location.reload()},3000);
+    }else{
+      setTimeout(pollAfterReboot,3000);
+    }
+  }).catch(function(){
+    // Device still rebooting, keep waiting
+    var el=Math.floor((Date.now()-rebootStart)/1000);
+    if(el>120){
+      $('rebootSpin').style.display='none';
+      $('rebootIco').textContent='⚠';
+      $('rebootTitle').textContent='等待超时';
+      $('rebootMsg').textContent='设备未在2分钟内恢复。可能需要手动检查。';
+      return;
+    }
+    setTimeout(pollAfterReboot,3000);
+  });
+}
+
+loadInfo();
+</script>
+</body>
+</html>
