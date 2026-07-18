@@ -59,8 +59,22 @@ jobs:
           Replace COMx with your actual serial port (e.g., COM8 on Windows, /dev/ttyUSB0 on Linux).
           EOF
 
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Extract release notes
+        id: notes
+        run: |
+          # Extract notes for current version from CHANGELOG.md
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          NOTES=$(awk "/^## v${VERSION}/,/^## v[0-9]/" CHANGELOG.md | head -n -1 | tail -n +2)
+          echo "NOTES<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: firmware/*
-          generate_release_notes: true
+          body: ${{ steps.notes.outputs.NOTES }}
