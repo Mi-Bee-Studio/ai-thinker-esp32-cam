@@ -5,6 +5,9 @@
 #include "esp_err.h"
 #include "esp_camera.h"
 
+/* Forward declaration — avoids pulling cJSON.h into every includer */
+typedef struct cJSON cJSON;
+
 /**
  * @brief Initialize SD card (SPI mode), mount FAT at /sdcard, start hot-plug monitor
  *
@@ -122,5 +125,19 @@ esp_err_t storage_cleanup_incomplete_avi(void);
  * @return Number of recording files
  */
 uint32_t storage_get_recording_count(void);
+
+/**
+ * @brief Get cached photo list as cJSON array
+ * @return cJSON array of photo objects (caller must cJSON_Delete), or NULL on error
+ * Each object: {"name": "relative/path", "size": 12345, "type": "photo"}
+ */
+cJSON *storage_get_photo_list_json(void);
+
+/**
+ * @brief Get cached recording list as cJSON array
+ * @return cJSON array of recording objects (caller must cJSON_Delete), or NULL on error
+ * Each object: {"name": "relative/path", "size": 12345, "type": "recording"}
+ */
+cJSON *storage_get_recording_list_json(void);
 
 #endif // STORAGE_MANAGER_H

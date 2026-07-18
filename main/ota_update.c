@@ -242,3 +242,143 @@ esp_err_t handler_api_ota_upload(httpd_req_t *req)
 
     return ESP_OK; /* unreachable */
 }
+
+/* ---------- POST /api/ota/spiffs ---------- */
+
+esp_err_t handler_api_spiffs_upload(httpd_req_t *req)
+{
+    /* Auth */
+    if (!check_auth(req)) {
+        httpd_resp_set_status(req, "401 Unauthorized");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        httpd_resp_send(req, "{\"ok\":false,\"error\":\"Unauthorized\"}",
+                        HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
+    size_t content_len = req->content_len;
+
+    /* Find the SPIFFS partition */
+    const esp_partition_t *spiffs_part = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "spiffs");
+    if (!spiffs_part) {
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        httpd_resp_send(req, "{\"ok\":false,\"error\":\"SPIFFS partition not found\"}",
+                        HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
+    if (content_len == 0 || content_len > spiffs_part->size) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        char err[128];
+        snprintf(err, sizeof(err),
+                 "{\"ok\":false,\"error\":\"Invalid size %u (max %u)\"}",
+                 (unsigned)content_len, (unsigned)spiffs_part->size);
+        httpd_resp_send(req, err, HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
+    ESP_LOGI(TAG, "SPIFFS upload: %u bytes -> partition %s (offset=0x%x)",
+             (unsigned)content_len, spiffs_part->label, (unsigned)spiffs_part->address);
+
+    /* Quiesce system — same as firmware OTA */
+    ota_quiesce_system();
+
+    /* Erase the SPIFFS partition */
+    esp_err_t err = esp_partition_erase_range(spiffs_part, 0, spiffs_part->size);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "SPIFFS erase failed: %s", esp_err_to_name(err));
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        httpd_resp_send(req, "{\"ok\":false,\"error\":\"Erase failed\"}",
+                        HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
+    /* Stream body to SPIFFS partition in 4KB chunks */
+    char *buf = malloc(4096);
+    if (!buf) {
+        ESP_LOGE(TAG, "SPIFFS upload buffer alloc failed");
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        httpd_resp_send(req, "{\"ok\":false,\"error\":\"Out of memory\"}",
+                        HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
+    size_t remaining = content_len;
+    size_t written   = 0;
+    size_t offset    = 0;
+    bool   ok        = true;
+
+    while (remaining > 0) {
+        int to_recv = (remaining < 4096) ? (int)remaining : 4096;
+        int recv_len = httpd_req_recv(req, buf, to_recv);
+        if (recv_len < 0) {
+            ESP_LOGE(TAG, "httpd_req_recv failed: %d", recv_len);
+            ok = false;
+            break;
+        }
+        if (recv_len == 0) {
+            ESP_LOGE(TAG, "Client disconnected during SPIFFS upload");
+            ok = false;
+            break;
+        }
+
+        err = esp_partition_write(spiffs_part, offset, buf, recv_len);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "esp_partition_write failed at offset 0x%x: %s",
+                     (unsigned)offset, esp_err_to_name(err));
+            ok = false;
+            break;
+        }
+
+        offset    += recv_len;
+        written   += recv_len;
+        remaining -= recv_len;
+
+        if ((written % 65536) < 4096) {
+            ESP_LOGI(TAG, "SPIFFS progress: %u/%u bytes (%d%%)",
+                     (unsigned)written, (unsigned)content_len,
+                     (int)(written * 100 / content_len));
+        }
+    }
+
+    free(buf);
+
+    if (!ok || written != content_len) {
+        ESP_LOGE(TAG, "SPIFFS upload failed: wrote %u/%u bytes",
+                 (unsigned)written, (unsigned)content_len);
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        httpd_resp_send(req, "{\"ok\":false,\"error\":\"Upload failed or truncated\"}",
+                        HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
+    ESP_LOGI(TAG, "SPIFFS upload complete: %u bytes written", (unsigned)written);
+
+    /* Send success response */
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    char resp[128];
+    int resp_len = snprintf(resp, sizeof(resp),
+             "{\"ok\":true,\"data\":{\"bytes_written\":%u}}",
+             (unsigned)written);
+    httpd_resp_send(req, resp, resp_len);
+
+    /* Reboot to load new SPIFFS content */
+    ESP_LOGI(TAG, "Rebooting to apply new Web UI in 1s...");
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_restart();
+
+    return ESP_OK; /* unreachable */
+}

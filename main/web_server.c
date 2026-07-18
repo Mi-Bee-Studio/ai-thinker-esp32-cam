@@ -23,6 +23,7 @@
 #include "esp_log.h"
 #include "esp_http_server.h"
 #include "esp_system.h"
+#include "esp_app_desc.h"
 #include "cJSON.h"
 #include "config_manager.h"
 #include "wifi_manager.h"
@@ -41,8 +42,6 @@
 #include "frame_broker.h"
 #include "sd_logger.h"
 #include "ota_update.h"
-
-#define FIRMWARE_VERSION "v1.0"
 
 #include <string.h>
 #include <stdio.h>
@@ -159,7 +158,9 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     /* Device info */
     cJSON_AddStringToObject(data, "device_name", cfg->device_name);
     cJSON_AddNumberToObject(data, "uptime", (double)m->uptime_seconds);
-    cJSON_AddStringToObject(data, "firmware_version", FIRMWARE_VERSION);
+    const esp_app_desc_t *app_desc = esp_app_get_description();
+    cJSON_AddStringToObject(data, "firmware_version",
+        (app_desc && app_desc->version[0]) ? app_desc->version : "unknown");
 
     /* Camera */
     cJSON_AddBoolToObject(data, "camera_ok", camera_is_initialized());
@@ -706,24 +707,74 @@ static esp_err_t handler_metrics(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------ */
-/*  GET /api/files  (list SD card photos)                              */
+/*  GET /api/files  (list SD card files — photos, recordings, or all)  */
 /* ------------------------------------------------------------------ */
 
 static esp_err_t handler_api_files(httpd_req_t *req)
 {
-    /* Use cached health metrics for SD info — avoid direct SD card access.
-     * storage_list_photos() traverses directories via opendir/readdir which
-     * hangs on the degraded SPI bus after camera init, causing watchdog reset. */
     const health_metrics_t *hm = health_monitor_get_metrics();
+
+    /* Parse query parameters */
+    char query[128] = {0};
+    httpd_req_get_url_query_str(req, query, sizeof(query));
+
+    char type[16] = "all";
+    httpd_query_key_value(query, "type", type, sizeof(type));
+
+    char limit_str[8] = "50";
+    httpd_query_key_value(query, "limit", limit_str, sizeof(limit_str));
+    int limit = atoi(limit_str);
+    if (limit <= 0 || limit > 200) limit = 50;
+
+    char offset_str[8] = "0";
+    httpd_query_key_value(query, "offset", offset_str, sizeof(offset_str));
+    int offset = atoi(offset_str);
+    if (offset < 0) offset = 0;
 
     cJSON *arr = cJSON_CreateArray();
     cJSON *data = cJSON_CreateObject();
     cJSON_AddItemToObject(data, "files", arr);
-    cJSON_AddNumberToObject(data, "total", 0);
-    cJSON_AddNumberToObject(data, "offset", 0);
-    cJSON_AddNumberToObject(data, "limit", 10);
     cJSON_AddNumberToObject(data, "sd_free_mb", (double)hm->sd_free_mb);
     cJSON_AddNumberToObject(data, "sd_total_mb", (double)hm->sd_total_mb);
+
+    int total = 0;
+
+    if (strcmp(type, "photos") == 0 || strcmp(type, "all") == 0) {
+        cJSON *photos = storage_get_photo_list_json();
+        if (photos) {
+            int photo_count = cJSON_GetArraySize(photos);
+            total += photo_count;
+            for (int i = offset; i < photo_count && (i - offset) < limit; i++) {
+                cJSON *item = cJSON_GetArrayItem(photos, i);
+                if (item) {
+                    cJSON *clone = cJSON_Duplicate(item, 1);
+                    if (clone) cJSON_AddItemToArray(arr, clone);
+                }
+            }
+            cJSON_Delete(photos);
+        }
+    }
+
+    if (strcmp(type, "recordings") == 0 || strcmp(type, "all") == 0) {
+        cJSON *recordings = storage_get_recording_list_json();
+        if (recordings) {
+            int rec_count = cJSON_GetArraySize(recordings);
+            total += rec_count;
+            int rec_offset = (strcmp(type, "all") == 0) ? 0 : offset;
+            for (int i = rec_offset; i < rec_count && (i - rec_offset) < limit; i++) {
+                cJSON *item = cJSON_GetArrayItem(recordings, i);
+                if (item) {
+                    cJSON *clone = cJSON_Duplicate(item, 1);
+                    if (clone) cJSON_AddItemToArray(arr, clone);
+                }
+            }
+            cJSON_Delete(recordings);
+        }
+    }
+
+    cJSON_AddNumberToObject(data, "total", total);
+    cJSON_AddNumberToObject(data, "offset", offset);
+    cJSON_AddNumberToObject(data, "limit", limit);
 
     return send_json_ok(req, data);
 }
@@ -774,7 +825,7 @@ static esp_err_t handler_api_files_delete(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------ */
-/*  GET /api/download?name=xxx                                         */
+/*  GET /api/download?name=xxx&type=photo|recording                    */
 /* ------------------------------------------------------------------ */
 
 static esp_err_t handler_api_download(httpd_req_t *req)
@@ -789,6 +840,9 @@ static esp_err_t handler_api_download(httpd_req_t *req)
         return send_json_error(req, "missing name parameter", 400);
     }
 
+    char ftype[16] = "photo";
+    httpd_query_key_value(query, "type", ftype, sizeof(ftype));
+
     /* Path traversal protection */
     if (strstr(name, "..") != NULL) {
         return send_json_error(req, "invalid file name", 400);
@@ -798,9 +852,13 @@ static esp_err_t handler_api_download(httpd_req_t *req)
         return send_json_error(req, "SD card not available", 503);
     }
 
-    /* Build full path */
+    /* Build full path based on type */
     char filepath[280];
-    snprintf(filepath, sizeof(filepath), "/sdcard/photos/%s", name);
+    if (strcmp(ftype, "recording") == 0) {
+        snprintf(filepath, sizeof(filepath), "/sdcard/recordings/%s", name);
+    } else {
+        snprintf(filepath, sizeof(filepath), "/sdcard/photos/%s", name);
+    }
 
     FILE *f = fopen(filepath, "rb");
     if (!f) {
@@ -815,7 +873,13 @@ static esp_err_t handler_api_download(httpd_req_t *req)
         httpd_resp_set_hdr(req, "Content-Length", hdr);
     }
 
-    httpd_resp_set_type(req, "image/jpeg");
+    /* Set content type based on file extension */
+    const char *ext = strrchr(name, '.');
+    if (ext && strcmp(ext, ".avi") == 0) {
+        httpd_resp_set_type(req, "video/avi");
+    } else {
+        httpd_resp_set_type(req, "image/jpeg");
+    }
     set_cors_headers(req);
 
     /* Content-Disposition: use basename */
@@ -1170,6 +1234,7 @@ static const uri_entry_t s_uris[] = {
     { "/api/flash",    HTTP_POST,   handler_api_flash        },
     { "/api/ota/info",   HTTP_GET,    handler_api_ota_info     },
     { "/api/ota/upload", HTTP_POST,   handler_api_ota_upload   },
+    { "/api/ota/spiffs", HTTP_POST,   handler_api_spiffs_upload },
 
     { "/*",             HTTP_OPTIONS, handler_options         },
     { "/*",             HTTP_GET,    handler_static          },

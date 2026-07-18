@@ -31,4 +31,14 @@ esp_err_t handler_api_ota_info(httpd_req_t *req);
  */
 esp_err_t handler_api_ota_upload(httpd_req_t *req);
 
+/**
+ * @brief POST /api/ota/spiffs handler
+ *
+ * Accepts a raw SPIFFS image binary, erases and writes it to the SPIFFS
+ * partition, then reboots. Used for updating the Web UI without serial flash.
+ *
+ * Requires X-Password header for authentication.
+ */
+esp_err_t handler_api_spiffs_upload(httpd_req_t *req);
+
 #endif /* OTA_UPDATE_H */

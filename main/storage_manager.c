@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <time.h>
 
+#include "cJSON.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_vfs_fat.h"
@@ -1108,4 +1109,80 @@ static void cache_sd_total_mb(void)
              (unsigned long)s_cached_total_mb,
              res == FR_OK ? "ok" : "fail",
              s_card ? "hw" : "no-card");
+}
+
+/* ---- JSON list APIs for web server ---- */
+
+cJSON *storage_get_photo_list_json(void)
+{
+    cJSON *arr = cJSON_CreateArray();
+    if (!arr) return NULL;
+
+    if (!s_mounted) return arr;
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+    if (s_list_cache && s_list_cache_len > 0) {
+        /* Parse cached photo list: "relative/path\tsize\n" per line.
+         * We must NOT modify the cache in place — use local copies. */
+        char *line = s_list_cache;
+        while (line && *line) {
+            char *newline = strchr(line, '\n');
+
+            /* Find tab separator */
+            char *tab = strchr(line, '\t');
+            if (tab && (!newline || tab < newline)) {
+                /* Extract name (copy to temp) */
+                int name_len = (int)(tab - line);
+                char name_buf[128];
+                if (name_len < (int)sizeof(name_buf)) {
+                    memcpy(name_buf, line, name_len);
+                    name_buf[name_len] = '\0';
+
+                    long fsize = atol(tab + 1);
+
+                    cJSON *obj = cJSON_CreateObject();
+                    if (obj) {
+                        cJSON_AddStringToObject(obj, "name", name_buf);
+                        cJSON_AddNumberToObject(obj, "size", (double)fsize);
+                        cJSON_AddStringToObject(obj, "type", "photo");
+                        cJSON_AddItemToArray(arr, obj);
+                    }
+                }
+            }
+
+            if (newline) {
+                line = newline + 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    xSemaphoreGive(s_mutex);
+    return arr;
+}
+
+cJSON *storage_get_recording_list_json(void)
+{
+    cJSON *arr = cJSON_CreateArray();
+    if (!arr) return NULL;
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+    for (int i = 0; i < s_file_cache_count; i++) {
+        cJSON *obj = cJSON_CreateObject();
+        if (obj) {
+            cJSON_AddStringToObject(obj, "name", s_file_cache[i].name);
+            cJSON_AddNumberToObject(obj, "size", (double)s_file_cache[i].size);
+            cJSON_AddStringToObject(obj, "type", "recording");
+            if (s_file_cache[i].time_str[0]) {
+                cJSON_AddStringToObject(obj, "time", s_file_cache[i].time_str);
+            }
+            cJSON_AddItemToArray(arr, obj);
+        }
+    }
+
+    xSemaphoreGive(s_mutex);
+    return arr;
 }
