@@ -27,12 +27,14 @@
 ## ✨ Features
 
 **Key Features:**
-- MJPEG video streaming (2 client limit)
+- MJPEG video streaming with snapshot fallback (2 client limit)
 - Motion detection with configurable sensitivity
 - SD card storage for photos and recordings
 - Timelapse and burst capture modes
 - Smart Flash Control with LEDC PWM
-- Dual WiFi failover configuration
+- Dual WiFi failover with smart roaming
+- File manager with type filtering (photos/recordings)
+- Web-based firmware upgrade (OTA) + Web UI upgrade (SPIFFS OTA)
 - Serial AT command WiFi setup
 - Prometheus metrics endpoint
 - REST API for complete control
@@ -131,8 +133,9 @@ curl -X POST http://DEVICE_IP/api/reset
 | GET | `/capture` | Single JPEG photo |
 | GET | `/stream` | MJPEG live stream |
 | GET | `/metrics` | Prometheus metrics |
-| GET | `/api/files` | List SD card photos |
-| GET | `/api/download?name=xxx` | Download photo |
+| GET | `/api/files?type=all\|photos\|recordings` | List SD card files |
+| DELETE | `/api/files?name=xxx&type=photo\|recording` | Delete file |
+| GET | `/api/download?name=xxx&type=photo\|recording` | Download file |
 | POST | `/api/record?action=start\|stop` | Recording control |
 | GET | `/api/record` | Recording status |
 | GET | `/api/storage` | Storage usage |
@@ -144,6 +147,9 @@ curl -X POST http://DEVICE_IP/api/reset
 | POST | `/api/timelapse/start` | Start timelapse |
 | POST | `/api/timelapse/stop` | Stop timelapse |
 | GET | `/api/timelapse/status` | Timelapse status |
+| GET | `/api/ota/info` | OTA partition info |
+| POST | `/api/ota/upload` | Upload firmware (OTA) |
+| POST | `/api/ota/spiffs` | Upload Web UI (SPIFFS OTA) |
 | GET | `/api/auth` | Verify password |
 
 ---
@@ -181,10 +187,10 @@ ai-thinker-esp32-cam/
 
 ## 🔄 Boot Sequence
 
-The firmware follows a **19-step** initialization process. Steps marked *(deferred)* are executed in the deferred STA services task after WiFi connects.
+The firmware follows a **16-step** initialization process. Steps marked *(deferred)* are executed in the deferred STA services task after WiFi connects.
 
 1. **NVS Flash Init** — Configuration storage system
-2. **Config Load** — Retrieve persisted settings (version 9)
+2. **Config Load** — Retrieve persisted settings (version 13)
 3. **Status LED** — Initialize GPIO33 system indicator
 4. **SPIFFS Mount** — Web UI filesystem preparation
 5. **SD SPI Bus Release** — Free GPIO14 for camera/WiFi init
@@ -196,7 +202,7 @@ The firmware follows a **19-step** initialization process. Steps marked *(deferr
 11. **Time Sync** — NTP client *(deferred to WiFi connect)*
 12. **Web Server** — HTTP server on port 80 with REST API
 13. **Motion Detection** — Frame monitoring service *(deferred to WiFi connect)*
-14. **SD Card Init** — Storage interface (after camera, GPIO14 conflict)
+14. **SD Card Init** — Storage interface + file list cache warm-up
 15. **Serial Config** — AT command interface over UART
 16. **NAS Uploader** — *Removed (not implemented)*
 17. **Boot Button** — *Disabled (GPIO0 = camera XCLK)*
@@ -329,7 +335,10 @@ Key metrics available:
 - **DMA Freeze**: Camera initialization deferred after WiFi STA connection to prevent ESP32 DMA freeze (esp32-camera#620)
 - **WiFi RF**: Board has marginal WiFi RF (PCB antenna). Full RF calibration forced every boot (`CONFIG_ESP_PHY_RF_CAL_FULL=y`). If WiFi won't connect, erase phy_init partition: `esptool.py erase_region 0xf000 0x1000`
 - **PSRAM Required**: 8MB PSRAM is mandatory for camera frame buffer allocation
-- **No OTA**: Single factory partition. Firmware updates via serial flash only
+- **OTA Updates**: Firmware supports web-based OTA updates:
+  - Firmware: Upload `build/mibee_cam.bin` via Settings → Firmware Upgrade
+  - Web UI: Upload `build/spiffs.bin` via Settings → Web UI Upgrade
+  - First flash requires serial: `idf.py -p /dev/ttyUSB0 flash`
 
 ---
 
@@ -345,6 +354,36 @@ MIT License - see [LICENSE](LICENSE) file for details.
 2. Create a feature branch
 3. Test thoroughly on MiBee Cam hardware
 4. Submit a pull request with detailed testing notes
+
+---
+
+## 📋 Changelog
+
+### v0.2.0 (2026-07-18)
+
+**New Features:**
+- **File Manager**: New "文件" page showing all SD card files (photos + recordings) with type filter tabs
+- **Web UI Upgrade**: Upload SPIFFS image via web to update HTML/CSS/JS without serial flash (`POST /api/ota/spiffs`)
+- **Firmware OTA**: Web-based firmware upload with progress bar and auto-reboot (`POST /api/ota/upload`)
+- **Auto Version**: Firmware version derived from git tags via `git describe`
+
+**Improvements:**
+- **Navigation Restructured**: 仪表盘 → 实时预览 → 文件 → 设置
+- **Settings Page Collapsible**: All settings sections collapsed by default, reducing scroll length
+- **Firmware Upgrade Embedded**: OTA upload moved into Settings page (no separate page)
+- **File List API**: `/api/files` now supports `type` parameter (all/photos/recordings) with boot-time cache
+- **Download API**: `/api/download` supports both photos and recordings
+
+**Bug Fixes:**
+- Fixed file list cache corruption after first query (tab characters not restored)
+
+### v0.1.0
+
+- Initial release with MJPEG streaming, motion detection, SD card storage
+- Timelapse and burst capture modes
+- Dual WiFi failover configuration
+- REST API for complete control
+- Prometheus metrics endpoint
 
 ---
 
