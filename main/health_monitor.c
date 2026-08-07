@@ -21,6 +21,8 @@
 #include "config_manager.h"
 #include "esp_mac.h"
 #include "esp_heap_caps.h"
+#include "lwip/sockets.h"
+#include "lwip/inet.h"
 
 static const char *TAG = "health_monitor";
 
@@ -35,6 +37,43 @@ static char *s_prometheus_str = NULL;
 // Cached metrics not in health_metrics_t struct (added for prometheus enhancement)
 static uint32_t s_frames_dropped;
 static recorder_state_t s_recording_state;
+
+/* httpd :80 self-heal probe — detects when all httpd workers are stuck
+ * (slow handlers) or sockets are exhausted. A plain TCP connect is NOT
+ * enough: LWIP accepts the connection at the TCP layer even when httpd
+ * has no free worker to process it. Sending a real HTTP request forces a
+ * worker to handle it, proving the event loop is alive. */
+static bool probe_httpd_port80(void)
+{
+    int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock < 0) return false;
+
+    struct timeval tv = { .tv_sec = 3, .tv_usec = 0 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in dest = {
+        .sin_family = AF_INET,
+        .sin_port   = htons(80),
+        .sin_addr.s_addr = htonl(INADDR_LOOPBACK),
+    };
+
+    bool ok = false;
+    if (connect(sock, (struct sockaddr *)&dest, sizeof(dest)) == 0) {
+        static const char req[] =
+            "GET /api/status HTTP/1.0\r\n"
+            "Host: 127.0.0.1\r\n"
+            "Connection: close\r\n\r\n";
+        if (send(sock, req, sizeof(req) - 1, 0) > 0) {
+            char buf[32];
+            int n = recv(sock, buf, sizeof(buf), 0);
+            ok = (n > 0);
+        }
+    }
+    close(sock);
+    return ok;
+}
+
 
 static void health_collect_metrics(void)
 {
@@ -97,6 +136,20 @@ static void health_timer_callback(void *arg)
 {
     (void)arg;
     health_collect_metrics();
+
+    /* httpd :80 self-heal: probe the local HTTP server every cycle (10s).
+     * If unresponsive for 6 consecutive cycles (60s), reboot to recover. */
+    static int httpd_stuck_count = 0;
+    if (!probe_httpd_port80()) {
+        httpd_stuck_count++;
+        ESP_LOGW(TAG, "httpd :80 probe failed (%d/6)", httpd_stuck_count);
+        if (httpd_stuck_count >= 6) {
+            ESP_LOGE(TAG, "httpd :80 unresponsive for 60s — rebooting");
+            esp_restart();
+        }
+    } else {
+        httpd_stuck_count = 0;
+    }
 }
 
 esp_err_t health_monitor_init(void)
