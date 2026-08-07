@@ -128,6 +128,20 @@ rm sdkconfig && idf.py set-target esp32 && idf.py build
 - Also: `bootloader.bin`, `partition-table.bin`, `spiffs.bin`, `ota_data_initial.bin`
 - `build/flash_args` has pre-computed esptool offsets
 
+### Booting after flash (RTS trap)
+
+`idf.py flash` resets the chip via RTS after writing, but on this board the post-flash reset does **not** reliably boot the new firmware — the chip can sit with the RTS line held in a state where nothing runs. Symptom: flash reports success, but the device is silent on serial and the web UI never comes up.
+
+Explicitly boot the freshly-flashed image with:
+
+```bash
+esptool --chip esp32 -p /dev/ttyUSB0 --no-stub run
+```
+
+`--no-stub` is required: the default stub soft-reset leaves the chip in the same stuck state. `run` releases the reset lines so the bootloader actually executes.
+
+This only matters after `flash`. `idf.py monitor` alone also won't recover it — you need the `esptool ... run` invocation.
+
 ### SPIFFS
 
 `spiffs_create_partition_image(spiffs main/web_ui FLASH_IN_PROJECT)` in root `CMakeLists.txt` auto-packages `main/web_ui/` into `build/spiffs.bin` at build time.
