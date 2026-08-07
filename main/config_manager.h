@@ -5,6 +5,9 @@
 #include "esp_err.h"
 #include <stdbool.h>
 
+/* Forward declaration - avoids pulling cJSON.h into every includer */
+typedef struct cJSON cJSON;
+
 /**
  * @brief Initialize config manager - loads from NVS or applies defaults
  * @return ESP_OK on success
@@ -157,5 +160,20 @@ esp_err_t config_set_wifi_roam(int8_t rssi_threshold, uint8_t rssi_gap);
  * @return ESP_OK if config was updated, ESP_ERR_NOT_FOUND if no file/unchanged
  */
 esp_err_t config_load_from_sd(void);
+
+/**
+ * @brief Export current config as JSON object
+ * Returns a cJSON* with all config keys using unified cam_* names.
+ * Password field (web_password) is masked as empty string.
+ * CALLER MUST cJSON_Delete() the returned object when done.
+ * @return cJSON* object, or NULL on allocation failure
+ */
+cJSON *config_get_json(void);
+
+/**
+ * @brief Get web UI password pointer
+ * @return const pointer to stored password (valid until next save)
+ */
+const char *config_get_web_password(void);
 
 #endif // CONFIG_MANAGER_H

@@ -77,14 +77,14 @@ typedef struct {
     char wifi_ssid[33];
     char wifi_pass[65];
     char device_name[33];
-    uint8_t resolution;
+    uint8_t cam_framesize;
     uint8_t fps;
-    uint8_t jpeg_quality;
+    uint8_t cam_quality;
     char web_password[33];
     char timezone[33];
     uint8_t motion_threshold;
     uint8_t motion_cooldown;
-    uint8_t vflip;
+    uint8_t cam_vflip;
     uint8_t motion_saved_threshold;
     uint8_t wifi_tx_power;      /* TX power in 0.25dBm units (80=20dBm) */
     uint8_t wifi_power_save;    /* 0=WIFI_PS_NONE, 1=WIFI_PS_MIN_MODEM */

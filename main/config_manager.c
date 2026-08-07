@@ -5,6 +5,7 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include <string.h>
+#include "cJSON.h"
 
 static const char *TAG = "config";
 static const char *NVS_NAMESPACE = "camcfg";
@@ -16,14 +17,14 @@ static void apply_defaults(cam_config_t *cfg)
 {
     memset(cfg, 0, sizeof(cam_config_t));
     strncpy(cfg->device_name, CONFIG_DEFAULT_DEVICE_NAME, sizeof(cfg->device_name) - 1);
-    cfg->resolution = CAMERA_RES_VGA;
+    cfg->cam_framesize = CAMERA_RES_VGA;
     cfg->fps = 15;
-    cfg->jpeg_quality = 12;
-    strncpy(cfg->web_password, "admin", sizeof(cfg->web_password) - 1);
+    cfg->cam_quality = 12;
+    strncpy(cfg->web_password, "", sizeof(cfg->web_password) - 1);
     strncpy(cfg->timezone, CONFIG_DEFAULT_TIMEZONE, sizeof(cfg->timezone) - 1);
     cfg->motion_threshold = 30;
     cfg->motion_cooldown = 10;
-    cfg->vflip = 0;
+    cfg->cam_vflip = 0;
     cfg->motion_saved_threshold = 30;
     cfg->wifi_tx_power = 80;   /* 20dBm max */
     cfg->wifi_power_save = 0;  /* disabled for streaming */
@@ -103,7 +104,7 @@ esp_err_t config_init(void)
                         // Fill new fields with defaults
                         if (cur_len < sizeof(cam_config_t) - 2) {
                             /* V1: missing vflip + motion_saved_threshold + wifi fields */
-                            s_config.vflip = 0;
+            s_config.cam_vflip = 0;
                             s_config.motion_saved_threshold = 30;
                         }
                         if (cur_len < sizeof(cam_config_t)) {
@@ -343,8 +344,8 @@ esp_err_t config_set_resolution(camera_resolution_t res)
     if (res >= CAMERA_RES_MAX) {
         return ESP_ERR_INVALID_ARG;
     }
-    s_config.resolution = (uint8_t)res;
-    ESP_LOGI(TAG, "Resolution set to %d", s_config.resolution);
+    s_config.cam_framesize = (uint8_t)res;
+    ESP_LOGI(TAG, "Resolution set to %d", s_config.cam_framesize);
     return config_save();
 }
 
@@ -389,8 +390,8 @@ esp_err_t config_set_fps(uint8_t fps)
 
 esp_err_t config_set_vflip(uint8_t vflip)
 {
-    s_config.vflip = vflip ? 1 : 0;
-    ESP_LOGI(TAG, "Vflip set to %u", s_config.vflip);
+    s_config.cam_vflip = vflip ? 1 : 0;
+    ESP_LOGI(TAG, "Vflip set to %u", s_config.cam_vflip);
     return config_save();
 }
 
@@ -417,7 +418,7 @@ esp_err_t config_set_jpeg_quality(uint8_t quality)
 {
     if (quality < 1) quality = 1;
     if (quality > 63) quality = 63;
-    s_config.jpeg_quality = quality;
+    s_config.cam_quality = quality;
     ESP_LOGI(TAG, "JPEG quality set to %u", quality);
     return config_save();
 }
@@ -611,4 +612,66 @@ esp_err_t config_load_from_sd(void)
 
     ESP_LOGI(TAG, "WiFi config saved to NVS (SD config preserved)");
     return ESP_OK;
+}
+
+/* ── New feature functions (JSON export, web_password getter) ── */
+
+cJSON *config_get_json(void)
+{
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        return NULL;
+    }
+    
+    const cam_config_t *cfg = config_get();
+    
+    cJSON_AddStringToObject(root, "wifi_ssid", cfg->wifi_ssid);
+    cJSON_AddStringToObject(root, "device_name", cfg->device_name);
+    cJSON_AddNumberToObject(root, "cam_framesize", (double)cfg->cam_framesize);
+    cJSON_AddNumberToObject(root, "fps", (double)cfg->fps);
+    cJSON_AddNumberToObject(root, "cam_quality", (double)cfg->cam_quality);
+    cJSON_AddStringToObject(root, "web_password", "");  /* masked */
+    cJSON_AddStringToObject(root, "timezone", cfg->timezone);
+    cJSON_AddNumberToObject(root, "motion_threshold", (double)cfg->motion_threshold);
+    cJSON_AddNumberToObject(root, "motion_cooldown", (double)cfg->motion_cooldown);
+    cJSON_AddNumberToObject(root, "cam_vflip", (double)cfg->cam_vflip);
+    cJSON_AddNumberToObject(root, "motion_saved_threshold", (double)cfg->motion_saved_threshold);
+    cJSON_AddNumberToObject(root, "wifi_tx_power", (double)cfg->wifi_tx_power);
+    cJSON_AddNumberToObject(root, "wifi_power_save", (double)cfg->wifi_power_save);
+    cJSON_AddNumberToObject(root, "flash_threshold", (double)cfg->flash_threshold);
+    cJSON_AddNumberToObject(root, "timelapse_enabled", (double)cfg->timelapse_enabled);
+    cJSON_AddNumberToObject(root, "timelapse_interval_s", (double)cfg->timelapse_interval_s);
+    cJSON_AddNumberToObject(root, "timelapse_burst_count", (double)cfg->timelapse_burst_count);
+    cJSON_AddNumberToObject(root, "timelapse_mode", (double)cfg->timelapse_mode);
+    cJSON_AddNumberToObject(root, "timelapse_min_interval_s", (double)cfg->timelapse_min_interval_s);
+    cJSON_AddNumberToObject(root, "timelapse_max_interval_s", (double)cfg->timelapse_max_interval_s);
+    cJSON_AddNumberToObject(root, "timelapse_decay_factor", (double)cfg->timelapse_decay_factor);
+    cJSON_AddNumberToObject(root, "timelapse_decay_period_s", (double)cfg->timelapse_decay_period_s);
+    cJSON_AddNumberToObject(root, "record_mode", (double)cfg->record_mode);
+    cJSON_AddNumberToObject(root, "record_segment_sec", (double)cfg->record_segment_sec);
+    cJSON_AddNumberToObject(root, "frame_drop_enabled", (double)cfg->frame_drop_enabled);
+    cJSON_AddNumberToObject(root, "webdav_enabled", (double)cfg->webdav_enabled);
+    cJSON_AddStringToObject(root, "webdav_url", cfg->webdav_url);
+    cJSON_AddStringToObject(root, "webdav_user", cfg->webdav_user);
+    cJSON_AddStringToObject(root, "webdav_pass", "");  /* masked */
+    cJSON_AddStringToObject(root, "upload_base_path", cfg->upload_base_path);
+    cJSON_AddNumberToObject(root, "alert_webhook_enabled", (double)cfg->alert_webhook_enabled);
+    cJSON_AddStringToObject(root, "alert_webhook_url", cfg->alert_webhook_url);
+    cJSON_AddNumberToObject(root, "cleanup_low_pct", (double)cfg->cleanup_low_pct);
+    cJSON_AddNumberToObject(root, "cleanup_high_pct", (double)cfg->cleanup_high_pct);
+    cJSON_AddStringToObject(root, "wifi_ssid_2", cfg->wifi_ssid_2);
+    cJSON_AddNumberToObject(root, "allow_ap_fallback", (double)cfg->allow_ap_fallback);
+    cJSON_AddNumberToObject(root, "save_to_sd", (double)cfg->save_to_sd);
+    cJSON_AddNumberToObject(root, "sd_log_enabled", (double)cfg->sd_log_enabled);
+    cJSON_AddNumberToObject(root, "wifi_reconnect_hours", (double)cfg->wifi_reconnect_hours);
+    cJSON_AddNumberToObject(root, "xclk_freq_mhz", (double)cfg->xclk_freq_mhz);
+    cJSON_AddNumberToObject(root, "wifi_roam_rssi_threshold", (double)cfg->wifi_roam_rssi_threshold);
+    cJSON_AddNumberToObject(root, "wifi_roam_rssi_gap", (double)cfg->wifi_roam_rssi_gap);
+    
+    return root;
+}
+
+const char *config_get_web_password(void)
+{
+    return s_config.web_password;
 }

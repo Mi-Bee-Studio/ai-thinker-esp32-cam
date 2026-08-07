@@ -470,7 +470,7 @@ static void recording_task(void *arg)
 {
     const cam_config_t *cfg = config_get();
     uint16_t w, h;
-    resolution_dims(cfg->resolution, &w, &h);
+    resolution_dims(cfg->cam_framesize, &w, &h);
     uint8_t fps = cfg->fps > 0 ? cfg->fps : 10;
     uint8_t record_mode = cfg->record_mode;
     bool timelapse = record_mode > 0;

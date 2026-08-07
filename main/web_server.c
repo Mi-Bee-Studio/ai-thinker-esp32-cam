@@ -6,19 +6,27 @@
  * Endpoints:
  *   GET  /api/status   — Device status JSON
  *   GET  /api/config   — Current config JSON (passwords excluded)
- *   POST /api/config   — Partial config update (password-protected)
+ *   POST /api/config   — Partial config update (password-protected, SET_PASSWORD_FIRST support)
  *   POST /api/reset    — Reset config to defaults (password-protected)
  *   POST /api/reboot   — Reboot device after 1s delay (password-protected)
- *   GET  /capture      — Single JPEG frame capture
+ *   GET  /api/capture  — Single JPEG frame capture
  *   GET  /stream       — MJPEG video stream (via mjpeg_streamer)
  *   GET  /metrics      — Prometheus-format metrics
  *   GET  /api/files    — List SD card photos
  *   GET  /api/download — Download photo file
- *   POST /api/upload   — Trigger manual NAS upload
+ *   DELETE /api/files  — Delete SD card file (password-protected)
+ *   POST /api/led      — Flash LED control (password-protected)
+ *   GET  /api/capabilities — Board capability flags
+ *   GET  /api/auth     — Validate password
+ *   GET/POST /api/timelapse (/) — Timelapse control
+ *   POST /api/record   — Recording control (password-protected)
+ *   GET  /api/record   — Recording status
+ *   GET  /api/storage   — SD card storage info
+ *   POST /api/format   — Format SD card
+ *   POST /api/ota (/)   — OTA update endpoints
  *   OPTIONS *          - CORS preflight
  *   GET    *          - SPIFFS static files (fallback)
  */
-
 #include "web_server.h"
 #include "esp_log.h"
 #include "esp_http_server.h"
@@ -56,6 +64,10 @@
 static const char *TAG = "web_server";
 static httpd_handle_t s_server = NULL;
 
+/* Forward declarations for helper functions */
+static esp_err_t send_json_error(httpd_req_t *req, const char *msg, int http_code);
+static esp_err_t send_unauthorized(httpd_req_t *req);
+static char *read_body(httpd_req_t *req, size_t max_len);
 /* ------------------------------------------------------------------ */
 /*  JSON / HTTP helpers                                                */
 /* ------------------------------------------------------------------ */
@@ -63,11 +75,10 @@ static httpd_handle_t s_server = NULL;
 static void set_cors_headers(httpd_req_t *req)
 {
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type, X-Password");
     httpd_resp_set_hdr(req, "Access-Control-Max-Age", "86400");
 }
-
 /** @brief Check X-Password header against stored web_password */
 bool check_auth(httpd_req_t *req)
 {
@@ -80,6 +91,45 @@ bool check_auth(httpd_req_t *req)
     }
     return false;
 }
+
+/** @brief Auth helper for write operations - implements SET_PASSWORD_FIRST state machine */
+static esp_err_t require_auth(httpd_req_t *req, const char *uri)
+{
+    const cam_config_t *cfg = config_get();
+
+    /* State A: web_password is empty - only POST /api/config with web_password field is allowed */
+    if (strlen(cfg->web_password) == 0) {
+        if (req->method == HTTP_POST && strcmp(uri, "/api/config") == 0) {
+            /* Check if body contains web_password field */
+            char *body = read_body(req, 2048);
+            if (!body) {
+                return send_json_error(req, "empty or invalid body", 400);
+            }
+            cJSON *json = cJSON_Parse(body);
+            free(body);
+            if (!json) {
+                return send_json_error(req, "invalid JSON", 400);
+            }
+            cJSON *pw_item = cJSON_GetObjectItem(json, "web_password");
+            bool has_password = (pw_item && cJSON_IsString(pw_item));
+            cJSON_Delete(json);
+            if (!has_password) {
+                return send_json_error(req, "SET_PASSWORD_FIRST", 401);
+            }
+            /* Allow request to proceed - handler will set the password */
+            return ESP_OK;
+        }
+        /* All other write operations return SET_PASSWORD_FIRST */
+        return send_json_error(req, "SET_PASSWORD_FIRST", 401);
+    }
+
+    /* State B: web_password is set - require X-Password header */
+    if (!check_auth(req)) {
+        return send_unauthorized(req);
+    }
+    return ESP_OK;
+}
+
 
 /** @brief Send JSON response {"ok":true,"data":...} with CORS */
 static esp_err_t send_json_ok(httpd_req_t *req, cJSON *data)
@@ -111,6 +161,7 @@ static esp_err_t send_json_error(httpd_req_t *req, const char *msg, int http_cod
     httpd_resp_set_status(req, status);
 
     cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "ok", false);
     cJSON_AddStringToObject(root, "error", msg);
     char *json = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -169,7 +220,7 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     /* Resolution as display string */
     static const char *res_names[] = {"VGA", "SVGA", "XGA", "UXGA"};
     cJSON_AddStringToObject(data, "resolution",
-        cfg->resolution < CAMERA_RES_MAX ? res_names[cfg->resolution] : "Unknown");
+        cfg->cam_framesize < CAMERA_RES_MAX ? res_names[cfg->cam_framesize] : "Unknown");
 
     /* WiFi */
     const char *wifi_mode_str;
@@ -229,14 +280,14 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON_AddStringToObject(data, "wifi_ssid", cfg->wifi_ssid);
     cJSON_AddStringToObject(data, "wifi_ssid_2", cfg->wifi_ssid_2);
     cJSON_AddNumberToObject(data, "allow_ap_fallback", (double)cfg->allow_ap_fallback);
-    cJSON_AddNumberToObject(data, "resolution", (double)cfg->resolution);
+    cJSON_AddNumberToObject(data, "resolution", (double)cfg->cam_framesize);
     cJSON_AddNumberToObject(data, "fps", (double)cfg->fps);
-    cJSON_AddNumberToObject(data, "jpeg_quality", (double)cfg->jpeg_quality);
+    cJSON_AddNumberToObject(data, "jpeg_quality", (double)cfg->cam_quality);
     cJSON_AddNumberToObject(data, "xclk_freq_mhz", (double)cfg->xclk_freq_mhz);
     cJSON_AddStringToObject(data, "timezone", cfg->timezone);
     cJSON_AddNumberToObject(data, "motion_threshold", (double)cfg->motion_threshold);
     cJSON_AddNumberToObject(data, "motion_cooldown", (double)cfg->motion_cooldown);
-    cJSON_AddNumberToObject(data, "vflip", (double)cfg->vflip);
+    cJSON_AddNumberToObject(data, "vflip", (double)cfg->cam_vflip);
     cJSON_AddNumberToObject(data, "wifi_tx_power", (double)cfg->wifi_tx_power);
     cJSON_AddNumberToObject(data, "wifi_power_save", (double)cfg->wifi_power_save);
     cJSON_AddNumberToObject(data, "flash_threshold", (double)cfg->flash_threshold);
@@ -275,11 +326,7 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
 static esp_err_t handler_api_config_post(httpd_req_t *req)
 {
     ESP_LOGW(TAG, "=== POST /api/config ENTRY === content_len=%d", (int)req->content_len);
-    if (!check_auth(req)) {
-        ESP_LOGW(TAG, "POST /api/config: AUTH FAILED");
-        return send_unauthorized(req);
-    }
-
+    
     char *body = read_body(req, 2048);
     if (!body) {
         ESP_LOGW(TAG, "POST /api/config: BODY is NULL (content_len=%d)", (int)req->content_len);
@@ -293,10 +340,29 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
         return send_json_error(req, "invalid JSON", 400);
     }
 
+    /* Auth check - handle SET_PASSWORD_FIRST state machine */
+    const cam_config_t *cfg = config_get();
+    bool password_is_empty = (strlen(cfg->web_password) == 0);
+    if (password_is_empty) {
+        /* Only allow if body contains web_password field */
+        cJSON *pw_item = cJSON_GetObjectItem(json, "web_password");
+        if (!(pw_item && cJSON_IsString(pw_item) && strlen(pw_item->valuestring) > 0)) {
+            cJSON_Delete(json);
+            return send_json_error(req, "SET_PASSWORD_FIRST", 401);
+        }
+        /* Allow request to proceed - password will be set in handler below */
+    } else {
+        /* Password is set - require X-Password header */
+        if (!check_auth(req)) {
+            cJSON_Delete(json);
+            ESP_LOGW(TAG, "POST /api/config: AUTH FAILED");
+            return send_unauthorized(req);
+        }
+    }
+
     cJSON *item;
     bool need_save = false;
     bool wifi_changed = false;
-
     if ((item = cJSON_GetObjectItem(json, "device_name")) && cJSON_IsString(item)) {
         config_set_device_name(item->valuestring);
         need_save = false;
@@ -381,7 +447,7 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
      * controls during this window. */
     if (camera_changed) {
         const cam_config_t *cur = config_get();
-        esp_err_t cam_ret = camera_apply_settings(cur->resolution, cur->fps, cur->jpeg_quality);
+        esp_err_t cam_ret = camera_apply_settings(cur->cam_framesize, cur->fps, cur->cam_quality);
         if (cam_ret != ESP_OK) {
             ESP_LOGE(TAG, "camera_apply_settings failed: %s", esp_err_to_name(cam_ret));
             cJSON_Delete(json);
@@ -640,8 +706,9 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
 
 static esp_err_t handler_api_reset(httpd_req_t *req)
 {
-    if (!check_auth(req)) {
-        return send_unauthorized(req);
+    esp_err_t auth_ret = require_auth(req, "/api/reset");
+    if (auth_ret != ESP_OK) {
+        return auth_ret;
     }
 
     ESP_LOGW(TAG, "Factory reset requested via web API");
@@ -658,8 +725,9 @@ static esp_err_t handler_api_reset(httpd_req_t *req)
 
 static esp_err_t handler_api_reboot(httpd_req_t *req)
 {
-    if (!check_auth(req)) {
-        return send_unauthorized(req);
+    esp_err_t auth_ret = require_auth(req, "/api/reboot");
+    if (auth_ret != ESP_OK) {
+        return auth_ret;
     }
 
     ESP_LOGW(TAG, "Reboot requested via web API");
@@ -785,8 +853,9 @@ static esp_err_t handler_api_files(httpd_req_t *req)
 
 static esp_err_t handler_api_files_delete(httpd_req_t *req)
 {
-    if (!check_auth(req)) {
-        return send_unauthorized(req);
+    esp_err_t auth_ret = require_auth(req, "/api/files");
+    if (auth_ret != ESP_OK) {
+        return auth_ret;
     }
 
     char query[256] = {0};
@@ -904,45 +973,66 @@ static esp_err_t handler_api_download(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------ */
-/*  GET/POST /api/flash  — Manual flash LED control                    */
+/*  POST /api/led  — Manual flash LED control (POST only)              */
 /* ------------------------------------------------------------------ */
 
-static esp_err_t handler_api_flash(httpd_req_t *req)
+static esp_err_t handler_api_led(httpd_req_t *req)
 {
+    esp_err_t auth_ret = require_auth(req, "/api/led");
+    if (auth_ret != ESP_OK) {
+        return auth_ret;
+    }
     set_cors_headers(req);
 
     /* POST: toggle/on/off via ?action= query param */
-    if (req->method == HTTP_POST) {
-        if (!check_auth(req)) {
-            return send_unauthorized(req);
-        }
-        char query[32] = {0};
-        char action[16] = {0};
-        if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
-            httpd_query_key_value(query, "action", action, sizeof(action));
-        }
-        bool now_on;
-        if (strcmp(action, "on") == 0) {
-            flash_led_on();
-            now_on = true;
-        } else if (strcmp(action, "off") == 0) {
-            flash_led_off();
-            now_on = false;
-        } else {
-            /* default or "toggle" */
-            now_on = flash_led_toggle();
-        }
-        cJSON *data = cJSON_CreateObject();
-        cJSON_AddBoolToObject(data, "on", now_on);
-        ESP_LOGI(TAG, "Flash LED %s (API)", now_on ? "ON" : "OFF");
-        return send_json_ok(req, data);
+    char query[32] = {0};
+    char action[16] = {0};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        httpd_query_key_value(query, "action", action, sizeof(action));
     }
-
-    /* GET: return current state */
+    bool now_on;
+    if (strcmp(action, "on") == 0) {
+        flash_led_on();
+        now_on = true;
+    } else if (strcmp(action, "off") == 0) {
+        flash_led_off();
+        now_on = false;
+    } else {
+        /* default or "toggle" */
+        now_on = flash_led_toggle();
+    }
     cJSON *data = cJSON_CreateObject();
-    cJSON_AddBoolToObject(data, "on", flash_led_is_on());
+    cJSON_AddBoolToObject(data, "on", now_on);
+    ESP_LOGI(TAG, "Flash LED %s (API)", now_on ? "ON" : "OFF");
     return send_json_ok(req, data);
 }
+
+/* ------------------------------------------------------------------ */
+/*  GET /api/capabilities  — Board capability flags (12 booleans)     */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handler_api_capabilities(httpd_req_t *req)
+{
+    set_cors_headers(req);
+
+    cJSON *data = cJSON_CreateObject();
+    /* ai-thinker capabilities matrix */
+    cJSON_AddBoolToObject(data, "ai", false);
+    cJSON_AddBoolToObject(data, "sd", true);
+    cJSON_AddBoolToObject(data, "audio", false);
+    cJSON_AddBoolToObject(data, "ota", true);
+    cJSON_AddBoolToObject(data, "mic", false);
+    cJSON_AddBoolToObject(data, "flash_led", true);
+    cJSON_AddBoolToObject(data, "recording", true);
+    cJSON_AddBoolToObject(data, "timelapse", true);
+    cJSON_AddBoolToObject(data, "onvif", true);
+    cJSON_AddBoolToObject(data, "rtsp", false);
+    cJSON_AddBoolToObject(data, "websocket", false);
+    cJSON_AddBoolToObject(data, "mdns", false);
+
+    return send_json_ok(req, data);
+}
+
 
 /* ------------------------------------------------------------------ */
 
@@ -965,8 +1055,9 @@ static esp_err_t handler_api_auth(httpd_req_t *req)
 
 static esp_err_t handler_api_timelapse_start(httpd_req_t *req)
 {
-    if (!check_auth(req)) {
-        return send_unauthorized(req);
+    esp_err_t auth_ret = require_auth(req, "/api/timelapse/start");
+    if (auth_ret != ESP_OK) {
+        return auth_ret;
     }
     esp_err_t ret = timelapse_start();
     if (ret != ESP_OK) {
@@ -977,8 +1068,9 @@ static esp_err_t handler_api_timelapse_start(httpd_req_t *req)
 
 static esp_err_t handler_api_timelapse_stop(httpd_req_t *req)
 {
-    if (!check_auth(req)) {
-        return send_unauthorized(req);
+    esp_err_t auth_ret = require_auth(req, "/api/timelapse/stop");
+    if (auth_ret != ESP_OK) {
+        return auth_ret;
     }
     esp_err_t ret = timelapse_stop();
     if (ret != ESP_OK) {
@@ -1047,8 +1139,9 @@ static esp_err_t handler_api_storage(httpd_req_t *req)
 
 static esp_err_t handler_api_record_post(httpd_req_t *req)
 {
-    if (!check_auth(req)) {
-        return send_unauthorized(req);
+    esp_err_t auth_ret = require_auth(req, "/api/record");
+    if (auth_ret != ESP_OK) {
+        return auth_ret;
     }
 
     char query[64] = {0};
@@ -1217,12 +1310,13 @@ static const uri_entry_t s_uris[] = {
     { "/api/config",   HTTP_POST,   handler_api_config_post  },
     { "/api/reset",    HTTP_POST,   handler_api_reset        },
     { "/api/reboot",   HTTP_POST,   handler_api_reboot       },
-    { "/capture",      HTTP_GET,    handler_capture          },
+    { "/api/capture",  HTTP_GET,    handler_capture          },
     { "/metrics",      HTTP_GET,    handler_metrics          },
     { "/api/files",    HTTP_GET,    handler_api_files        },
     { "/api/files",    HTTP_DELETE, handler_api_files_delete  },
     { "/api/download", HTTP_GET,    handler_api_download     },
     { "/api/auth",     HTTP_GET,    handler_api_auth         },
+    { "/api/capabilities", HTTP_GET, handler_api_capabilities  },
     { "/api/timelapse/start",  HTTP_POST, handler_api_timelapse_start  },
     { "/api/timelapse/stop",   HTTP_POST, handler_api_timelapse_stop   },
     { "/api/timelapse/status", HTTP_GET,  handler_api_timelapse_status },
@@ -1230,8 +1324,7 @@ static const uri_entry_t s_uris[] = {
     { "/api/storage",  HTTP_GET,    handler_api_storage      },
     { "/api/record",    HTTP_POST,   handler_api_record_post  },
     { "/api/record",    HTTP_GET,    handler_api_record_get   },
-    { "/api/flash",    HTTP_GET,    handler_api_flash        },
-    { "/api/flash",    HTTP_POST,   handler_api_flash        },
+    { "/api/led",      HTTP_POST,   handler_api_led           },
     { "/api/ota/info",   HTTP_GET,    handler_api_ota_info     },
     { "/api/ota/upload", HTTP_POST,   handler_api_ota_upload   },
     { "/api/ota/spiffs", HTTP_POST,   handler_api_spiffs_upload },
@@ -1318,7 +1411,7 @@ esp_err_t web_server_start(uint16_t port)
     }
 
     /* Register /stream and WebSocket BEFORE wildcards (wildcard would block them) */
-    mjpeg_streamer_register(s_server);
+    /* MJPEG streamer is now independent TCP server on port 81, no httpd registration */
 
     /* Register ONVIF SOAP service handlers */
     onvif_register_handlers(s_server);

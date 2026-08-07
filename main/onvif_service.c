@@ -297,7 +297,7 @@ static esp_err_t handle_get_profiles(httpd_req_t *req)
 {
     const cam_config_t *cfg = config_get();
     int width, height;
-    resolution_to_wh(cfg->resolution, &width, &height);
+    resolution_to_wh(cfg->cam_framesize, &width, &height);
 
     char resp[ONVIF_RESP_MAX];
     int len = snprintf(resp, sizeof(resp),
@@ -356,7 +356,7 @@ static esp_err_t handle_get_stream_uri(httpd_req_t *req)
         "<trt:GetStreamUriResponse "
         "xmlns:trt=\"" NS_MED "\">"
         "<trt:MediaUri>"
-        "<trt:Uri>http://%s/stream</trt:Uri>"
+        "<trt:Uri>http://%s:81/stream</trt:Uri>"
         "</trt:MediaUri>"
         "</trt:GetStreamUriResponse>"
         "</s:Body>"

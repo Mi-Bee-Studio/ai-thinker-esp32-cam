@@ -214,7 +214,7 @@ esp_err_t camera_init(camera_resolution_t resolution, uint8_t fps, uint8_t jpeg_
 
     /* Apply vflip from config */
     const cam_config_t *cam_cfg = config_get();
-    if (cam_cfg->vflip && sensor && sensor->set_vflip) {
+    if (cam_cfg->cam_vflip && sensor && sensor->set_vflip) {
         sensor->set_vflip(sensor, 1);
         ESP_LOGI(TAG, "Vflip enabled from config");
     }

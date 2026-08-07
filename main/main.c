@@ -83,8 +83,8 @@ static void sta_services_task(void *arg)
         const cam_config_t *cam_cfg = config_get();
         for (int attempt = 1; attempt <= 3; attempt++) {
             esp_err_t cam_ret = camera_init(
-                (camera_resolution_t)cam_cfg->resolution,
-                cam_cfg->fps, cam_cfg->jpeg_quality);
+                (camera_resolution_t)cam_cfg->cam_framesize,
+                cam_cfg->fps, cam_cfg->cam_quality);
             if (cam_ret == ESP_OK) {
                 ESP_LOGI(TAG, "Camera initialized after WiFi connect (attempt %d)", attempt);
                 break;
@@ -153,6 +153,10 @@ static void sta_services_task(void *arg)
             ESP_LOGE(TAG, "Web server start failed: %s", esp_err_to_name(ret));
         }
     }
+
+    /* Start MJPEG streamer on port 81 (independent TCP server) */
+    mjpeg_stream_server_start(81);
+    ESP_LOGI(TAG, "MJPEG streamer started on port 81");
 
     /* Start ONVIF WS-Discovery (once) — after web server so SOAP handlers are registered */
     onvif_discovery_init();
@@ -375,8 +379,8 @@ void app_main(void)
         {
             const cam_config_t *cam_cfg = config_get();
             esp_err_t cam_ret = camera_init(
-                (camera_resolution_t)cam_cfg->resolution,
-                cam_cfg->fps, cam_cfg->jpeg_quality);
+                (camera_resolution_t)cam_cfg->cam_framesize,
+                cam_cfg->fps, cam_cfg->cam_quality);
             if (cam_ret == ESP_OK) {
                 ESP_LOGI(TAG, "Camera initialized (AP mode)");
                 esp_err_t fb_ret = frame_broker_init();
@@ -398,6 +402,10 @@ void app_main(void)
             s_web_server_started = true;
             ESP_LOGI(TAG, "Web server started (AP mode)");
         }
+
+    /* Start MJPEG streamer on port 81 (independent TCP server) */
+    mjpeg_stream_server_start(81);
+    ESP_LOGI(TAG, "MJPEG streamer started on port 81 (AP mode)");
 
         /* Initialize timelapse (AP mode) */
         if (!s_timelapse_started) {

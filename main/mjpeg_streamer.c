@@ -1,18 +1,16 @@
 /**
  * @file mjpeg_streamer.c
- * @brief MJPEG real-time video streaming implementation.
+ * @brief MJPEG real-time video streaming via independent TCP server on port 81.
  *
- * Captures camera frames via camera_driver and pushes them as a
- * multipart/x-mixed-replace MJPEG stream to HTTP clients.
- * Uses async handler to avoid blocking the single-threaded HTTP server.
+ * Captures camera frames via frame_broker and pushes them as a
+ * multipart/x-mixed-replace MJPEG stream to TCP clients.
  * Maximum 2 concurrent clients to limit PSRAM usage.
- * Target 15 FPS with 4 KB chunked transfer.
+ * Target ~30 FPS with 8 KB chunked transfer.
  */
 
 #include "mjpeg_streamer.h"
 #include "frame_broker.h"
 #include "esp_log.h"
-#include "esp_http_server.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -21,91 +19,138 @@
 #include <sys/socket.h>
 #include <errno.h>
 #include <unistd.h>
+#include <lwip/sockets.h>
+#include <lwip/netdb.h>
+#include <netinet/tcp.h>
 
 static const char *TAG = "mjpeg_streamer";
 
 /* ---------- Stream protocol constants ---------- */
 
 #define BOUNDARY            "frame"
-#define STREAM_CONTENT_TYPE "multipart/x-mixed-replace; boundary=" BOUNDARY
 #define STREAM_BOUNDARY     "\r\n--" BOUNDARY "\r\n" \
                            "Content-Type: image/jpeg\r\n" \
-                           "Content-Length: %u\r\n\r\n"
+                           "Content-Length: %zu\r\n\r\n"
+#define CLOSING_BOUNDARY    "\r\n--" BOUNDARY "--\r\n"
 
 #define MAX_STREAM_CLIENTS  2
-#define CHUNK_SIZE          4096
-#define STREAM_FPS          15
-#define STREAM_FRAME_DELAY  pdMS_TO_TICKS(1000 / STREAM_FPS)
-#define STREAM_TASK_STACK   8192
-#define STREAM_TASK_PRIO    4
-#define STREAM_TASK_CORE    tskNO_AFFINITY  /* no pinning — httpd lock contention on Core 1 starved HTTP */
+#define CHUNK_SIZE          8192
+#define LISTEN_BACKLOG      2
+#define CLIENT_TASK_STACK   4096
+#define SEND_TIMEOUT_MS     15000
+#define CLIENT_RECV_TIMEOUT 5
 
 /* ---------- Module state ---------- */
 
-static SemaphoreHandle_t s_client_sem = NULL;
-static SemaphoreHandle_t s_slot_mutex  = NULL;  /* protects s_clients[] alloc+fill */
+static SemaphoreHandle_t s_mutex = NULL;
+static int s_client_count = 0;
+static TaskHandle_t s_listen_task = NULL;
+static int s_listen_sock = -1;
+static volatile bool s_running = false;
 
-/* ---------- Per-client stream context ---------- */
+/* ---------- Forward declarations ---------- */
 
-typedef struct {
-    httpd_req_t *req;       /* Async request handle */
-    bool         active;    /* Set to false to signal task to stop */
-} stream_ctx_t;
-
-static stream_ctx_t s_clients[MAX_STREAM_CLIENTS];
+static void mjpeg_listen_task(void *arg);
+static void mjpeg_client_task(void *arg);
 
 /* ---------- Internal helpers ---------- */
 
-static int get_connected_count(void)
+static int get_client_count(void)
 {
-    if (s_client_sem == NULL) {
-        return 0;
+    int count = 0;
+    if (s_mutex) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        count = s_client_count;
+        xSemaphoreGive(s_mutex);
     }
-    /* Semaphore starts at MAX, each client takes one slot */
-    return MAX_STREAM_CLIENTS - (int)uxSemaphoreGetCount(s_client_sem);
+    return count;
 }
 
-/* Find a free client slot, returns index or -1 */
-static int alloc_client_slot(void)
+/* ---------- Client task — serves one MJPEG stream connection ---------- */
+
+static void mjpeg_client_task(void *arg)
 {
-    /* Caller MUST hold s_slot_mutex */
-    for (int i = 0; i < MAX_STREAM_CLIENTS; i++) {
-        if (!s_clients[i].active && s_clients[i].req == NULL) {
-            /* Tentatively reserve slot so concurrent caller cannot grab
-             * same index. Caller finalizes (req+task) or clears on failure. */
-            s_clients[i].active = true;
-            return i;
-        }
+    int client_sock = (int)(intptr_t)arg;
+
+    /* Set send timeout so a stuck client does not hang the task */
+    struct timeval tv = { .tv_sec = SEND_TIMEOUT_MS / 1000,
+                          .tv_usec = (SEND_TIMEOUT_MS % 1000) * 1000 };
+    setsockopt(client_sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    /* Disable Nagle's algorithm — lower latency for small MJPEG part-headers */
+    int flag = 1;
+    setsockopt(client_sock, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+
+    /* Recv timeout — prevents zombie if client connects but never sends HTTP request */
+    struct timeval rcvtv = { .tv_sec = CLIENT_RECV_TIMEOUT, .tv_usec = 0 };
+    setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, &rcvtv, sizeof(rcvtv));
+
+    /* Read HTTP request (first 511 bytes is enough to validate) */
+    char req_buf[512];
+    int req_len = recv(client_sock, req_buf, sizeof(req_buf) - 1, 0);
+    if (req_len <= 0) {
+        ESP_LOGW(TAG, "Failed to read HTTP request (errno %d)", errno);
+        close(client_sock);
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_client_count--;
+        xSemaphoreGive(s_mutex);
+        vTaskDelete(NULL);
+        return;
     }
-    return -1;
-}
+    req_buf[req_len] = '\0';
 
-/* ---------- Stream task (runs per-client, independent of HTTP server) ---------- */
+    /* Validate: must be GET /stream (accept /stream?xxx too) */
+    if (strncmp(req_buf, "GET /stream", 11) != 0) {
+        ESP_LOGW(TAG, "Unexpected request: %.60s", req_buf);
+        const char *resp = "HTTP/1.1 400 Bad Request\r\n"
+                           "Content-Length: 0\r\n"
+                           "Connection: close\r\n\r\n";
+        send(client_sock, resp, strlen(resp), 0);
+        close(client_sock);
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_client_count--;
+        xSemaphoreGive(s_mutex);
+        vTaskDelete(NULL);
+        return;
+    }
 
-static void stream_task_fn(void *arg)
-{
-    stream_ctx_t *ctx = (stream_ctx_t *)arg;
-    httpd_req_t *req = ctx->req;
-    char part_hdr[128];
-    int fail_streak = 0;
+    /* Send HTTP 200 + multipart/x-mixed-replace headers */
+    char headers[512];
+    int hdr_len = snprintf(headers, sizeof(headers),
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: multipart/x-mixed-replace; boundary=" BOUNDARY "\r\n"
+        "Access-Control-Allow-Origin: *\r\n"
+        "Cache-Control: no-cache\r\n"
+        "Pragma: no-cache\r\n"
+        "Connection: close\r\n"
+        "\r\n");
 
-    ESP_LOGI(TAG, "Stream task started (total %d/%d)",
-             get_connected_count(), MAX_STREAM_CLIENTS);
+    if (send(client_sock, headers, hdr_len, 0) != hdr_len) {
+        ESP_LOGW(TAG, "Failed to send response headers");
+        close(client_sock);
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_client_count--;
+        xSemaphoreGive(s_mutex);
+        vTaskDelete(NULL);
+        return;
+    }
 
-    while (ctx->active) {
-        /* Fast client-disconnect detection via peek-recv.
-         * recv returning 0 means client closed the connection; much faster
-         * than waiting for httpd_resp_send_chunk to fail (which can take
-         * the full send_wait_timeout to register after TCP buffers drain). */
-        int sockfd = httpd_req_to_sockfd(req);
-        if (sockfd >= 0) {
-            char peek;
-            int r = recv(sockfd, &peek, 1, MSG_PEEK | MSG_DONTWAIT);
-            if (r == 0) {
-                ESP_LOGI(TAG, "Client disconnected (recv=0), ending stream");
-                break;
-            }
-            /* r == -1 && errno is EAGAIN/EWOULDBLOCK → still connected */
+    ESP_LOGI(TAG, "Stream client started (total %d)", get_client_count());
+
+    /* ---- Stream loop ------------------------------------------------- */
+    char part_hdr[192];
+    int capture_fails = 0;
+
+    while (1) {
+        /* Dead-client probe: non-blocking recv detects TCP FIN/RST immediately.
+         * On a healthy one-way MJPEG stream, recv returns -1/EAGAIN (no data from
+         * client, which is expected). On a dead connection it returns 0 (FIN) or
+         * -1/ECONNRESET (RST), and we exit the stream loop to free the slot. */
+        char probe;
+        int pr = recv(client_sock, &probe, 1, MSG_DONTWAIT);
+        if (pr == 0 || (pr < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
+            ESP_LOGW(TAG, "Client disconnected (probe rv=%d errno=%d)", pr, errno);
+            break;
         }
 
         /* Capture frame with retry */
@@ -117,209 +162,232 @@ static void stream_task_fn(void *arg)
             if (ret == ESP_OK) break;
             vTaskDelay(pdMS_TO_TICKS(50));
         }
+
         if (ret != ESP_OK) {
-            fail_streak++;
-            if (fail_streak >= 10) {
-                ESP_LOGE(TAG, "Too many capture failures (%d), ending stream", fail_streak);
+            capture_fails++;
+            if (capture_fails >= 10) {
+                ESP_LOGW(TAG, "No frames after %d attempts, ending stream", capture_fails);
                 break;
             }
-            vTaskDelay(STREAM_FRAME_DELAY);
+            vTaskDelay(pdMS_TO_TICKS(30));
             continue;
         }
-        fail_streak = 0;
+        capture_fails = 0;
 
-        /* Build multipart header */
+        /* Build multipart part header */
         int hdrlen = snprintf(part_hdr, sizeof(part_hdr),
-                              STREAM_BOUNDARY, (unsigned int)fb->len);
+            STREAM_BOUNDARY, fb->len);
 
         /* Send part header */
-        if (httpd_resp_send_chunk(req, part_hdr, hdrlen) != ESP_OK) {
+        if (send(client_sock, part_hdr, hdrlen, 0) != hdrlen) {
             frame_broker_free(fb);
             break;
         }
 
-        /* Send JPEG body in chunks */
+        /* Send JPEG body in CHUNK_SIZE pieces */
         size_t remaining = fb->len;
         const uint8_t *ptr = fb->buf;
         bool send_ok = true;
 
         while (remaining > 0) {
             size_t chunk = (remaining > CHUNK_SIZE) ? CHUNK_SIZE : remaining;
-            if (httpd_resp_send_chunk(req, (const char *)ptr, chunk) != ESP_OK) {
+            int sent = send(client_sock, (const char *)ptr, chunk, 0);
+            if (sent <= 0) {
                 send_ok = false;
                 break;
             }
-            ptr += chunk;
-            remaining -= chunk;
-        }
-
-        /* Trailing CRLF */
-        if (send_ok) {
-            if (httpd_resp_send_chunk(req, "\r\n", 2) != ESP_OK) {
-                send_ok = false;
-            }
+            ptr += sent;
+            remaining -= sent;
         }
 
         frame_broker_free(fb);
 
         if (!send_ok) break;
 
-        vTaskDelay(STREAM_FRAME_DELAY);
+        /* Trailing CRLF */
+        if (send(client_sock, "\r\n", 2, 0) != 2) {
+            break;
+        }
+
+        /* Frame-rate throttle — ~33 fps max */
+        vTaskDelay(pdMS_TO_TICKS(30));
     }
 
-    /* Cleanup */
-    httpd_resp_send_chunk(req, NULL, 0);  /* end chunked response */
-    httpd_req_async_handler_complete(req);
-    ctx->req = NULL;
-    ctx->active = false;
-    xSemaphoreGive(s_client_sem);
+    /* Send closing boundary (best-effort) */
+    send(client_sock, CLOSING_BOUNDARY, strlen(CLOSING_BOUNDARY), 0);
 
-    ESP_LOGI(TAG, "Stream task exiting (total %d)", get_connected_count());
+    close(client_sock);
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_client_count--;
+    xSemaphoreGive(s_mutex);
+
+    ESP_LOGI(TAG, "Stream client disconnected (total %d)", get_client_count());
     vTaskDelete(NULL);
 }
 
-/* ---------- HTTP handler ---------- */
+/* ---------- Listen task — accepts connections, spawns client tasks ---------- */
 
-esp_err_t mjpeg_streamer_http_handler(httpd_req_t *req)
+static void mjpeg_listen_task(void *arg)
 {
-    /* Client limit check */
-    if (xSemaphoreTake(s_client_sem, pdMS_TO_TICKS(100)) != pdTRUE) {
-        httpd_resp_set_status(req, "503 Service Unavailable");
-        httpd_resp_send(req, "Max stream connections reached", HTTPD_RESP_USE_STRLEN);
-        ESP_LOGW(TAG, "Stream rejected: max clients (%d) reached", MAX_STREAM_CLIENTS);
-        return ESP_FAIL;
+    (void)arg;
+    ESP_LOGI(TAG, "Listen task started");
+    while (s_running) {
+        struct sockaddr_in client_addr;
+        socklen_t addr_len = sizeof(client_addr);
+        int client_sock = accept(s_listen_sock,
+                                 (struct sockaddr *)&client_addr,
+                                 &addr_len);
+        if (client_sock < 0) {
+            if (errno == EINTR || errno == ECONNABORTED) {
+                continue;
+            }
+            /* s_running check — if stopped, exit cleanly */
+            if (!s_running) break;
+            ESP_LOGE(TAG, "accept() failed: errno %d", errno);
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        /* Enforce client limit */
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        if (s_client_count >= MAX_STREAM_CLIENTS) {
+            xSemaphoreGive(s_mutex);
+            ESP_LOGW(TAG, "Max stream clients (%d) reached, rejecting", MAX_STREAM_CLIENTS);
+            const char *reject = "HTTP/1.1 503 Service Unavailable\r\n"
+                                 "Content-Length: 25\r\n\r\nMax stream connections\r\n";
+            send(client_sock, reject, strlen(reject), 0);
+            close(client_sock);
+            continue;
+        }
+        s_client_count++;
+        xSemaphoreGive(s_mutex);
+
+        /* Spawn a dedicated client task (Core 1, priority 2) */
+        BaseType_t created = xTaskCreatePinnedToCore(
+            mjpeg_client_task,
+            "mjpeg_cli",
+            CLIENT_TASK_STACK,
+            (void *)(intptr_t)client_sock,
+            2,
+            NULL,
+            1);
+
+        if (created != pdPASS) {
+            ESP_LOGE(TAG, "Failed to create client task");
+            close(client_sock);
+            xSemaphoreTake(s_mutex, portMAX_DELAY);
+            s_client_count--;
+            xSemaphoreGive(s_mutex);
+        }
     }
 
-    /* Find a free slot (atomic with reservation) */
-    xSemaphoreTake(s_slot_mutex, portMAX_DELAY);
-    int slot = alloc_client_slot();
-    xSemaphoreGive(s_slot_mutex);
-    if (slot < 0) {
-        xSemaphoreGive(s_client_sem);
-        httpd_resp_set_status(req, "503 Service Unavailable");
-        httpd_resp_send(req, "No stream slots", HTTPD_RESP_USE_STRLEN);
-        return ESP_FAIL;
-    }
-
-    /* Set response headers before detaching */
-    httpd_resp_set_type(req, STREAM_CONTENT_TYPE);
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store");
-    /* Workaround for ESP-IDF async handler socket bug (IDFGH-16057):
-     * After httpd_req_async_handler_complete(), the socket may not be
-     * returned to the select() set on the same connection, causing
-     * subsequent keep-alive requests to hang. Connection: close forces
-     * the browser to open a fresh socket for the next request, sidestepping
-     * the bug. Safe for MJPEG — it's a single long-lived response. */
-    httpd_resp_set_hdr(req, "Connection", "close");
-
-    /* Detach request from HTTP server thread (async handler) */
-    httpd_req_t *async_req = NULL;
-    if (httpd_req_async_handler_begin(req, &async_req) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to begin async handler");
-        /* Release the tentatively-reserved slot */
-        xSemaphoreTake(s_slot_mutex, portMAX_DELAY);
-        s_clients[slot].active = false;
-        s_clients[slot].req    = NULL;
-        xSemaphoreGive(s_slot_mutex);
-        xSemaphoreGive(s_client_sem);
-        return ESP_FAIL;
-    }
-
-    /* Fill client slot (finalize the reservation made in alloc_client_slot) */
-    xSemaphoreTake(s_slot_mutex, portMAX_DELAY);
-    s_clients[slot].req = async_req;
-    xSemaphoreGive(s_slot_mutex);
-
-    /* Launch stream task */
-    char task_name[16];
-    snprintf(task_name, sizeof(task_name), "mjpeg_%d", slot);
-    BaseType_t tc = xTaskCreatePinnedToCore(stream_task_fn, task_name,
-                                             STREAM_TASK_STACK, &s_clients[slot],
-                                             STREAM_TASK_PRIO, NULL, STREAM_TASK_CORE);
-    if (tc != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create stream task");
-        xSemaphoreTake(s_slot_mutex, portMAX_DELAY);
-        s_clients[slot].req = NULL;
-        s_clients[slot].active = false;
-        xSemaphoreGive(s_slot_mutex);
-        httpd_req_async_handler_complete(async_req);
-        xSemaphoreGive(s_client_sem);
-        return ESP_FAIL;
-    }
-
-    return ESP_OK;
+    ESP_LOGI(TAG, "Listen task exiting");
+    vTaskDelete(NULL);
 }
 
 /* ---------- Public API ---------- */
 
 esp_err_t mjpeg_streamer_init(void)
 {
-    if (s_client_sem == NULL) {
-        s_client_sem = xSemaphoreCreateCounting(MAX_STREAM_CLIENTS, MAX_STREAM_CLIENTS);
-        if (s_client_sem == NULL) {
-            ESP_LOGE(TAG, "Failed to create client semaphore");
+    if (s_mutex == NULL) {
+        s_mutex = xSemaphoreCreateMutex();
+        if (s_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create mutex");
             return ESP_ERR_NO_MEM;
         }
     }
-    if (s_slot_mutex == NULL) {
-        s_slot_mutex = xSemaphoreCreateMutex();
-        if (s_slot_mutex == NULL) {
-            ESP_LOGE(TAG, "Failed to create slot mutex");
-            return ESP_ERR_NO_MEM;
-        }
-    }
-    /* Initialize client slots */
-    memset(s_clients, 0, sizeof(s_clients));
-    ESP_LOGI(TAG, "MJPEG streamer initialized (max %d clients, async mode)", MAX_STREAM_CLIENTS);
+    s_client_count = 0;
+    ESP_LOGI(TAG, "MJPEG streamer initialized (max %d clients)", MAX_STREAM_CLIENTS);
     return ESP_OK;
 }
 
-esp_err_t mjpeg_streamer_register(httpd_handle_t server)
+esp_err_t mjpeg_stream_server_start(uint16_t port)
 {
-    if (server == NULL) {
-        ESP_LOGE(TAG, "Cannot register: server handle is NULL");
-        return ESP_ERR_INVALID_ARG;
+    /* Create TCP listen socket */
+    s_listen_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s_listen_sock < 0) {
+        ESP_LOGE(TAG, "Failed to create listen socket: errno %d", errno);
+        return ESP_FAIL;
     }
 
-    httpd_uri_t stream_uri = {
-        .uri      = "/stream",
-        .method   = HTTP_GET,
-        .handler  = mjpeg_streamer_http_handler,
-        .user_ctx = NULL,
+    int opt = 1;
+    setsockopt(s_listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    struct sockaddr_in addr = {
+        .sin_family      = AF_INET,
+        .sin_port        = htons(port),
+        .sin_addr.s_addr = htonl(INADDR_ANY),
     };
 
-    esp_err_t ret = httpd_register_uri_handler(server, &stream_uri);
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "Registered /stream endpoint (async)");
-    } else if (ret == ESP_ERR_HTTPD_HANDLER_EXISTS) {
-        ESP_LOGD(TAG, "/stream endpoint already registered, skipping");
-        return ESP_OK;
-    } else {
-        ESP_LOGE(TAG, "Failed to register /stream endpoint: %s", esp_err_to_name(ret));
-        return ret;
+    if (bind(s_listen_sock, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        ESP_LOGE(TAG, "Failed to bind port %d: errno %d", port, errno);
+        close(s_listen_sock);
+        s_listen_sock = -1;
+        return ESP_FAIL;
     }
-    return ESP_OK;
-}
 
-void mjpeg_streamer_stop(void)
-{
-    /* Signal all active clients to stop */
-    for (int i = 0; i < MAX_STREAM_CLIENTS; i++) {
-        if (s_clients[i].active) {
-            s_clients[i].active = false;
-        }
+    if (listen(s_listen_sock, LISTEN_BACKLOG) != 0) {
+        ESP_LOGE(TAG, "Failed to listen on port %d: errno %d", port, errno);
+        close(s_listen_sock);
+        s_listen_sock = -1;
+        return ESP_FAIL;
     }
-    /* Give time for tasks to exit */
-    vTaskDelay(pdMS_TO_TICKS(200));
-    if (s_client_sem != NULL) {
-        vSemaphoreDelete(s_client_sem);
-        s_client_sem = NULL;
+
+    s_running = true;
+
+    /* Spawn listen task on Core 1 */
+    BaseType_t created = xTaskCreatePinnedToCore(
+        mjpeg_listen_task,
+        "mjpeg_listen",
+        CLIENT_TASK_STACK,
+        NULL,
+        3,      /* slightly higher than client tasks */
+        &s_listen_task,
+        1);     /* Core 1 */
+
+    if (created != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create listen task");
+        close(s_listen_sock);
+        s_listen_sock = -1;
+        s_running = false;
+        return ESP_FAIL;
     }
-    ESP_LOGI(TAG, "MJPEG streamer stopped, clients reset");
+
+    ESP_LOGI(TAG, "MJPEG streamer started on port %d", port);
+    return ESP_OK;
 }
 
 int mjpeg_streamer_get_client_count(void)
 {
-    return get_connected_count();
+    return get_client_count();
+}
+
+void mjpeg_streamer_stop(void)
+{
+    /* Stop the listen task */
+    s_running = false;
+    
+    /* Close listen socket to unblock accept() */
+    if (s_listen_sock >= 0) {
+        close(s_listen_sock);
+        s_listen_sock = -1;
+    }
+    
+    /* Give time for tasks to exit */
+    vTaskDelay(pdMS_TO_TICKS(200));
+    
+    if (s_listen_task != NULL) {
+        vTaskDelete(s_listen_task);
+        s_listen_task = NULL;
+    }
+    
+    s_client_count = 0;
+    
+    if (s_mutex != NULL) {
+        vSemaphoreDelete(s_mutex);
+        s_mutex = NULL;
+    }
+    
+    ESP_LOGI(TAG, "MJPEG streamer stopped, clients reset");
 }
