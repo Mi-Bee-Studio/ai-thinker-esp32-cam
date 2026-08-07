@@ -1521,7 +1521,7 @@ esp_err_t web_server_start(uint16_t port)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = port;
-    config.max_uri_handlers = 30;
+    config.max_uri_handlers = 40;  /* 27 API + 2 wildcard + 2 ONVIF + headroom */
     config.stack_size = 8192;
     config.recv_wait_timeout = 10;    /* longer tolerance for slow WiFi */
     config.send_wait_timeout = 5;     /* free stalled connections faster (keepalive is primary) */
