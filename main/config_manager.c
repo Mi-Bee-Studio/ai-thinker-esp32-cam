@@ -60,7 +60,14 @@ static void apply_defaults(cam_config_t *cfg)
     cfg->version = CONFIG_VERSION;
 }
 
+static bool s_config_initialized = false;
+
 esp_err_t config_init(void)
+{
+    if (s_config_initialized) {
+        return ESP_OK;
+    }
+    esp_err_t ret = nvs_flash_init();
 {
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -250,6 +257,8 @@ esp_err_t config_init(void)
     } else {
         ESP_LOGW(TAG, "NVS blob read OK but invalid — NOT overwriting with defaults");
     }
+    }
+    s_config_initialized = true;
     return ESP_OK;
 }
 

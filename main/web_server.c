@@ -280,14 +280,14 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON_AddStringToObject(data, "wifi_ssid", cfg->wifi_ssid);
     cJSON_AddStringToObject(data, "wifi_ssid_2", cfg->wifi_ssid_2);
     cJSON_AddNumberToObject(data, "allow_ap_fallback", (double)cfg->allow_ap_fallback);
-    cJSON_AddNumberToObject(data, "resolution", (double)cfg->cam_framesize);
+    cJSON_AddNumberToObject(data, "cam_framesize", (double)cfg->cam_framesize);
     cJSON_AddNumberToObject(data, "fps", (double)cfg->fps);
-    cJSON_AddNumberToObject(data, "jpeg_quality", (double)cfg->cam_quality);
+    cJSON_AddNumberToObject(data, "cam_quality", (double)cfg->cam_quality);
     cJSON_AddNumberToObject(data, "xclk_freq_mhz", (double)cfg->xclk_freq_mhz);
     cJSON_AddStringToObject(data, "timezone", cfg->timezone);
     cJSON_AddNumberToObject(data, "motion_threshold", (double)cfg->motion_threshold);
     cJSON_AddNumberToObject(data, "motion_cooldown", (double)cfg->motion_cooldown);
-    cJSON_AddNumberToObject(data, "vflip", (double)cfg->cam_vflip);
+    cJSON_AddNumberToObject(data, "cam_vflip", (double)cfg->cam_vflip);
     cJSON_AddNumberToObject(data, "wifi_tx_power", (double)cfg->wifi_tx_power);
     cJSON_AddNumberToObject(data, "wifi_power_save", (double)cfg->wifi_power_save);
     cJSON_AddNumberToObject(data, "flash_threshold", (double)cfg->flash_threshold);
@@ -418,7 +418,7 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
     }
     /* Camera settings (resolution/fps/quality) — also apply live */
     bool camera_changed = false;
-    if ((item = cJSON_GetObjectItem(json, "resolution")) && cJSON_IsNumber(item)) {
+    if ((item = cJSON_GetObjectItem(json, "cam_framesize")) && cJSON_IsNumber(item)) {
         config_set_resolution((camera_resolution_t)item->valueint);
         camera_changed = true;
     }
@@ -428,7 +428,7 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
         camera_changed = true;
     }
 
-    if ((item = cJSON_GetObjectItem(json, "jpeg_quality")) && cJSON_IsNumber(item)) {
+    if ((item = cJSON_GetObjectItem(json, "cam_quality")) && cJSON_IsNumber(item)) {
         config_set_jpeg_quality((uint8_t)item->valueint);
         camera_changed = true;
     }
@@ -512,7 +512,7 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
     }
 
     /* Vflip (apply immediately via sensor register) */
-    if ((item = cJSON_GetObjectItem(json, "vflip")) && cJSON_IsNumber(item)) {
+    if ((item = cJSON_GetObjectItem(json, "cam_vflip")) && cJSON_IsNumber(item)) {
         uint8_t new_vflip = (uint8_t)item->valueint;
         config_set_vflip(new_vflip);
         camera_apply_vflip(new_vflip);
@@ -1128,7 +1128,6 @@ static esp_err_t handler_api_storage(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "free_mb", (double)hm->sd_free_mb);
     cJSON_AddNumberToObject(data, "usage_pct", (double)hm->sd_usage_pct);
     cJSON_AddNumberToObject(data, "photo_count", (double)hm->photo_count);
-    cJSON_AddNumberToObject(data, "recording_count", 0); /* TODO: add to health metrics cache */
     cJSON_AddNumberToObject(data, "mounted", hm->sd_mounted ? 1 : 0);
 
     return send_json_ok(req, data);
@@ -1163,6 +1162,7 @@ static esp_err_t handler_api_record_post(httpd_req_t *req)
         if (ret == ESP_OK) {
             cJSON_AddStringToObject(data, "state", "RECORDING");
         } else {
+            cJSON_Delete(data);
             return send_json_error(req, "failed to start recording", 500);
         }
     } else if (strcmp(action, "stop") == 0) {
@@ -1174,9 +1174,11 @@ static esp_err_t handler_api_record_post(httpd_req_t *req)
         if (ret == ESP_OK) {
             cJSON_AddStringToObject(data, "state", "IDLE");
         } else {
+            cJSON_Delete(data);
             return send_json_error(req, "failed to stop recording", 500);
         }
     } else {
+        cJSON_Delete(data);
         return send_json_error(req, "invalid action, use start|stop", 400);
     }
 
