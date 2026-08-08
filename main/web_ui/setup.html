@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MiBee Cam 初始配置</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--c:#0D9488;--cd:#0F766E;--bg:#0F172A;--card:#1E293B;--t:#F1F5F9;--t2:#94A3B8;--bdr:#334155;--red:#DC2626}
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;background:var(--bg);color:var(--t);font-size:14px;min-height:100vh;display:flex;flex-direction:column}
+.hdr{background:linear-gradient(135deg,#0F766E,#0D9488);color:#fff;padding:16px 20px;text-align:center}
+.hdr h1{font-size:20px;font-weight:700;letter-spacing:.3px}
+.hdr p{font-size:12px;opacity:.8;margin-top:2px}
+.steps{display:flex;justify-content:center;gap:8px;padding:16px 0}
+.step-d{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;background:var(--bdr);color:var(--t2);transition:all .3s}
+.step-d.active{background:var(--c);color:#fff;box-shadow:0 2px 10px rgba(13,148,136,.4)}
+.step-d.done{background:var(--c);color:#fff;opacity:.6}
+.step-l{width:28px;height:2px;background:var(--bdr);align-self:center;transition:background .3s}
+.step-l.done{background:var(--c)}
+.main{flex:1;padding:0 16px 20px;max-width:440px;width:100%;margin:0 auto}
+.card{background:var(--card);border-radius:12px;padding:18px;margin-bottom:14px;border:1px solid var(--bdr)}
+.ct{font-size:15px;color:var(--c);font-weight:700;margin-bottom:14px}
+.fld{margin-bottom:12px}
+.fld:last-child{margin-bottom:0}
+.fld label{display:block;font-size:13px;color:var(--t2);margin-bottom:4px;font-weight:500}
+.fld input[type="text"],.fld input[type="password"],.fld select{width:100%;padding:10px 12px;border:1px solid var(--bdr);border-radius:8px;font-size:14px;font-family:inherit;background:var(--bg);color:var(--t);transition:border-color .2s}
+.fld input:focus,.fld select:focus{outline:none;border-color:var(--c);box-shadow:0 0 0 3px rgba(13,148,136,.15)}
+.fld .hint{font-size:11px;color:var(--t2);margin-top:3px;opacity:.7}
+.pw-w{position:relative}
+.pw-w input{padding-right:36px}
+.pw-w .eye{position:absolute;right:8px;top:50%;transform:translateY(-50%);cursor:pointer;user-select:none;font-size:15px;color:var(--t2);line-height:1}
+.wifi-list{max-height:240px;overflow-y:auto;border:1px solid var(--bdr);border-radius:8px}
+.wifi-item{display:flex;align-items:center;padding:10px 12px;cursor:pointer;transition:background .15s;border-bottom:1px solid var(--bdr)}
+.wifi-item:last-child{border-bottom:none}
+.wifi-item:hover{background:rgba(13,148,136,.08)}
+.wifi-item.selected{background:rgba(13,148,136,.15);border-left:3px solid var(--c)}
+.wifi-item .lock{font-size:13px;margin-right:8px;color:var(--t2);width:16px;text-align:center}
+.wifi-item .ssid{flex:1;font-size:14px;overflow:hidden;text-size-adjust:ellipsis;white-space:nowrap}
+.wifi-item .rssi{font-size:12px;color:var(--t2);min-width:40px;text-align:right}
+.wifi-item .rssi strong{color:var(--c)}
+.btn-row{display:flex;gap:10px;margin-top:16px}
+.btn{flex:1;padding:11px 16px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-p{background:var(--c);color:#fff}
+.btn-p:hover:not(:disabled){background:var(--cd)}
+.btn-s{background:var(--bdr);color:var(--t2)}
+.btn-s:hover:not(:disabled){background:#475569}
+.btn-scan{background:transparent;border:1px solid var(--c);color:var(--c);padding:10px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;width:100%;transition:all .15s}
+.btn-scan:hover:not(:disabled){background:rgba(13,148,136,.1)}
+.step-c{display:none;animation:fadeIn .25s ease}
+.step-c.active{display:block}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.ok-icon{text-align:center;margin:20px 0}
+.ok-icon span{font-size:44px;display:inline-block;background:rgba(13,148,136,.12);width:76px;height:76px;line-height:76px;border-radius:50%;color:var(--c)}
+.ok-msg{text-align:center;font-size:16px;color:var(--t);margin-bottom:6px;font-weight:600}
+.ok-sub{text-align:center;font-size:13px;color:var(--t2);margin-bottom:20px}
+.ld{text-align:center;padding:16px 0;color:var(--t2);font-size:13px}
+.toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);padding:10px 24px;border-radius:8px;font-size:14px;z-index:999;opacity:0;transition:opacity .3s;pointer-events:none;font-weight:500;white-space:nowrap}
+.toast.show{opacity:1}
+.toast.ok{background:var(--c);color:#fff}
+.toast.err{background:var(--red);color:#fff}
+.scan-info{text-align:center;padding:12px 0;color:var(--t2);font-size:13px}
+.scan-count{font-weight:600;color:var(--c)}
+.wifi-list::-webkit-scrollbar{width:4px}
+.wifi-list::-webkit-scrollbar-track{background:var(--bg)}
+.wifi-list::-webkit-scrollbar-thumb{background:var(--bdr);border-radius:2px}
+.signal{display:inline-block;margin-right:2px;vertical-align:middle}
+.signal .bar{width:3px;display:inline-block;margin-right:1px;background:var(--bdr);border-radius:1px;vertical-align:bottom}
+.signal .bar.on{background:var(--c)}
+.spinner{width:28px;height:28px;border:3px solid var(--bdr);border-top-color:var(--c);border-radius:50%;animation:spin 1s linear infinite;display:inline-block;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="hdr">
+<h1>MiBee Cam</h1>
+<p>首次配置向导</p>
+</div>
+
+<div class="steps" id="stepInd">
+<div class="step-d active" data-s="1">1</div>
+<div class="step-l"></div>
+<div class="step-d" data-s="2">2</div>
+<div class="step-l"></div>
+<div class="step-d" data-s="3">3</div>
+</div>
+
+<div class="main">
+<div class="card">
+
+<!-- 步骤 1：选择 WiFi -->
+<div class="step-c active" data-s="1">
+<div class="ct">选择 WiFi 网络</div>
+<button class="btn-scan" id="scanBtn" onclick="scanWifi()">&#128268; 扫描附近网络</button>
+<div id="scanList" style="display:none">
+<div class="scan-info" id="scanInfo"></div>
+<div class="wifi-list" id="wifiList"></div>
+</div>
+<div id="noNetworks" style="display:none">
+<div class="scan-info">未找到网络。<button class="btn-scan" onclick="scanWifi()" style="margin-top:8px;padding:8px 16px;font-size:13px">重新扫描</button></div>
+</div>
+<div class="fld" style="margin-top:14px">
+<label>或手动输入 SSID</label>
+<input type="text" id="manualSsid" placeholder="WiFi 网络名称">
+</div>
+<div class="btn-row">
+<button class="btn btn-s" disabled style="visibility:hidden">返回</button>
+<button class="btn btn-p" onclick="goStep2()">下一步</button>
+</div>
+</div>
+
+<!-- 步骤 2：配置 -->
+<div class="step-c" data-s="2">
+<div class="ct">网络与设备配置</div>
+<div class="fld">
+<label>所选网络</label>
+<input type="text" id="cfgSsid" readonly style="opacity:.7">
+</div>
+<div class="fld">
+<label>WiFi 密码</label>
+<div class="pw-w">
+<input type="password" id="cfgPass" placeholder="WiFi 密码" autocomplete="off">
+<span class="eye" onclick="togPw(this)">&#128065;</span>
+</div>
+<div class="hint">开放网络留空即可</div>
+</div>
+<div class="fld">
+<label>设备名称</label>
+<input type="text" id="cfgName" placeholder="MiBeeCam">
+<div class="hint">设备在网络中显示的名称</div>
+</div>
+<div class="fld">
+<label>管理密码</label>
+<div class="pw-w">
+<input type="password" id="cfgWebPw" placeholder="Web 管理密码" autocomplete="off">
+<span class="eye" onclick="togPw(this)">&#128065;</span>
+</div>
+<div class="hint">用于设置页的写操作（保存/重启/删除等）</div>
+</div>
+<div class="fld">
+<label>时区</label>
+<select id="cfgTz">
+<option value="CST-8">中国 (UTC+8)</option>
+<option value="GMT0">GMT (UTC+0)</option>
+<option value="JST-9">日本 (UTC+9)</option>
+<option value="CET-1CEST-2,M3.5.0,M10.5.0/3">中欧 (UTC+1/+2)</option>
+<option value="EST5EDT">美东 (UTC-5)</option>
+<option value="PST8PDT">美西 (UTC-8)</option>
+<option value="AEST-10">澳东 (UTC+10)</option>
+</select>
+</div>
+<div class="btn-row">
+<button class="btn btn-s" onclick="goStep(1)">返回</button>
+<button class="btn btn-p" onclick="goStep3()">保存并连接</button>
+</div>
+</div>
+
+<!-- 步骤 3：保存 -->
+<div class="step-c" data-s="3">
+<div class="ok-icon"><span>&#10003;</span></div>
+<div class="ok-msg">正在保存配置</div>
+<div class="ok-sub" id="okSub">正在连接 WiFi，请稍候...</div>
+<div class="ld"><span class="spinner"></span> 正在应用设置...</div>
+</div>
+
+</div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script>
+function $(s){return document.getElementById(s)}
+var tT=null;
+function showToast(m,e){var t=$('toast');t.textContent=m;t.className='toast show '+(e?'err':'ok');clearTimeout(tT);tT=setTimeout(function(){t.className='toast'},3000)}
+function togPw(el){var i=el.previousElementSibling;if(i.type==='password'){i.type='text';el.textContent='\uD83D\uDC41'}else{i.type='password';el.textContent='\uD83D\uDC40'}}
+function fetchT(url,opts,ms){opts=opts||{};ms=ms||8000;var c=new AbortController();var t=setTimeout(function(){c.abort()},ms);opts.signal=c.signal;return fetch(url,opts).then(function(r){clearTimeout(t);return r},function(e){clearTimeout(t);throw e})}
+
+var currentStep=1,totalSteps=3,selectedSsid='';
+
+function updateSteps(){
+  for(var i=1;i<=totalSteps;i++){
+    var s=document.querySelector('.step-d[data-s="'+i+'"]'),line=s?s.nextElementSibling:null;
+    if(!s)continue;
+    s.classList.remove('active','done');
+    if(i<currentStep)s.classList.add('done');else if(i===currentStep)s.classList.add('active');
+    if(line&&i<currentStep)line.classList.add('done');else if(line)line.classList.remove('done');
+  }
+  for(var i=1;i<=totalSteps;i++){var c=document.querySelector('.step-c[data-s="'+i+'"]');if(c)c.classList.toggle('active',i===currentStep)}
+}
+function goStep(n){currentStep=n;updateSteps()}
+function goStep2(){
+  var ssid=selectedSsid||$('manualSsid').value.trim();
+  if(!ssid){showToast('请选择或输入 WiFi 网络','err');return}
+  $('cfgSsid').value=ssid;
+  if(!$('cfgName').value)$('cfgName').value='MiBeeCam';
+  goStep(2);
+}
+function goStep3(){
+  var wpw=$('cfgWebPw').value;
+  if(!wpw){showToast('请设置管理密码','err');return}
+  if(wpw.length<4){showToast('管理密码至少 4 位','err');return}
+  goStep(3);saveConfig();
+}
+
+function signalBars(rssi){
+  var level=rssi>-55?4:rssi>-70?3:rssi>-80?2:1,h=[8,12,16,20],html='<span class="signal">';
+  for(var i=0;i<4;i++)html+='<span class="bar '+(i<level?'on':'')+'" style="height:'+h[i]+'px"></span>';
+  return html+'</span> <strong>'+rssi+'dBm</strong>';
+}
+
+/* WiFi 扫描（若固件未注册 /api/scan 会优雅降级到手动输入） */
+function scanWifi(){
+  var btn=$('scanBtn');btn.disabled=true;btn.innerHTML='<span class="spinner"></span> 扫描中...';
+  $('scanList').style.display='none';$('noNetworks').style.display='none';selectedSsid='';
+  fetchT('/api/scan').then(function(r){return r.json()}).then(function(d){
+    btn.disabled=false;btn.textContent='&#128268; 重新扫描';
+    var nets=(d&&d.data)?d.data:(d&&d.networks?d.networks:d);
+    if(!Array.isArray(nets))nets=[];
+    nets.sort(function(a,b){return(b.rssi||0)-(a.rssi||0)});
+    if(!nets.length){$('noNetworks').style.display='block';return}
+    $('scanInfo').innerHTML='找到 <span class="scan-count">'+nets.length+'</span> 个网络';
+    var list=$('wifiList');list.innerHTML='';
+    nets.forEach(function(n){
+      var auth=n.auth||n.secure,lock=auth?'\uD83D\uDD12':'\uD83D\uDD13';
+      var item=document.createElement('div');item.className='wifi-item';
+      item.innerHTML='<span class="lock">'+lock+'</span><span class="ssid">'+(n.ssid||'隐藏网络')+'</span><span class="rssi">'+signalBars(n.rssi)+'</span>';
+      item.onclick=function(){selectedSsid=n.ssid||'';$('manualSsid').value='';document.querySelectorAll('.wifi-item').forEach(function(el){el.classList.remove('selected')});this.classList.add('selected')};
+      list.appendChild(item);
+    });
+    $('scanList').style.display='block';
+  }).catch(function(){
+    btn.disabled=false;btn.textContent='&#128268; 扫描附近网络';
+    $('noNetworks').style.display='block';
+    $('noNetworks').innerHTML='<div class="scan-info">扫描不可用，请手动输入 SSID</div>';
+  });
+}
+
+/* 保存配置（必须含 web_password 以满足首次配置 SET_PASSWORD_FIRST 状态机） */
+function saveConfig(){
+  var cfg={
+    wifi_ssid:$('cfgSsid').value.trim(),
+    wifi_pass:$('cfgPass').value,
+    device_name:$('cfgName').value.trim()||'MiBeeCam',
+    web_password:$('cfgWebPw').value,
+    timezone:$('cfgTz').value
+  };
+  fetchT('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}).then(function(r){return r.json()}).then(function(d){
+    if(d&&d.ok){
+      $('okSub').textContent='配置已保存！设备正在重启并连接 WiFi...';
+      showToast('配置已保存');
+      setTimeout(function(){window.location.href='/'},4000);
+    }else{
+      showToast('保存失败: '+(d&&d.error||'未知错误'),'err');
+      $('okSub').textContent='保存失败，正在返回...';
+      currentStep=2;updateSteps();
+    }
+  }).catch(function(){
+    showToast('连接已断开，设备可能正在重启','err');
+    $('okSub').textContent='设备正在重启，跳转中...';
+    setTimeout(function(){window.location.href='/'},5000);
+  });
+}
+
+window.onload=function(){if(!$('cfgName').value)$('cfgName').value='MiBeeCam'};
+</script>
+</body>
+</html>

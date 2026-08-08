@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mi&amp;Bee CAM 实时预览</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+/* 预览页专属样式 */
+.stream-card{background:#000;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.15);position:relative}
+#stream{width:100%;display:block;background:#000;min-height:200px}
+#stream:fullscreen,#stream:-webkit-full-screen{max-height:100vh;object-fit:contain}
+.ph{display:flex;flex-direction:column;align-items:center;justify-content:center;color:#666;min-height:300px;font-size:15px}
+.ctrl{background:var(--card);border-radius:10px;padding:12px 16px;margin-top:10px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.ctrl-top{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.ctrl-left{display:flex;align-items:center;gap:12px;font-size:13px}
+.cv{font-weight:600;font-size:13px}
+.cl{color:var(--t2);font-size:12px}
+.ctrl-bottom{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sel{padding:6px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:var(--card);color:var(--t);cursor:pointer;font-family:inherit}
+.rr{display:flex;align-items:center;gap:8px;font-size:12px}
+.rr input[type="range"]{width:80px}
+.rv{min-width:28px;font-weight:600;color:var(--c)}
+.btn-cap{background:var(--c);color:#fff}
+.btn-cap:hover{background:var(--cd)}
+.btn-rec{background:var(--red);color:#fff}
+.btn-rec:hover{background:#B91C1C}
+.btn-rec.active{background:var(--grn)}
+.btn-rec.active:hover{background:#047857}
+.btn-flash{background:#6B7280;color:#fff}
+.btn-flash:hover{background:#4B5563}
+.btn-flash.active{background:#F59E0B}
+.btn-flash.active:hover{background:var(--yel)}
+.btn-fs{background:var(--card);color:var(--t);border:1px solid var(--bdr)}
+.btn-fs:hover{background:#F1F5F9}
+.btn-sm{padding:7px 14px;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s}
+.btn-sm:disabled{opacity:.5;cursor:not-allowed}
+</style>
+</head>
+<body>
+<div class="hdr">
+<h1>Mi&amp;Bee CAM</h1>
+<span class="sub">实时预览</span>
+</div>
+<div class="nav">
+<a href="/">仪表盘</a>
+<a href="/preview.html" class="act">实时预览</a>
+<a href="/files.html">文件</a>
+<a href="/config.html">设置</a>
+</div>
+<div class="main wide">
+
+<div class="stream-card">
+<div class="ph" id="placeholder">
+<div class="spinner"></div>
+正在连接摄像头...
+</div>
+<img id="stream" style="display:none" alt="实时画面">
+</div>
+
+<div class="ctrl">
+<div class="ctrl-top">
+<div class="ctrl-left">
+<div><span class="dot y" id="sDot"></span><span class="cv" id="sTxt">连接中</span></div>
+<div><span class="cl">客户端:</span><span class="cv" id="clients">--</span></div>
+</div>
+<button class="btn-sm btn-fs" onclick="toggleFs()">全屏</button>
+</div>
+<div class="ctrl-bottom">
+<select class="sel" id="resSel" onchange="changeRes()">
+<option value="0">VGA (640x480)</option>
+<option value="1">SVGA (800x600)</option>
+<option value="2">XGA (1024x768)</option>
+<option value="3">UXGA (1600x1200)</option>
+</select>
+<div class="rr">
+<span>质量</span>
+<input type="range" id="qSlider" min="1" max="63" value="10" onchange="changeQuality()">
+<span class="rv" id="qVal">10</span>
+</div>
+<button class="btn-sm btn-flash" id="flashBtn" onclick="toggleFlash()">闪光灯</button>
+<button class="btn-sm btn-rec" id="recBtn" onclick="toggleRec()">开始录像</button>
+<button class="btn-sm btn-cap" onclick="capture()">拍照</button>
+</div>
+</div>
+
+</div>
+<div class="toast" id="toast"></div>
+<script>
+function $(s){return document.getElementById(s)}
+var tT=null;
+function showToast(m,e){var t=$('toast');t.textContent=m;t.className='toast show '+(e?'err':'ok');clearTimeout(tT);tT=setTimeout(function(){t.className='toast'},3000)}
+function getPw(){return localStorage.getItem('cam_password')||''}
+function setPw(p){localStorage.setItem('cam_password',p)}
+function authH(){var p=getPw();return p?{'X-Password':p}:{}}
+function authFetch(u,o){o=o||{};o.headers=Object.assign({},o.headers||{},authH());return fetchT(u,o).then(function(r){if(r.status===401){setPw('');loginDialog();throw new Error('Unauthorized')}return r})}
+function loginDialog(cb){var p=prompt('请输入管理密码:');if(!p)return;fetch('/api/auth',{headers:{'X-Password':p}}).then(function(r){if(r.ok){setPw(p);if(cb)cb()}else{alert('密码错误');loginDialog(cb)}}).catch(function(){})}
+function requireAuth(cb){if(getPw())cb();else loginDialog(cb)}
+function fetchT(url,opts,ms){opts=opts||{};ms=ms||8000;var c=new AbortController();var t=setTimeout(function(){c.abort()},ms);opts.signal=c.signal;return fetch(url,opts).then(function(r){clearTimeout(t);return r},function(e){clearTimeout(t);throw e})}
+
+var img=$('stream'),ph=$('placeholder'),sDot=$('sDot'),sTxt=$('sTxt'),clientsEl=$('clients');
+var connected=false,retryT=null,snapshotMode=false,snapshotTimer=null,recoveryTimer=null,streamFailCount=0;
+var STREAM_FAIL_THRESH=2,SNAPSHOT_INTERVAL=1500,RECOVERY_INTERVAL=30000;
+
+/* 推流地址：独立 MJPEG TCP 服务在 :81 */
+function streamUrl(){return 'http://'+window.location.hostname+':81/stream'+(snapshotMode?'':'?t='+Date.now())}
+
+function onConn(){
+  connected=true;clearTimeout(retryT);streamFailCount=0;
+  if(snapshotMode){snapshotMode=false;clearInterval(snapshotTimer);snapshotTimer=null;clearInterval(recoveryTimer);recoveryTimer=null}
+  ph.style.display='none';img.style.display='block';
+  sDot.className='dot g';sTxt.textContent='已连接';sTxt.style.color='var(--grn)';
+}
+
+/* 弱 WiFi 兜底：推流连续失败 2 次切到截图模式（~1fps 单帧） */
+function startSnapshotMode(){
+  snapshotMode=true;connected=false;clearTimeout(retryT);
+  sDot.className='dot y';sTxt.textContent='截图模式';sTxt.style.color='var(--yel)';
+  fetchSnapshot();
+  snapshotTimer=setInterval(fetchSnapshot,SNAPSHOT_INTERVAL);
+  recoveryTimer=setInterval(tryStreamRecovery,RECOVERY_INTERVAL);
+}
+function fetchSnapshot(){
+  fetchT('/api/capture',{},5000).then(function(r){if(!r.ok)throw 0;return r.blob()}).then(function(b){
+    ph.style.display='none';img.style.display='block';
+    if(img.src&&img.src.indexOf('blob:')===0)URL.revokeObjectURL(img.src);
+    img.src=URL.createObjectURL(b);
+  }).catch(function(){});
+}
+function tryStreamRecovery(){
+  if(!snapshotMode)return;
+  clearInterval(snapshotTimer);snapshotTimer=null;clearInterval(recoveryTimer);recoveryTimer=null;
+  snapshotMode=false;streamFailCount=0;
+  sDot.className='dot y';sTxt.textContent='恢复实时...';
+  img.src=streamUrl();
+}
+function onStreamError(){
+  connected=false;streamFailCount++;
+  if(streamFailCount>=STREAM_FAIL_THRESH){startSnapshotMode();return}
+  sDot.className='dot r';sTxt.textContent='连接断开';sTxt.style.color='var(--red)';
+  if(retryT)clearTimeout(retryT);
+  retryT=setTimeout(function(){sDot.className='dot y';sTxt.textContent='重新连接';img.src=streamUrl()},3000);
+}
+img.onload=function(){if(!snapshotMode)onConn()};
+img.onerror=function(){if(!snapshotMode)onStreamError()};
+img.src=streamUrl();
+
+/* 客户端数轮询（10s，低频避免与推流抢 httpd） */
+setInterval(function(){
+  fetchT('/api/status',{},5000).then(function(r){return r.json()}).then(function(d){
+    if(d&&d.data)clientsEl.textContent=d.data.stream_clients!=null?d.data.stream_clients:'--';
+  }).catch(function(){});
+},10000);
+
+/* 分辨率 / 质量即时切换 */
+function changeRes(){
+  var sel=$('resSel'),v=sel.value,pt=sTxt.textContent,pc=sTxt.style.color;
+  sel.disabled=true;
+  sTxt.textContent='切换中...';sTxt.style.color='var(--yel)';
+  requireAuth(function(){
+    authFetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cam_framesize:parseInt(v)})})
+    .then(function(r){return r.json()}).then(function(d){if(!d||!d.ok)showToast('切换失败: '+(d&&d.error||''),true)})
+    .catch(function(){showToast('切换失败',true)})
+    .finally(function(){sel.disabled=false;sTxt.textContent=pt;sTxt.style.color=pc});
+  });
+}
+function changeQuality(){
+  var sel=$('resSel'),slider=$('qSlider'),v=slider.value,pt=sTxt.textContent,pc=sTxt.style.color;
+  $('qVal').textContent=v;sel.disabled=true;slider.disabled=true;
+  sTxt.textContent='切换中...';sTxt.style.color='var(--yel)';
+  requireAuth(function(){
+    authFetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cam_quality:parseInt(v)})})
+    .then(function(r){return r.json()}).then(function(d){if(!d||!d.ok)showToast('切换失败: '+(d&&d.error||''),true)})
+    .catch(function(){showToast('切换失败',true)})
+    .finally(function(){sel.disabled=false;slider.disabled=false;sTxt.textContent=pt;sTxt.style.color=pc});
+  });
+}
+
+/* 拍照下载 */
+var capturing=false;
+function capture(){
+  if(capturing)return;capturing=true;
+  var btn=event&&event.target;if(btn)btn.disabled=true;
+  fetchT('/api/capture').then(function(r){if(!r.ok)throw 0;return r.blob()}).then(function(b){
+    var url=URL.createObjectURL(b),a=document.createElement('a');
+    a.href=url;a.download='capture_'+Date.now()+'.jpg';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    setTimeout(function(){URL.revokeObjectURL(url)},1000);
+  }).catch(function(){showToast('拍照失败',true)})
+  .finally(function(){capturing=false;if(btn)btn.disabled=false});
+}
+
+/* 录像 */
+var recording=false;
+function toggleRec(){
+  var btn=$('recBtn'),action=recording?'stop':'start';btn.disabled=true;
+  requireAuth(function(){
+    authFetch('/api/record?action='+action,{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+      if(d&&d.ok){recording=!recording;btn.textContent=recording?'停止录像':'开始录像';btn.className=recording?'btn-sm btn-rec active':'btn-sm btn-rec'}
+      else showToast('操作失败: '+(d&&d.error||''),true);
+    }).catch(function(){showToast('请求失败',true)}).finally(function(){btn.disabled=false});
+  });
+}
+
+/* 闪光灯（POST /api/led?action=toggle） */
+function toggleFlash(){
+  var btn=$('flashBtn');btn.disabled=true;
+  requireAuth(function(){
+    authFetch('/api/led?action=toggle',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+      if(d&&d.data){var on=d.data.on;btn.textContent=on?'关闭闪光':'闪光灯';btn.className=on?'btn-sm btn-flash active':'btn-sm btn-flash'}
+    }).catch(function(){}).finally(function(){btn.disabled=false});
+  });
+}
+
+function toggleFs(){var el=$('stream');if(el.requestFullscreen)el.requestFullscreen();else if(el.webkitRequestFullscreen)el.webkitRequestFullscreen()}
+
+function stopStream(){
+  if(retryT)clearTimeout(retryT);if(snapshotTimer)clearInterval(snapshotTimer);if(recoveryTimer)clearInterval(recoveryTimer);
+  img.onload=null;img.onerror=null;
+  img.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+  connected=false;
+}
+document.querySelectorAll('.nav a').forEach(function(a){a.addEventListener('click',function(e){e.preventDefault();stopStream();setTimeout(function(){location.href=a.href},200)})});
+window.addEventListener('beforeunload',stopStream);
+window.addEventListener('pagehide',stopStream);
+
+/* 初始化：加载当前摄像头设置 + 录像/闪光状态 */
+fetchT('/api/camera').then(function(r){return r.json()}).then(function(d){
+  if(d&&d.ok&&d.data){var c=d.data;
+    if(c.cam_framesize!=null)$('resSel').value=c.cam_framesize;
+    if(c.cam_quality!=null){$('qSlider').value=c.cam_quality;$('qVal').textContent=c.cam_quality}
+  }
+}).catch(function(){});
+fetchT('/api/record').then(function(r){return r.json()}).then(function(d){
+  if(d&&d.ok&&d.data&&d.data.state==='RECORDING'){recording=true;var b=$('recBtn');b.textContent='停止录像';b.className='btn-sm btn-rec active'}
+}).catch(function(){});
+fetchT('/api/led').then(function(r){return r.json()}).then(function(d){
+  if(d&&d.ok&&d.data&&d.data.on){var b=$('flashBtn');b.textContent='关闭闪光';b.className='btn-sm btn-flash active'}
+}).catch(function(){});
+</script>
+</body>
+</html>

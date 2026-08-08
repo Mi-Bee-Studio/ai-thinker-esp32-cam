@@ -750,10 +750,13 @@ static esp_err_t handler_capture(httpd_req_t *req)
 {
     set_cors_headers(req);
     camera_fb_t *fb = NULL;
-    esp_err_t err = frame_broker_get_copy(&fb, 3000);
+    /* Non-blocking peek: broker's s_current always holds the last published
+     * frame, so this returns instantly. timeout=0 avoids blocking the
+     * single-threaded httpd event loop. */
+    esp_err_t err = frame_broker_get_copy(&fb, 0);
     if (err != ESP_OK || fb == NULL) {
-        sd_logf(SD_LOG_ERROR, "http", "/capture failed: frame_broker timeout");
-        return send_json_error(req, "camera capture failed", 500);
+        ESP_LOGW(TAG, "/api/capture: no frame available (broker rc=%s)", esp_err_to_name(err));
+        return send_json_error(req, "camera not ready", 503);
     }
     httpd_resp_set_type(req, "image/jpeg");
     esp_err_t ret = httpd_resp_send(req, (const char *)fb->buf, fb->len);
