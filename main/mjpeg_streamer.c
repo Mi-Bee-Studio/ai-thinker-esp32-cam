@@ -33,7 +33,7 @@ static const char *TAG = "mjpeg_streamer";
                            "Content-Length: %zu\r\n\r\n"
 #define CLOSING_BOUNDARY    "\r\n--" BOUNDARY "--\r\n"
 
-#define MAX_STREAM_CLIENTS  2
+#define MAX_STREAM_CLIENTS  1  /* Limit to 1 stream — leave WiFi bandwidth for httpd */
 #define CHUNK_SIZE          8192
 #define LISTEN_BACKLOG      2
 #define CLIENT_TASK_STACK   4096

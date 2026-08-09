@@ -172,7 +172,7 @@ function $(s){return document.getElementById(s)}
 var tT=null;
 function showToast(m,e){var t=$('toast');t.textContent=m;t.className='toast show '+(e?'err':'ok');clearTimeout(tT);tT=setTimeout(function(){t.className='toast'},3000)}
 function togPw(el){var i=el.previousElementSibling;if(i.type==='password'){i.type='text';el.textContent='\uD83D\uDC41'}else{i.type='password';el.textContent='\uD83D\uDC40'}}
-function fetchT(url,opts,ms){opts=opts||{};ms=ms||8000;var c=new AbortController();var t=setTimeout(function(){c.abort()},ms);opts.signal=c.signal;return fetch(url,opts).then(function(r){clearTimeout(t);return r},function(e){clearTimeout(t);throw e})}
+function fetchT(url,opts,ms){opts=opts||{};ms=ms||15000;var c=new AbortController();var t=setTimeout(function(){c.abort()},ms);opts.signal=c.signal;return fetch(url,opts).then(function(r){clearTimeout(t);return r},function(e){clearTimeout(t);throw e})}
 
 var currentStep=1,totalSteps=3,selectedSsid='';
 

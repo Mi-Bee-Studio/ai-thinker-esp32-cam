@@ -4,7 +4,167 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mi&amp;Bee CAM 文件管理</title>
-<link rel="stylesheet" href="/style.css">
+<style>
+/* ==================================================================
+ * MiBee Cam — 共享设计系统 (style.css)
+ * 所有页面共用，浏览器缓存后二刷起每页只传 HTML。
+ * 设计语言：teal 主色 + 卡片 + 状态点/徽章 + 进度条。
+ * ================================================================ */
+
+*{margin:0;padding:0;box-sizing:border-box}
+
+:root{
+  --c:#0D9488;       /* 主色 teal */
+  --cd:#0F766E;      /* 深主色 */
+  --bg:#F8FAFB;      /* 页面背景 */
+  --card:#fff;       /* 卡片背景 */
+  --t:#1E293B;       /* 主文字 */
+  --t2:#64748B;      /* 次文字 */
+  --bdr:#E2E8F0;     /* 边框 */
+  --red:#DC2626;
+  --yel:#D97706;
+  --grn:#059669;
+}
+
+body{
+  font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
+  background:var(--bg);color:var(--t);font-size:14px;
+  -webkit-text-size-adjust:100%;
+}
+
+/* ── 页头 + 导航 ── */
+.hdr{
+  background:linear-gradient(135deg,#0F766E,#0D9488);color:#fff;
+  padding:12px 16px;display:flex;align-items:center;gap:10px;
+}
+.hdr h1{font-size:17px;font-weight:700;letter-spacing:.3px}
+.hdr .sub{font-size:12px;opacity:.75;margin-left:auto}
+
+.nav{background:var(--card);border-bottom:1px solid var(--bdr);display:flex}
+.nav a{
+  flex:1;text-align:center;padding:10px 0;font-size:13px;color:var(--t2);
+  text-decoration:none;border-bottom:2px solid transparent;transition:all .15s;
+}
+.nav a.act{color:var(--c);border-bottom-color:var(--c);font-weight:600}
+.nav a:hover{background:#F1F5F9}
+
+/* ── 容器 ── */
+.main{padding:12px;max-width:600px;margin:0 auto;padding-bottom:24px}
+.main.wide{max-width:860px}
+
+/* ── 卡片 / 信息行 ── */
+.card{
+  background:var(--card);border-radius:10px;padding:14px 16px;margin-bottom:10px;
+  box-shadow:0 1px 3px rgba(0,0,0,.06);
+}
+.ct{
+  font-size:13px;color:var(--t2);margin-bottom:8px;font-weight:600;
+  text-transform:uppercase;letter-spacing:.5px;
+}
+.row{display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #F1F5F9}
+.row:last-child{border-bottom:none}
+.row .l{color:var(--t2)}
+.row .v{font-weight:500;color:var(--t);text-align:right;max-width:62%;word-break:break-all}
+
+.grid{display:grid;grid-template-columns:1fr;gap:10px}
+@media(min-width:480px){.grid{grid-template-columns:1fr 1fr}}
+
+/* ── 折叠分组 (设置页) ── */
+.sec{
+  background:var(--card);border-radius:10px;margin-bottom:10px;
+  box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden;
+}
+.sec-h{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 16px;cursor:pointer;user-select:none;transition:background .15s;
+}
+.sec-h:hover{background:#F8FAFB}
+.sec-h .sec-t{font-size:14px;font-weight:600;color:var(--t)}
+.sec-h .sec-arrow{font-size:12px;color:var(--t2);transition:transform .2s}
+.sec.open .sec-arrow{transform:rotate(90deg)}
+.sec-b{display:none;padding:0 16px 14px;border-top:1px solid var(--bdr)}
+.sec.open .sec-b{display:block}
+
+/* ── 表单 ── */
+.fld{margin-bottom:10px}
+.fld:last-child{margin-bottom:0}
+.fld label{display:block;font-size:13px;color:var(--t2);margin-bottom:4px;font-weight:500}
+.fld input[type="text"],.fld input[type="password"],.fld input[type="number"],.fld input[type="file"],.fld select{
+  width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;
+  font-size:14px;font-family:inherit;background:#FAFBFC;color:var(--t);
+}
+.fld input:focus,.fld select:focus{outline:none;border-color:var(--c);background:#fff}
+.range-r{display:flex;align-items:center;gap:10px}
+.range-r input[type="range"]{flex:1}
+.range-v{min-width:40px;text-align:center;font-weight:700;color:var(--c);font-size:15px}
+.chk-r{display:flex;align-items:center;margin-bottom:10px}
+.chk-r label{margin-bottom:0;font-size:14px;color:var(--t);cursor:pointer}
+.chk-r input[type="checkbox"]{margin-right:6px;transform:scale(1.2)}
+.hint{font-size:12px;color:var(--t2);margin-top:2px;line-height:1.5}
+
+/* ── 按钮 ── */
+.btn-row{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+.btn{
+  padding:10px 20px;border:none;border-radius:6px;font-size:14px;font-weight:600;
+  cursor:pointer;font-family:inherit;transition:background .15s;
+}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-sv{background:var(--c);color:#fff}
+.btn-sv:hover{background:var(--cd)}
+.btn-rb{background:var(--yel);color:#fff}
+.btn-rb:hover{background:#B45309}
+.btn-rs{background:var(--red);color:#fff}
+.btn-rs:hover{background:#B91C1C}
+.btn-s{background:var(--card);color:var(--t);border:1px solid var(--bdr)}
+.btn-s:hover{background:#F1F5F9}
+
+/* ── 密码可见切换 ── */
+.pw-w{position:relative}
+.pw-w input{padding-right:36px}
+.pw-w .eye{
+  position:absolute;right:6px;top:50%;transform:translateY(-50%);
+  cursor:pointer;user-select:none;font-size:16px;color:var(--t2);line-height:1;
+}
+
+/* ── 状态点 / 徽章 ── */
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:middle}
+.dot.g{background:var(--grn)}
+.dot.y{background:var(--yel)}
+.dot.r{background:var(--red)}
+.dot.pulse{animation:pls 1s infinite}
+@keyframes pls{0%,100%{opacity:1}50%{opacity:.3}}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.badge.g{background:#ECFDF5;color:var(--grn)}
+.badge.y{background:#FFFBEB;color:var(--yel)}
+.badge.r{background:#FEF2F2;color:var(--red)}
+
+/* ── 进度条 ── */
+.bar-w{background:#E2E8F0;border-radius:4px;height:8px;margin:6px 0;overflow:hidden}
+.bar-f{height:100%;border-radius:4px;transition:width .5s}
+.bar-f.g{background:var(--c)}
+.bar-f.y{background:var(--yel)}
+.bar-f.r{background:var(--red)}
+.bar-t{font-size:12px;color:var(--t2)}
+
+/* ── Toast ── */
+.toast{
+  position:fixed;top:16px;left:50%;transform:translateX(-50%);
+  padding:10px 24px;border-radius:8px;font-size:14px;z-index:100;
+  opacity:0;transition:opacity .3s;pointer-events:none;font-weight:500;
+}
+.toast.show{opacity:1}
+.toast.ok{background:var(--c);color:#fff}
+.toast.err{background:var(--red);color:#fff}
+
+/* ── 加载旋转 ── */
+.spinner{width:32px;height:32px;border:3px solid #E2E8F0;border-top-color:var(--c);border-radius:50%;animation:spin 1s linear infinite;margin:12px auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── 空状态 ── */
+.empty{text-align:center;padding:40px 20px;color:var(--t2);font-size:14px}
+.empty .icon{font-size:40px;margin-bottom:12px;opacity:.4}
+
+</style>
 <style>
 /* 文件页专属 */
 .tabs{display:flex;background:var(--card);border-radius:8px;padding:3px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
@@ -91,7 +251,7 @@ function authFetch(u,o){o=o||{};o.headers=Object.assign({},o.headers||{},authH()
 function loginDialog(cb){var p=prompt('请输入管理密码:');if(!p)return;fetch('/api/auth',{headers:{'X-Password':p}}).then(function(r){if(r.ok){setPw(p);if(cb)cb()}else{alert('密码错误');loginDialog(cb)}})}
 function requireAuth(cb){if(getPw())cb();else loginDialog(cb)}
 function fmtB(b){if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';if(b<1073741824)return(b/1048576).toFixed(1)+'MB';return(b/1073741824).toFixed(2)+'GB'}
-function fetchT(url,opts,ms){opts=opts||{};ms=ms||8000;var c=new AbortController();var t=setTimeout(function(){c.abort()},ms);opts.signal=c.signal;return fetch(url,opts).then(function(r){clearTimeout(t);return r},function(e){clearTimeout(t);throw e})}
+function fetchT(url,opts,ms){opts=opts||{};ms=ms||15000;var c=new AbortController();var t=setTimeout(function(){c.abort()},ms);opts.signal=c.signal;return fetch(url,opts).then(function(r){clearTimeout(t);return r},function(e){clearTimeout(t);throw e})}
 
 var curFiles=[],curPage=1,totalCount=0,PAGE_SIZE=10,sdFreeMb=0,SD_TOTAL_MB=0,curType='all';
 
