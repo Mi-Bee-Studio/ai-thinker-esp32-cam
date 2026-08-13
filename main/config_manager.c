@@ -54,7 +54,7 @@ static void apply_defaults(cam_config_t *cfg)
     /* V13: Camera XCLK frequency */
     cfg->xclk_freq_mhz = CONFIG_MIBEE_CAM_DEFAULT_XCLK_MHZ;
     /* V14: WiFi RSSI-based roaming */
-    cfg->wifi_roam_rssi_threshold = -75;  /* scan for better AP below this */
+    cfg->wifi_roam_rssi_threshold = -65;  /* scan for better AP below this */
     cfg->wifi_roam_rssi_gap = 10;         /* switch when other AP is 10dBm+ stronger */
     cfg->magic = CONFIG_MAGIC;
     cfg->version = CONFIG_VERSION;
@@ -164,8 +164,12 @@ esp_err_t config_init(void)
                         }
                         /* V13→V14: WiFi RSSI-based roaming */
                         if (s_config.version <= 13) {
-                            s_config.wifi_roam_rssi_threshold = -75;
+                            s_config.wifi_roam_rssi_threshold = -65;
                             s_config.wifi_roam_rssi_gap = 10;
+                        }
+                        /* V14→V15: tighten roaming threshold -75→-65 for weak-signal boards */
+                        if (s_config.version <= 14) {
+                            s_config.wifi_roam_rssi_threshold = -65;
                         }
                         ESP_LOGI(TAG, "Config migrated V%d->V%d (blob %u->%u), saving",
                                  s_config.version, CONFIG_VERSION, (unsigned)cur_len, (unsigned)sizeof(cam_config_t));
@@ -219,8 +223,12 @@ esp_err_t config_init(void)
         }
         /* V13→V14: WiFi RSSI-based roaming */
         if (s_config.version <= 13) {
-            s_config.wifi_roam_rssi_threshold = -75;
+            s_config.wifi_roam_rssi_threshold = -65;
             s_config.wifi_roam_rssi_gap = 10;
+        }
+        /* V14→V15: tighten roaming threshold -75→-65 for weak-signal boards */
+        if (s_config.version <= 14) {
+            s_config.wifi_roam_rssi_threshold = -65;
         }
         ESP_LOGI(TAG, "Config migrated V%d->V%d (same-size blob), saving",
                  s_config.version, CONFIG_VERSION);
@@ -599,6 +607,14 @@ esp_err_t config_load_from_sd(void)
 
     if (!ssid_found || !pass_found) {
         ESP_LOGW(TAG, "config.txt incomplete (ssid=%d, password=%d)", ssid_found, pass_found);
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    /* Only apply SD WiFi on first boot (NVS WiFi empty). Once WiFi is in NVS,
+     * config.txt must NOT override it — otherwise AT+WIFI / web UI changes are
+     * silently reverted on every reboot. */
+    if (s_config.wifi_ssid[0] != '\0' && s_config.wifi_pass[0] != '\0') {
+        ESP_LOGI(TAG, "NVS WiFi already configured ('%s'), skipping SD override", s_config.wifi_ssid);
         return ESP_ERR_NOT_FOUND;
     }
 
