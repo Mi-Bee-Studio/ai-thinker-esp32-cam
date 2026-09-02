@@ -1,207 +1,293 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiBee Cam</title>
-    <link rel="stylesheet" href="/style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mi&amp;Bee CAM 仪表盘</title>
+<style>
+/* ==================================================================
+ * MiBee Cam — 共享设计系统 (style.css)
+ * 所有页面共用，浏览器缓存后二刷起每页只传 HTML。
+ * 设计语言：teal 主色 + 卡片 + 状态点/徽章 + 进度条。
+ * ================================================================ */
+
+*{margin:0;padding:0;box-sizing:border-box}
+
+:root{
+  --c:#0D9488;       /* 主色 teal */
+  --cd:#0F766E;      /* 深主色 */
+  --bg:#F8FAFB;      /* 页面背景 */
+  --card:#fff;       /* 卡片背景 */
+  --t:#1E293B;       /* 主文字 */
+  --t2:#64748B;      /* 次文字 */
+  --bdr:#E2E8F0;     /* 边框 */
+  --red:#DC2626;
+  --yel:#D97706;
+  --grn:#059669;
+}
+
+body{
+  font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
+  background:var(--bg);color:var(--t);font-size:14px;
+  -webkit-text-size-adjust:100%;
+}
+
+/* ── 页头 + 导航 ── */
+.hdr{
+  background:linear-gradient(135deg,#0F766E,#0D9488);color:#fff;
+  padding:12px 16px;display:flex;align-items:center;gap:10px;
+}
+.hdr h1{font-size:17px;font-weight:700;letter-spacing:.3px}
+.hdr .sub{font-size:12px;opacity:.75;margin-left:auto}
+
+.nav{background:var(--card);border-bottom:1px solid var(--bdr);display:flex}
+.nav a{
+  flex:1;text-align:center;padding:10px 0;font-size:13px;color:var(--t2);
+  text-decoration:none;border-bottom:2px solid transparent;transition:all .15s;
+}
+.nav a.act{color:var(--c);border-bottom-color:var(--c);font-weight:600}
+.nav a:hover{background:#F1F5F9}
+
+/* ── 容器 ── */
+.main{padding:12px;max-width:600px;margin:0 auto;padding-bottom:24px}
+.main.wide{max-width:860px}
+
+/* ── 卡片 / 信息行 ── */
+.card{
+  background:var(--card);border-radius:10px;padding:14px 16px;margin-bottom:10px;
+  box-shadow:0 1px 3px rgba(0,0,0,.06);
+}
+.ct{
+  font-size:13px;color:var(--t2);margin-bottom:8px;font-weight:600;
+  text-transform:uppercase;letter-spacing:.5px;
+}
+.row{display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #F1F5F9}
+.row:last-child{border-bottom:none}
+.row .l{color:var(--t2)}
+.row .v{font-weight:500;color:var(--t);text-align:right;max-width:62%;word-break:break-all}
+
+.grid{display:grid;grid-template-columns:1fr;gap:10px}
+@media(min-width:480px){.grid{grid-template-columns:1fr 1fr}}
+
+/* ── 折叠分组 (设置页) ── */
+.sec{
+  background:var(--card);border-radius:10px;margin-bottom:10px;
+  box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden;
+}
+.sec-h{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 16px;cursor:pointer;user-select:none;transition:background .15s;
+}
+.sec-h:hover{background:#F8FAFB}
+.sec-h .sec-t{font-size:14px;font-weight:600;color:var(--t)}
+.sec-h .sec-arrow{font-size:12px;color:var(--t2);transition:transform .2s}
+.sec.open .sec-arrow{transform:rotate(90deg)}
+.sec-b{display:none;padding:0 16px 14px;border-top:1px solid var(--bdr)}
+.sec.open .sec-b{display:block}
+
+/* ── 表单 ── */
+.fld{margin-bottom:10px}
+.fld:last-child{margin-bottom:0}
+.fld label{display:block;font-size:13px;color:var(--t2);margin-bottom:4px;font-weight:500}
+.fld input[type="text"],.fld input[type="password"],.fld input[type="number"],.fld input[type="file"],.fld select{
+  width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;
+  font-size:14px;font-family:inherit;background:#FAFBFC;color:var(--t);
+}
+.fld input:focus,.fld select:focus{outline:none;border-color:var(--c);background:#fff}
+.range-r{display:flex;align-items:center;gap:10px}
+.range-r input[type="range"]{flex:1}
+.range-v{min-width:40px;text-align:center;font-weight:700;color:var(--c);font-size:15px}
+.chk-r{display:flex;align-items:center;margin-bottom:10px}
+.chk-r label{margin-bottom:0;font-size:14px;color:var(--t);cursor:pointer}
+.chk-r input[type="checkbox"]{margin-right:6px;transform:scale(1.2)}
+.hint{font-size:12px;color:var(--t2);margin-top:2px;line-height:1.5}
+
+/* ── 按钮 ── */
+.btn-row{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+.btn{
+  padding:10px 20px;border:none;border-radius:6px;font-size:14px;font-weight:600;
+  cursor:pointer;font-family:inherit;transition:background .15s;
+}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-sv{background:var(--c);color:#fff}
+.btn-sv:hover{background:var(--cd)}
+.btn-rb{background:var(--yel);color:#fff}
+.btn-rb:hover{background:#B45309}
+.btn-rs{background:var(--red);color:#fff}
+.btn-rs:hover{background:#B91C1C}
+.btn-s{background:var(--card);color:var(--t);border:1px solid var(--bdr)}
+.btn-s:hover{background:#F1F5F9}
+
+/* ── 密码可见切换 ── */
+.pw-w{position:relative}
+.pw-w input{padding-right:36px}
+.pw-w .eye{
+  position:absolute;right:6px;top:50%;transform:translateY(-50%);
+  cursor:pointer;user-select:none;font-size:16px;color:var(--t2);line-height:1;
+}
+
+/* ── 状态点 / 徽章 ── */
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:middle}
+.dot.g{background:var(--grn)}
+.dot.y{background:var(--yel)}
+.dot.r{background:var(--red)}
+.dot.pulse{animation:pls 1s infinite}
+@keyframes pls{0%,100%{opacity:1}50%{opacity:.3}}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.badge.g{background:#ECFDF5;color:var(--grn)}
+.badge.y{background:#FFFBEB;color:var(--yel)}
+.badge.r{background:#FEF2F2;color:var(--red)}
+
+/* ── 进度条 ── */
+.bar-w{background:#E2E8F0;border-radius:4px;height:8px;margin:6px 0;overflow:hidden}
+.bar-f{height:100%;border-radius:4px;transition:width .5s}
+.bar-f.g{background:var(--c)}
+.bar-f.y{background:var(--yel)}
+.bar-f.r{background:var(--red)}
+.bar-t{font-size:12px;color:var(--t2)}
+
+/* ── Toast ── */
+.toast{
+  position:fixed;top:16px;left:50%;transform:translateX(-50%);
+  padding:10px 24px;border-radius:8px;font-size:14px;z-index:100;
+  opacity:0;transition:opacity .3s;pointer-events:none;font-weight:500;
+}
+.toast.show{opacity:1}
+.toast.ok{background:var(--c);color:#fff}
+.toast.err{background:var(--red);color:#fff}
+
+/* ── 加载旋转 ── */
+.spinner{width:32px;height:32px;border:3px solid #E2E8F0;border-top-color:var(--c);border-radius:50%;animation:spin 1s linear infinite;margin:12px auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── 空状态 ── */
+.empty{text-align:center;padding:40px 20px;color:var(--t2);font-size:14px}
+.empty .icon{font-size:40px;margin-bottom:12px;opacity:.4}
+
+</style>
 </head>
 <body>
-    <div class="app">
-        <!-- Status Bar -->
-        <div id="status-bar" class="status-bar">
-            <span class="badge" id="badge-wifi" data-i18n="status.wifi">WiFi</span>
-            <span class="badge" id="badge-ip">--</span>
-            <span class="badge" id="badge-resolution" data-i18n="status.resolution">--</span>
-            <span class="badge" id="badge-quality" data-i18n="status.quality">--</span>
-            <span class="badge" id="badge-heap" data-i18n="status.heap">--</span>
-            <span class="badge" id="badge-psram" data-i18n="status.psram">--</span>
-            <span class="badge" id="badge-clients" data-i18n="status.clients">0</span>
-            <span class="badge" id="badge-ai" data-i18n="status.ai">AI</span>
-        </div>
+<div class="hdr">
+<h1>Mi&amp;Bee CAM</h1>
+<span class="sub" id="devName">--</span>
+</div>
+<div class="nav">
+<a href="/" class="act">仪表盘</a>
+<a href="/preview.html">实时预览</a>
+<a href="/files.html">文件</a>
+<a href="/config.html">设置</a>
+</div>
+<div class="main">
 
-        <!-- Main Content -->
-        <div class="main-content">
-            <!-- Stream Area -->
-            <div class="stream-area" id="stream-area">
-                <img id="stream-img" class="stream-img" src="" alt="Camera Stream">
-                <canvas id="stream-overlay" class="stream-overlay" width="640" height="480"></canvas>
-                <div id="stream-status" class="hidden" data-i18n="stream.connecting">Connecting&hellip;</div>
-            </div>
+<div class="card">
+<div class="ct">设备状态</div>
+<div class="row"><span class="l">设备名称</span><span class="v" id="dName">--</span></div>
+<div class="row"><span class="l">运行时间</span><span class="v" id="dUp">--</span></div>
+<div class="row"><span class="l">固件版本</span><span class="v" id="dVer">--</span></div>
+</div>
 
-            <!-- Settings Panel -->
-            <div class="settings-panel" id="settings-panel">
-                <!-- Tab Navigation -->
-                <div class="settings-tabs" id="settings-tabs">
-                    <button class="settings-tab active" data-tab="camera" data-i18n="section.camera">Camera</button>
-                    <button class="settings-tab" data-tab="ai" data-i18n="section.ai_features">AI Features</button>
-                    <button class="settings-tab" data-tab="flash" data-i18n="section.flash_led">Flash LED</button>
-                    <button class="settings-tab" data-tab="network" data-i18n="section.wifi_config">WiFi</button>
-                    <button class="settings-tab" data-tab="streaming" data-i18n="section.streaming">Streaming</button>
-                    <button class="settings-tab" data-tab="system" data-i18n="section.system">System</button>
-                </div>
+<div class="card">
+<div class="ct">摄像头</div>
+<div class="row"><span class="l">状态</span><span class="v" id="cSt">--</span></div>
+<div class="row"><span class="l">传感器</span><span class="v" id="cSen">--</span></div>
+<div class="row"><span class="l">分辨率</span><span class="v" id="cRes">--</span></div>
+<div class="row"><span class="l">推流客户端</span><span class="v" id="cCli">--</span></div>
+</div>
 
-                <!-- Camera Section -->
-                <div class="settings-section active" id="section-camera">
-                    <div class="setting-group">
-                        <label class="setting-label" data-i18n="camera.framesize">Resolution</label>
-                        <select id="cam-framesize">
-                            <option value="0">96x96</option>
-                            <option value="1">QQVGA 160x120</option>
-                            <option value="2">128x128</option>
-                            <option value="3">QCIF 176x144</option>
-                            <option value="4">HQVGA 240x176</option>
-                            <option value="5">240x240</option>
-                            <option value="6">QVGA 320x240</option>
-                            <option value="7">320x320</option>
-                            <option value="8">CIF 400x296</option>
-                            <option value="9">HVGA 480x320</option>
-                            <option value="10" selected>VGA 640x480</option>
-                            <option value="11">SVGA 800x600</option>
-                            <option value="12">XGA 1024x768</option>
-                            <option value="13">HD 1280x720</option>
-                            <option value="14">SXGA 1280x1024</option>
-                            <option value="15">UXGA 1600x1200</option>
-                        </select>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-label" data-i18n="camera.quality">JPEG Quality</label>
-                        <div class="slider-row">
-                            <input type="range" id="cam-quality" min="0" max="63" value="12">
-                            <span class="slider-value" id="cam-quality-val">12</span>
-                        </div>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-label" data-i18n="camera.brightness">Brightness</label>
-                        <div class="slider-row">
-                            <input type="range" id="cam-brightness" min="-2" max="2" value="0" step="1">
-                            <span class="slider-value" id="cam-brightness-val">0</span>
-                        </div>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-label" data-i18n="camera.contrast">Contrast</label>
-                        <div class="slider-row">
-                            <input type="range" id="cam-contrast" min="-2" max="2" value="0" step="1">
-                            <span class="slider-value" id="cam-contrast-val">0</span>
-                        </div>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-label" data-i18n="camera.saturation">Saturation</label>
-                        <div class="slider-row">
-                            <input type="range" id="cam-saturation" min="-2" max="2" value="0" step="1">
-                            <span class="slider-value" id="cam-saturation-val">0</span>
-                        </div>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-label" data-i18n="camera.sharpness">Sharpness</label>
-                        <div class="slider-row">
-                            <input type="range" id="cam-sharpness" min="-2" max="2" value="0" step="1">
-                            <span class="slider-value" id="cam-sharpness-val">0</span>
-                        </div>
-                    </div>
-                    <div class="setting-group flex-row flex-between">
-                        <label class="setting-label" data-i18n="camera.hmirror">Horizontal Mirror</label>
-                        <div class="toggle" id="cam-hmirror" role="switch" aria-checked="false" tabindex="0"></div>
-                    </div>
-                    <div class="setting-group flex-row flex-between">
-                        <label class="setting-label" data-i18n="camera.vflip">Vertical Flip</label>
-                        <div class="toggle" id="cam-vflip" role="switch" aria-checked="false" tabindex="0"></div>
-                    </div>
-                </div>
+<div class="grid">
+<div class="card">
+<div class="ct">WiFi</div>
+<div class="row"><span class="l">模式</span><span class="v" id="wMode">--</span></div>
+<div class="row"><span class="l">IP地址</span><span class="v" id="wIp">--</span></div>
+<div class="row"><span class="l">信号强度</span><span class="v" id="wRssi">--</span></div>
+</div>
+<div class="card">
+<div class="ct">存储</div>
+<div class="bar-w"><div class="bar-f g" id="sBar" style="width:0%"></div></div>
+<div class="bar-t" id="sTxt">--</div>
+<div class="row" style="margin-top:6px"><span class="l">照片数量</span><span class="v" id="sCnt">--</span></div>
+</div>
+</div>
 
-                <!-- AI Section -->
-                <div class="settings-section" id="section-ai">
-                    <div class="setting-group flex-row flex-between">
-                        <label class="setting-label" data-i18n="ai.face">Face Detection</label>
-                        <div class="toggle" id="ai-face" role="switch" aria-checked="false" tabindex="0"></div>
-                    </div>
-                    <div class="setting-group flex-row flex-between">
-                        <label class="setting-label" data-i18n="ai.motion">Motion Detection</label>
-                        <div class="toggle" id="ai-motion" role="switch" aria-checked="false" tabindex="0"></div>
-                    </div>
-                    <div class="setting-group flex-row flex-between">
-                        <label class="setting-label" data-i18n="ai.qr">QR Code</label>
-                        <div class="toggle" id="ai-qr" role="switch" aria-checked="false" tabindex="0"></div>
-                    </div>
-                    <div class="setting-group">
-                        <p class="setting-description" data-i18n="ai.note">AI requires VGA resolution (640x480)</p>
-                    </div>
-                </div>
+<div class="grid">
+<div class="card">
+<div class="ct">移动侦测</div>
+<div class="row"><span class="l">状态</span><span class="v" id="mEn">--</span></div>
+<div class="row"><span class="l">事件次数</span><span class="v" id="mEvt">--</span></div>
+</div>
+<div class="card">
+<div class="ct">系统内存</div>
+<div class="row"><span class="l">可用堆</span><span class="v" id="hFree">--</span></div>
+<div class="row"><span class="l">最低堆</span><span class="v" id="hMin">--</span></div>
+</div>
+</div>
 
-                <!-- Flash LED Section -->
-                <div class="settings-section" id="section-flash">
-                    <div class="setting-group">
-                        <label class="setting-label" data-i18n="flash.brightness">LED Brightness</label>
-                        <div class="slider-row">
-                            <input type="range" id="led-brightness" min="0" max="100" value="0">
-                            <span class="slider-value" id="led-brightness-val">0</span>
-                        </div>
-                    </div>
-                </div>
+<div class="card">
+<div class="ct">录像状态</div>
+<div class="row"><span class="l">状态</span><span class="v" id="rState">--</span></div>
+<div class="row"><span class="l">当前文件</span><span class="v" id="rFile">--</span></div>
+<div class="row"><span class="l">丢帧数</span><span class="v" id="rDrop">--</span></div>
+</div>
 
-                <!-- Network Section -->
-                <div class="settings-section" id="section-network">
-                    <div class="setting-group">
-                        <label data-i18n="network.ssid_label">SSID</label>
-                        <input type="text" id="wifi-ssid" data-i18n-placeholder="network.ssid_placeholder" placeholder="Network name">
-                    </div>
-                    <div class="setting-group">
-                        <label data-i18n="network.password_label">Password</label>
-                        <input type="password" id="wifi-pass" data-i18n-placeholder="network.password_placeholder" placeholder="Leave blank to keep current">
-                    </div>
-                    <button class="btn-primary" id="btn-wifi-save" data-i18n="network.save">Save &amp; Reboot</button>
-                </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+function $(s){return document.getElementById(s)}
+function fmtT(s){if(s==null)return'--';s=Math.floor(s);var h=Math.floor(s/3600),m=Math.floor(s%3600/60);if(h>0)return h+'小时'+m+'分钟';if(m>0)return m+'分钟';return s+'秒'}
+function fmtB(b){if(b==null)return'--';if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';if(b<1073741824)return(b/1048576).toFixed(1)+'MB';return(b/1073741824).toFixed(2)+'GB'}
+function badge(c,t){return '<span class="badge '+c+'">'+t+'</span>'}
+function rssiInfo(v){if(v==null||v==0)return '--';if(v>-50)return '<span class="dot g"></span> '+v+'dBm 极好';if(v>-65)return '<span class="dot g"></span> '+v+'dBm 良好';if(v>-75)return '<span class="dot y"></span> '+v+'dBm 一般';return '<span class="dot r"></span> '+v+'dBm 较差'}
 
-                <!-- Streaming Section -->
-                <div class="settings-section" id="section-streaming">
-                    <div class="setting-group">
-                        <label class="setting-label" data-i18n="streaming.rtsp_user">RTSP Username</label>
-                        <input type="text" id="rtsp-user" placeholder="admin">
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-label" data-i18n="streaming.rtsp_pass">RTSP Password</label>
-                        <input type="password" id="rtsp-pass" placeholder="Password">
-                    </div>
-                    <div class="setting-group flex-row flex-between">
-                        <label class="setting-label" data-i18n="streaming.onvif">ONVIF Discovery</label>
-                        <div class="toggle" id="onvif-enable" role="switch" aria-checked="false" tabindex="0"></div>
-                    </div>
-                    <button class="btn-primary" id="btn-streaming-save" data-i18n="btn.save">Save</button>
-                </div>
+/* fetchWithTimeout：弱 WiFi 下避免请求无限挂起 */
+function fetchT(url,opts,ms){opts=opts||{};ms=ms||15000;var c=new AbortController();var t=setTimeout(function(){c.abort()},ms);opts.signal=c.signal;return fetch(url,opts).then(function(r){clearTimeout(t);return r},function(e){clearTimeout(t);throw e})}
 
-                <!-- System Section -->
-                <div class="settings-section" id="section-system">
-                    <div class="setting-group">
-                        <label class="setting-label" data-i18n="system.uptime">Uptime</label>
-                        <span id="sys-uptime">--</span>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-label" data-i18n="system.free_heap">Free Heap</label>
-                        <span id="sys-heap">--</span>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-label" data-i18n="system.free_psram">Free PSRAM</label>
-                        <span id="sys-psram">--</span>
-                    </div>
-                    <!-- Theme toggle -->
-                    <div class="setting-group flex-row flex-between">
-                        <label class="setting-label" data-i18n="theme.toggle">Dark / Light</label>
-                        <div class="toggle" id="toggle-theme" role="switch" aria-checked="false" tabindex="0"></div>
-                    </div>
-                    <!-- Language toggle -->
-                    <div class="setting-group flex-row flex-between">
-                        <label class="setting-label" data-i18n="lang.toggle">EN / 中文</label>
-                        <div class="toggle" id="toggle-lang" role="switch" aria-checked="false" tabindex="0"></div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
+function refreshStatus(){
+  fetchT('/api/status').then(function(r){return r.json()}).then(function(d){
+    if(!d||!d.ok)return;var v=d.data;
+    $('dName').textContent=v.device_name||'MiBee CAM';
+    $('devName').textContent=v.device_name||'';
+    $('dUp').textContent=fmtT(v.uptime);
+    $('dVer').textContent=v.firmware_version||'--';
 
-    <!-- Toast -->
-    <div id="toast" class="toast"></div>
+    var cOk=v.camera_ok;
+    $('cSt').innerHTML=cOk?badge('g','已初始化'):badge('r','未初始化');
+    $('cSen').textContent=v.sensor||'OV2640';
+    $('cRes').textContent=v.resolution||'--';
+    $('cCli').textContent=(v.stream_clients!=null?v.stream_clients:'--')+' 个';
 
-    <script src="/i18n.js"></script>
-    <script src="/app.js"></script>
+    $('wMode').textContent=v.wifi_mode||'--';
+    $('wIp').textContent=v.ip||'--';
+    $('wRssi').innerHTML=rssiInfo(v.wifi_rssi);
+
+    /* SD 卡存储（health_monitor 缓存值，安全读取） */
+    if(v.sd_total_mb>0){
+      var used=v.sd_total_mb-(v.sd_free_mb||0);
+      var pct=Math.round(used*100/v.sd_total_mb);if(pct<0)pct=0;if(pct>100)pct=100;
+      $('sBar').style.width=pct+'%';
+      $('sBar').className='bar-f '+(pct>90?'r':pct>70?'y':'g');
+      $('sTxt').textContent='已用 '+fmtB(used*1048576)+' / '+fmtB(v.sd_total_mb*1048576)+' ('+pct+'%)';
+    }else{$('sBar').style.width='0%';$('sTxt').textContent='SD卡未挂载'}
+    $('sCnt').textContent=(v.photo_count!=null?v.photo_count:'--')+' 张';
+
+    $('mEn').innerHTML=v.motion_enabled?badge('g','已启用'):badge('y','未启用');
+    $('mEvt').textContent=(v.motion_events!=null?v.motion_events:'--')+' 次';
+
+    $('hFree').textContent=fmtB(v.free_heap);
+    $('hMin').textContent=fmtB(v.min_heap);
+  }).catch(function(){})
+
+  /* 录像状态（独立端点） */
+  fetchT('/api/record').then(function(r){return r.json()}).then(function(d){
+    if(!d||!d.ok)return;var v=d.data;
+    var rs={'IDLE':'空闲','RECORDING':'<span class="dot r pulse"></span> 录制中','PAUSED':'已暂停','ERROR':badge('r','错误')};
+    $('rState').innerHTML=rs[v.state]||v.state||'--';
+    $('rFile').textContent=v.current_file?v.current_file.split('/').pop():'--';
+    $('rDrop').textContent=(v.frames_dropped!=null?v.frames_dropped:'--');
+  }).catch(function(){})
+}
+
+setInterval(refreshStatus,10000);
+window.onload=refreshStatus;
+</script>
 </body>
 </html>

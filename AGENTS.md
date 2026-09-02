@@ -68,13 +68,20 @@ All business endpoints use the `/api/` prefix. Returns JSON envelope `{"ok":true
 
 ## Web UI
 
-Single-page application served from SPIFFS. Four files:
-- `index.html` — page structure
-- `app.js` — logic and API calls
-- `style.css` — light/dark theme styles
-- `i18n.js` — zh/en bilingual translations (auto-detect, persisted in localStorage)
+多页面应用（MPA），中文优先，每页独立内联 JS + 共享 `style.css` 设计系统。针对 OV2640/无 AI 精简适配，不是从 S3 照抄。
 
-Controls are shown or hidden based on `GET /api/capabilities`. The SPA baseline originates from `esp32s3-n16r8-cam` and is ported to all boards.
+| 文件 | 作用 |
+|------|------|
+| `style.css` | 共享设计系统（teal 主色/卡片/状态点/徽章/进度条），~6KB，浏览器缓存后二刷每页只传 HTML |
+| `index.html` | 仪表盘：设备/摄像头/WiFi/存储/移动侦测/内存/录像状态，10s 轮询 `/api/status`+`/api/record`，无推流（省带宽） |
+| `preview.html` | 实时预览：MJPEG `:81/stream` + 弱 WiFi 截图兜底（`/api/capture` ~1fps）；快捷改分辨率/质量/录像/闪光/拍照 |
+| `config.html` | 全配置（折叠分组）+ 固件/WebUI OTA 上传。摄像头仅 4 档（VGA/SVGA/XGA/UXGA），无 RTSP 假控件 |
+| `files.html` | SD 文件管理：照片/录像分页列表 + 下载/删除 |
+| `setup.html` | 首次配网向导（AP 模式深色主题）：WiFi+设备名+管理密码+时区。必须含 `web_password`（SET_PASSWORD_FIRST 状态机） |
+
+**关键 API 对齐（曾因照抄 S3 出错）：** `/api/status` 返回 `resolution`/`stream_clients`（非 camera_resolution/mjpeg_clients）；摄像头字段是 `cam_framesize`/`cam_quality`/`cam_vflip`；闪光是 `POST /api/led?action=toggle`（非 JSON body）；推流在独立 `:81` 端口；拍照是 `/api/capture`。
+
+**性能：** 首屏 ~6KB（index+style.css），原 S3 SPA 首屏 ~68KB。无 i18n 模块（中文优先，省 11KB）。
 
 ## Capabilities
 

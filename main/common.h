@@ -6,7 +6,7 @@
 #include "esp_err.h"
 
 // Config version and magic
-#define CONFIG_VERSION  14
+#define CONFIG_VERSION  15
 #define CONFIG_MAGIC    0xA5B6C7D8
 
 // Default values

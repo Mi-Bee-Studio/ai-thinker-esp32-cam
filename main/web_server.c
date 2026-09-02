@@ -750,10 +750,13 @@ static esp_err_t handler_capture(httpd_req_t *req)
 {
     set_cors_headers(req);
     camera_fb_t *fb = NULL;
-    esp_err_t err = frame_broker_get_copy(&fb, 3000);
+    /* Non-blocking peek: broker's s_current always holds the last published
+     * frame, so this returns instantly. timeout=0 avoids blocking the
+     * single-threaded httpd event loop. */
+    esp_err_t err = frame_broker_get_copy(&fb, 0);
     if (err != ESP_OK || fb == NULL) {
-        sd_logf(SD_LOG_ERROR, "http", "/capture failed: frame_broker timeout");
-        return send_json_error(req, "camera capture failed", 500);
+        ESP_LOGW(TAG, "/api/capture: no frame available (broker rc=%s)", esp_err_to_name(err));
+        return send_json_error(req, "camera not ready", 503);
     }
     httpd_resp_set_type(req, "image/jpeg");
     esp_err_t ret = httpd_resp_send(req, (const char *)fb->buf, fb->len);
@@ -1048,6 +1051,141 @@ static esp_err_t handler_api_auth(httpd_req_t *req)
     return send_unauthorized(req);
 }
 
+/* ------------------------------------------------------------------ */
+/*  GET /api/camera  - Read camera settings                           */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handler_api_camera_get(httpd_req_t *req)
+{
+    set_cors_headers(req);
+
+    const cam_config_t *cfg = config_get();
+    cJSON *data = cJSON_CreateObject();
+    /* Persisted fields */
+    cJSON_AddNumberToObject(data, "cam_framesize", (double)cfg->cam_framesize);
+    cJSON_AddNumberToObject(data, "cam_quality",   (double)cfg->cam_quality);
+    cJSON_AddNumberToObject(data, "cam_vflip",     (double)cfg->cam_vflip);
+    /* Not persisted on this board — sensor defaults (0/false) match the
+     * SPA's `?? 0` / `?? false` fallbacks, so the camera tab populates
+     * with valid OV2640 defaults instead of staying blank. */
+    cJSON_AddNumberToObject(data, "cam_brightness", 0);
+    cJSON_AddNumberToObject(data, "cam_contrast",   0);
+    cJSON_AddNumberToObject(data, "cam_saturation", 0);
+    cJSON_AddNumberToObject(data, "cam_sharpness",  0);
+    cJSON_AddBoolToObject(data,   "cam_hmirror",    false);
+    return send_json_ok(req, data);
+}
+
+/* ------------------------------------------------------------------ */
+/*  POST /api/camera  - Update camera settings                        */
+/*                                                                    */
+/* Only cam_framesize / cam_quality / cam_vflip are persisted on this
+ * board. cam_brightness/contrast/saturation/sharpness/hmirror are
+ * accepted (so the SPA's saveCamera payload doesn't 400) but ignored
+ * — sensor defaults apply on reinit. */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handler_api_camera_post(httpd_req_t *req)
+{
+    esp_err_t auth_ret = require_auth(req, "/api/camera");
+    if (auth_ret != ESP_OK) {
+        return auth_ret;
+    }
+    set_cors_headers(req);
+
+    char *body = read_body(req, 2048);
+    if (!body) {
+        return send_json_error(req, "empty or invalid body", 400);
+    }
+    cJSON *json = cJSON_Parse(body);
+    free(body);
+    if (!json) {
+        return send_json_error(req, "invalid JSON", 400);
+    }
+
+    cJSON *item;
+    bool need_apply = false;
+
+    if ((item = cJSON_GetObjectItem(json, "cam_framesize")) && cJSON_IsNumber(item)) {
+        int val = item->valueint;
+        if (val < 0 || val > 24) {
+            cJSON_Delete(json);
+            return send_json_error(req, "cam_framesize out of range (0-24)", 400);
+        }
+        config_set_resolution((camera_resolution_t)val);
+        need_apply = true;
+    }
+    if ((item = cJSON_GetObjectItem(json, "cam_quality")) && cJSON_IsNumber(item)) {
+        int val = item->valueint;
+        if (val < 0 || val > 63) {
+            cJSON_Delete(json);
+            return send_json_error(req, "cam_quality out of range (0-63)", 400);
+        }
+        config_set_jpeg_quality((uint8_t)val);
+        need_apply = true;
+    }
+    if ((item = cJSON_GetObjectItem(json, "cam_vflip")) && cJSON_IsBool(item)) {
+        config_set_vflip(item->valueint ? 1 : 0);
+        need_apply = true;
+    }
+    /* cam_hmirror / cam_brightness / cam_contrast / cam_saturation /
+     * cam_sharpness are accepted but not persisted — see file header note. */
+    cJSON_Delete(json);
+
+    if (need_apply) {
+        const cam_config_t *now = config_get();
+        esp_err_t cam_ret = camera_apply_settings(now->cam_framesize, now->fps, now->cam_quality);
+        if (cam_ret != ESP_OK) {
+            ESP_LOGW(TAG, "camera_apply_settings rc=%s", esp_err_to_name(cam_ret));
+        }
+    }
+
+    cJSON *data = cJSON_CreateObject();
+    return send_json_ok(req, data);
+}
+
+/* ------------------------------------------------------------------ */
+/*  GET /api/led  - Read flash LED state (no state change)             */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handler_api_led_get(httpd_req_t *req)
+{
+    set_cors_headers(req);
+
+    cJSON *data = cJSON_CreateObject();
+    cJSON_AddBoolToObject(data, "on", flash_led_is_on());
+    return send_json_ok(req, data);
+}
+
+/* ------------------------------------------------------------------ */
+/*  GET /api/ai/status  - Empty AI result shape (no AI on this board)  */
+/*                                                                    */
+/* The SPA polls /api/ai/status every 500ms unconditionally, even when */
+/* capabilities.ai=false hides the AI tab. Without this handler every  */
+/* poll returned a 404 with a non-JSON body, which (a) threw inside    */
+/* app.js's api() helper and (b) kept httpd busy serving error         */
+/* responses. Returning a valid empty shape lets pollAI() no-op       */
+/* silently.                                                          */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handler_api_ai_status(httpd_req_t *req)
+{
+    set_cors_headers(req);
+
+    cJSON *data = cJSON_CreateObject();
+    cJSON *face = cJSON_CreateObject();
+    cJSON_AddItemToObject(face, "boxes", cJSON_CreateArray());
+    cJSON_AddItemToObject(data, "face", face);
+    cJSON *motion = cJSON_CreateObject();
+    cJSON_AddNumberToObject(motion, "score", 0);
+    cJSON_AddBoolToObject(motion, "detected", false);
+    cJSON_AddItemToObject(data, "motion", motion);
+    cJSON *qr = cJSON_CreateObject();
+    cJSON_AddStringToObject(qr, "text", "");
+    cJSON_AddItemToObject(data, "qr", qr);
+    return send_json_ok(req, data);
+}
+
 
 /* ------------------------------------------------------------------ */
 /*  GET /api/timelapse/start, /api/timelapse/stop, /api/timelapse/status */
@@ -1327,6 +1465,10 @@ static const uri_entry_t s_uris[] = {
     { "/api/record",    HTTP_POST,   handler_api_record_post  },
     { "/api/record",    HTTP_GET,    handler_api_record_get   },
     { "/api/led",      HTTP_POST,   handler_api_led           },
+    { "/api/led",         HTTP_GET,    handler_api_led_get       },
+    { "/api/camera",      HTTP_GET,    handler_api_camera_get    },
+    { "/api/camera",      HTTP_POST,   handler_api_camera_post   },
+    { "/api/ai/status",   HTTP_GET,    handler_api_ai_status     },
     { "/api/ota/info",   HTTP_GET,    handler_api_ota_info     },
     { "/api/ota/upload", HTTP_POST,   handler_api_ota_upload   },
     { "/api/ota/spiffs", HTTP_POST,   handler_api_spiffs_upload },
@@ -1382,7 +1524,7 @@ esp_err_t web_server_start(uint16_t port)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = port;
-    config.max_uri_handlers = 30;
+    config.max_uri_handlers = 40;  /* 27 API + 2 wildcard + 2 ONVIF + headroom */
     config.stack_size = 8192;
     config.recv_wait_timeout = 10;    /* longer tolerance for slow WiFi */
     config.send_wait_timeout = 5;     /* free stalled connections faster (keepalive is primary) */

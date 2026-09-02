@@ -48,9 +48,13 @@ static TickType_t broker_frame_delay(void)
     uint8_t fps = config_get()->fps;
     if (fps == 0) fps = BROKER_FPS;
     /* When no stream clients are watching, slow to 2fps to cut CPU/WiFi/PSRAM
-     * load — motion detection only needs ~2fps. Full rate resumes on connect. */
+     * load — motion detection only needs ~2fps. */
     if (mjpeg_streamer_get_client_count() == 0) {
         fps = 2;
+    } else {
+        /* Cap streaming FPS to 5 — ESP32 WiFi can't handle 15fps stream + httpd
+         * traffic simultaneously. 5fps gives ~75KB/s stream, leaving room for web UI. */
+        if (fps > 5) fps = 5;
     }
     return pdMS_TO_TICKS(1000 / fps);
 }
