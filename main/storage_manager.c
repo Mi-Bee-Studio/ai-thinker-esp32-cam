@@ -26,6 +26,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_vfs_fat.h"
+#include "nvs.h"
 #include "sdmmc_cmd.h"
 #include "ff.h"
 #include "driver/sdspi_host.h"
@@ -808,22 +809,28 @@ esp_err_t storage_cleanup(void)
     if (!s_mounted) return ESP_ERR_INVALID_STATE;
 
     const cam_config_t *cfg = config_get();
-    uint8_t usage = get_cached_usage_pct();
-    if (usage == UINT8_MAX) usage = storage_get_usage_pct();
+    uint8_t used = get_cached_usage_pct();
+    if (used == UINT8_MAX) used = storage_get_usage_pct();
+    /* V16 契约对齐：cleanup_*__pct 语义统一为"空闲百分比"（seeed 先例，
+     * 旧版本板按已用百分比解释，80/30 曾被解释成"删到仅剩 30% 已用"） */
+    uint8_t free_pct = 100 - used;
 
-    ESP_LOGI(TAG, "Storage usage: %d%% (cleanup threshold: %d%%)", usage, cfg->cleanup_low_pct);
+    ESP_LOGI(TAG, "Storage free: %d%% (cleanup threshold: free < %d%%)",
+             free_pct, cfg->cleanup_low_pct);
 
-    if (usage <= cfg->cleanup_low_pct) {
+    if (free_pct >= cfg->cleanup_low_pct) {
         return ESP_OK;
     }
 
-    ESP_LOGW(TAG, "Storage usage %d%% exceeds %d%%, starting cleanup", usage, cfg->cleanup_low_pct);
+    ESP_LOGW(TAG, "Storage free %d%% below %d%%, starting cleanup",
+             free_pct, cfg->cleanup_low_pct);
 
     int deleted = 0;
     while (true) {
-        usage = get_cached_usage_pct();
-        if (usage == UINT8_MAX) usage = storage_get_usage_pct();
-        if (usage < cfg->cleanup_high_pct) break;
+        used = get_cached_usage_pct();
+        if (used == UINT8_MAX) used = storage_get_usage_pct();
+        free_pct = 100 - used;
+        if (free_pct >= cfg->cleanup_high_pct) break;
 
         /* Find and delete oldest recording file from cache */
         xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -881,9 +888,9 @@ esp_err_t storage_cleanup(void)
         if (deleted > 200) break;  /* Safety limit */
     }
 
-    uint8_t new_usage = get_cached_usage_pct();
-    if (new_usage == UINT8_MAX) new_usage = storage_get_usage_pct();
-    ESP_LOGI(TAG, "Cleanup done: deleted %d files, usage now %d%%", deleted, new_usage);
+    uint8_t new_used = get_cached_usage_pct();
+    if (new_used == UINT8_MAX) new_used = storage_get_usage_pct();
+    ESP_LOGI(TAG, "Cleanup done: deleted %d files, free now %d%%", deleted, 100 - new_used);
     return ESP_OK;
 }
 
@@ -983,6 +990,78 @@ esp_err_t storage_format(void)
     return ESP_OK;
 }
 
+/* ---- Boot-time format request (NVS-persisted) ----
+ * 相机运行中格式化必挂死（GPIO14 共享总线），Web API 置位后重启，
+ * 由 main.c 在相机初始化之前调用 storage_format() 完成安全格式化。 */
+
+#define FORMAT_REQ_NAMESPACE "storage"
+#define FORMAT_REQ_KEY       "fmt_req"
+
+esp_err_t storage_format_request_set(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(FORMAT_REQ_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    esp_err_t ret = nvs_set_u8(h, FORMAT_REQ_KEY, 1);
+    if (ret == ESP_OK) ret = nvs_commit(h);
+    nvs_close(h);
+    return ret;
+}
+
+bool storage_format_pending(void)
+{
+    nvs_handle_t h;
+    uint8_t v = 0;
+    if (nvs_open(FORMAT_REQ_NAMESPACE, NVS_READONLY, &h) != ESP_OK) return false;
+    nvs_get_u8(h, FORMAT_REQ_KEY, &v);
+    nvs_close(h);
+    return v == 1;
+}
+
+void storage_format_clear(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(FORMAT_REQ_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_erase_key(h, FORMAT_REQ_KEY);  /* 不存在也算清除成功 */
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+esp_err_t storage_delete_recording(const char *name)
+{
+    if (!s_mounted || !name || name[0] == '\0' || strstr(name, "..")) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+    char filepath[320];
+    snprintf(filepath, sizeof(filepath), "%s/%s", RECORDINGS_PATH, name);
+
+    if (remove(filepath) != 0) {
+        ESP_LOGW(TAG, "Failed to delete recording %s: %s", filepath, strerror(errno));
+        xSemaphoreGive(s_mutex);
+        return ESP_FAIL;
+    }
+
+    /* 更新录像缓存（与 storage_cleanup 的删除路径一致） */
+    for (int i = 0; i < s_file_cache_count; i++) {
+        if (strcmp(s_file_cache[i].name, name) == 0) {
+            s_total_recording_bytes -= s_file_cache[i].size;
+            for (int j = i; j < s_file_cache_count - 1; j++) {
+                s_file_cache[j] = s_file_cache[j + 1];
+            }
+            s_file_cache_count--;
+            break;
+        }
+    }
+
+    ESP_LOGI(TAG, "Deleted recording: %s", filepath);
+    xSemaphoreGive(s_mutex);
+    return ESP_OK;
+}
+
 /* ---- Recording file public API ---- */
 
 void storage_register_file(const char *filepath, uint32_t size)
@@ -1018,14 +1097,15 @@ void storage_register_file(const char *filepath, uint32_t size)
     xSemaphoreGive(s_mutex);
 
     /* Check if cleanup is needed — use cached total to avoid f_getfree()
-     * which hangs/slow on degraded SPI bus after camera init. */
+     * which hangs/slow on degraded SPI bus after camera init.
+     * V16: cleanup_*_pct 语义为"空闲百分比"（家族统一，seeed 先例）。 */
     if (s_cached_total_mb > 0) {
         uint64_t total_bytes = (uint64_t)s_cached_total_mb * 1024 * 1024;
         uint64_t used_bytes = s_total_recording_bytes;
-        uint8_t usage = (uint8_t)(used_bytes * 100 / total_bytes);
-        if (usage > config_get()->cleanup_low_pct) {
-            ESP_LOGW(TAG, "Usage %d%% > %d%%, triggering cleanup",
-                     usage, config_get()->cleanup_low_pct);
+        uint8_t free_pct = (uint8_t)(100 - used_bytes * 100 / total_bytes);
+        if (free_pct < config_get()->cleanup_low_pct) {
+            ESP_LOGW(TAG, "Free %d%% < %d%%, triggering cleanup",
+                     free_pct, config_get()->cleanup_low_pct);
             storage_cleanup();
         }
     }

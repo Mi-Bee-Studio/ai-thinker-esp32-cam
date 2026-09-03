@@ -90,8 +90,25 @@ uint32_t storage_get_total_space(void);
 /** @brief Warm the photo list cache in background (call after storage_init) */
 void storage_warm_cache(void);
 
-/** @brief Format the SD card (all data lost). Remounts after format. */
+/** @brief Format the SD card (all data lost). Remounts after format.
+ *  @warning 仅可在相机初始化之前调用（GPIO14 SPI 总线共享）。Web API 走
+ *           request→reboot→boot-early-format 路径，勿在运行时直接调用。 */
 esp_err_t storage_format(void);
+
+/** @brief Persist a "format on next boot" request in NVS (survives reboot) */
+esp_err_t storage_format_request_set(void);
+
+/** @brief Check whether a boot-time format was requested */
+bool storage_format_pending(void);
+
+/** @brief Clear the boot-time format request (call after executing it) */
+void storage_format_clear(void);
+
+/**
+ * @brief Delete a recording file from SD card and update the cache
+ * @param name  Relative path within /sdcard/recordings/ (e.g. "2026-09/03/REC__x.avi")
+ */
+esp_err_t storage_delete_recording(const char *name);
 
 /** @brief Recording file information struct */
 typedef struct {

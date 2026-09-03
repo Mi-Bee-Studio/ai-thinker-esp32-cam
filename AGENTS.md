@@ -32,6 +32,18 @@ ESP32-CAM firmware (mibee-cam) — OV2640 camera with MJPEG streaming, motion de
 
 ## REST API Endpoints
 
+> **2026-09-02 契约 v1.0 统一化**（权威规范：`docs/api-contract.md`，下表已部分过时）：
+> 新增 `GET /api/scan`（setup.html 的扫描按钮从"优雅降级"变为真实可用）；
+> capabilities 增加 `api_version`/`wifi_scan`；status 字段对齐契约
+> （`sensor`→`camera`、`wifi_mode`→`wifi_state` 小写枚举（原中文值废除，中文展示移至前端）、
+> 新增 `stream_clients_max`=1）。MPA(index.html) 已同步改读新字段。
+> 注：本仓实际分区为双 OTA 1.5MB×2 + SPIFFS 956KB（本文旧描述"单 factory 3.5MB/无OTA"已过时，OTA 端点存在且可用）。
+>
+> **契约 v1.1（2026-09-02）**：统一默认密码 `2022-02-22`（空密码加载自动迁移）、拒绝 <6 位密码；
+> `/api/timelapse/*` 三端点已移除（启停走 POST /api/config 的 `timelapse_enabled`，
+> 运行态在 GET /api/status 的 `timelapse_running`/`timelapse_photo_count`）；
+> `/api/led` 新增 JSON body 主语义（`{"brightness":0-100}`），`?action=` 保留兼容；api_version=1.1。
+
 All business endpoints use the `/api/` prefix. Returns JSON envelope `{"ok":true,"data":...}` on success, `{"ok":false,"error":"..."}` on failure.
 
 | Method | Path | Auth | Description |
@@ -46,10 +58,11 @@ All business endpoints use the `/api/` prefix. Returns JSON envelope `{"ok":true
 | POST | `/api/reboot` | write | Reboot device |
 | GET | `/api/record` | open | Recording status |
 | POST | `/api/record` | write | Start/stop recording (`?action=start|stop`) |
-| GET | `/api/files` | open | List SD files |
-| DELETE | `/api/files` | write | Delete a file (`?name=...`) |
+| GET | `/api/files` | open | List SD files (`?type=all\|photos\|recordings&offset=&limit=` ≤200，含 `total`；2026-09-03 修复 type=all 翻页错位) |
+| DELETE | `/api/files` | write | Delete a file (`?name=...&type=photo\|recording`，缺省 photo；此前删录像必失败已修) |
+| POST | `/api/files/batch` | write | 批量删除 `{names:[...]}` 或 `{scope:"all\|photos\|recordings"}` → `{deleted,failed}`（契约 v1.2，跳过正在写的录像段） |
 | GET | `/api/download` | open | Download file (`?name=...&type=photo|recording`) |
-| POST | `/api/format` | write | Format SD card |
+| POST | `/api/format` | write | **申请-重启-开机格式化**：置 NVS 标志→应答 2s 后重启→main.c Step 5.5 相机初始化前执行格式化并清除标志。运行时格式化必挂死（GPIO14 相机/SD 共享 SPI），2026-09-03 前该端点因此 503 且未鉴权，均已修 |
 | GET | `/api/ota/info` | open | OTA status/info |
 | POST | `/api/ota/upload` | write | Upload firmware binary |
 | POST | `/api/ota/spiffs` | write | Upload SPIFFS image |
@@ -66,7 +79,89 @@ All business endpoints use the `/api/` prefix. Returns JSON envelope `{"ok":true
 
 **Exempt paths:** `/metrics` (Prometheus), `/onvif/*` (SOAP) are not under `/api/`.
 
+### 2026-09-03 晚 WiFi 三连修（"一直连不上"事故，全部已烧录验证）
+
+现场：主 AP(MickeyBeeGT) 在板位 RSSI **-82dBm**（低于 DHCP 可用阈值），备用
+(MickeyBeeGT3000) -63~-66dBm。三固件缺陷叠加把弱信号放大成"完全失联"：
+
+1. **DHCP 挂死盲区**：关联秒成但 DHCP 广播全丢 → 每 60s 被 AP 踢掉才计 1 次断开，
+   熬满 10 次 ≈10 分钟才切备用。修复：关联后 12s 无 IP 主动断开计 DHCP 超时，
+   连续 2 次立即切换（wifi_manager.c，`DHCP_TIMEOUT_MS/DHCP_FAILOVER_AFTER`）。
+2. **每次启动先扎主网黑洞**。修复：NVS(`wifi_pref/last_net`) 记住上次拿到 IP 的
+   网络，`wifi_start_sta_preferred()` 直接从好网启动——实测二次上线 40s → **3.3s**。
+3. **httpd 自愈误杀（重启放大器，最恶性）**：health_monitor 6×10s 探测失败 =
+   esp_restart()，而 WiFi 掉线时探测必失败（EHOSTUNREACH）→ **掉线 60s 被翻译成
+   重启** → 更多掉线 → 循环。日志特征：`recv 113`×N → wifi txq stop →
+   `rst:0xc` 无 panic 文字。修复：WiFi 未连接时不计数。
+   （与 seeed 2026-09-02 自愈误触发同族——**任何"探测失败→重启"逻辑都必须排除
+   网络不可达**，家族其余仓排查时注意。）
+
+工具链：`tools/overnight_log.py /dev/ttyUSB0` 常驻采集器已部署。CH340 特有：
+pyserial open 默认断言 RTS 会把 EN **持续按在复位态**（采集器 0 字节输入）——
+open 后必须立即 `ser.rts=False; ser.dtr=False`（三仓采集器已同步此修复）。
+
+物理层事实：这块 PCB 天线在当前位置主网不可用，固件只能保证"快速落在最好的
+网上"；要根本解决需挪位/外接天线。
+
+### 2026-09-03 晚二连修（"wifi 一直不稳定"= EMFILE 重启循环）
+
+用户报"139 WiFi 不稳定"。串口日志实证：**不是射频问题，是 socket 表满重启循环**
+（`E httpd: httpd_accept_conn: error in accept (23)` → health 探测 6×10s 失败 →
+`rst:0xc` → 重启后 ~12s 又满 → 循环，一段日志内 21 次重启）。
+
+4. **EMFILE 病根（同 luatos/seeed）**：SPA 流看门狗每 ~7s 重连 :81，被踢连接在
+   设备侧留 TIME_WAIT（默认 2×MSL=120s），默认 `LWIP_MAX_SOCKETS=10` 必爆。
+   `sdkconfig.defaults`：`CONFIG_LWIP_MAX_SOCKETS=16` + `CONFIG_LWIP_TCP_MSL=15000`
+   （与 luatos 仓已验证配置一致）。**改后已删 sdkconfig 重配烧录，EMFILE 消失**。
+5. **status 新字段**：`current_ssid`（当前实连 SSID，区别于 config 配置值）、
+   `wifi_net`（`primary|secondary` 槽位，`wifi_using_secondary()`）、`wifi_channel`。
+   seeed 同名字段先例，契约文档已补。启动后前 ~30s 探测可能 3 次超时（无 EMFILE、
+   40s 自愈、从未到 6/6）——观察项，与 SD 预热/camera warm 期 httpd 忙有关。
+6. **SPA 双 WiFi 配置回归**：统一切 SPA 时丢了旧 config.html 的备用 WiFi 表单。
+   WiFi 页新增：当前连接行（SSID+槽位+信道+RSSI）、备用 SSID/密码（仅当
+   `GET /api/config` 返回 `wifi_ssid_2` 才显示——n16r8 POST 是白名单校验，绝不
+   给它发该键）；保存 WiFi 凭据后 1.5s 自动 `/api/reboot` 生效。头行 `hd-sub`
+   也显示当前 SSID。四仓 SPA md5 已重新拉齐。
+
+### 2026-09-03 深夜 契约 v1.2（SD 管理三件套 + cleanup 语义统一，已烧录验证）
+
+7. **status 补齐家族字段**：`sd_present`/`sd_total_bytes`/`sd_free_bytes`/
+   `sd_free_percent`/`recording`（seeed 先例）。此前统一 SPA 的存储卡片要求
+   `sd_present===true` 才显示容量，本板缺该字段 → 永远显示"未检测到 SD 卡"
+   而文件列表正常（用户报障"存储显示未检测sd卡却列出一大堆文件"的根因）。
+   SPA 同时加了 `sd_total_mb` 回退，双保险。
+8. **批量删除 `POST /api/files/batch`**（names/scope 二选一，见 API 表），
+   列表分页修复（type=all 时 offset 现按合并后列表统一切片）。
+9. **格式化走"申请→重启→开机格式化"**（API 表格式化行有细节）。实测全链路 OK：
+   请求→2s→重启→Step 5.5 格式化→清标志→正常启动，之后重启不再触发。
+   ⚠️ 格式化会真删数据——**2026-09-03 当晚新 UI 上线 2 分钟后按钮即被点击执行，
+   卡上 729 个文件被清空**（按钮有双重确认，属正常使用）。
+10. **cleanup_low_pct/high_pct 语义统一为"空闲百分比"**（V15→V16 迁移重置 20/30）。
+    旧语义是"已用百分比"（线上 80/30 曾意味着"删到只剩 30% 已用"）；
+    config POST 校验同步反转（现要求 low < high）。
+11. **诊断教训**：本板弱射频下 httpd 会间歇无响应（RTT 飙到 100-200ms、
+    curl 000）但 ping 通、无 EMFILE、无重启——先怀疑链路再怀疑固件；
+    判据：连续探测中间夹着 200 = 链路抖动，不是挂死。
+
+   **诊断流程（下次"WiFi 不稳定"照此走，别先怪天线）**：
+   ① `/api/status` 看 `uptime`——几十秒说明在重启循环；② 采集器
+   `overnight_reboots.log` 里找签名 `httpd_accept_conn: error in accept (23)` +
+   `probe failed (n/6)` + `rst:0xc`，三者连读即 EMFILE 自愈误杀；③ 修复顺序：
+   先 `LWIP_MAX_SOCKETS=16`+`TCP_MSL=15000`（改 defaults 后删 sdkconfig 重配），
+   再考虑射频/省电（本板 `wifi_power_save` 出厂即 0=PS_NONE，无需动）。
+   本地 ping 抖动大（20~100ms）在重启循环期间测无意义，修复后再测基线。
+
 ## Web UI
+
+> **2026-09-03 起统一为家族 SPA（用户拍板）**：`/` 现服务与三 S3 仓 md5 一致的统一 SPA
+> 四文件（index.html/app.js/i18n.js/style.css，能力驱动：本板自动显示 存储/录像/延时/闪光
+> 标签，隐藏 WS/音频）。实测前提全部满足：:81 流已带 ACAO 头（crossOrigin 看门狗可用）、
+> 静态服务有 no-cache、SPIFFS ~950KB 富余。原 MPA 页面**保留在原路径作兜底**
+> （preview/config/files/setup.html 直接 URL 可达）。CMakeLists 已加 spiffs `DEPENDS`
+> 显式文件依赖（同三仓陷阱：目录级依赖不随内容编辑触发）。
+> 弱射频下首载可能撞掉线窗口——SPA 首载失败会停在骨架屏，**刷新即恢复**（boot 链无重试是
+> 已知限制）。`/api/camera` 热重配走互斥锁+drain_outstanding_fbs 安全路径，无需重启应用
+> （与 luatos 的重启方案不同，本板 fb 归还计数做对了）。
 
 多页面应用（MPA），中文优先，每页独立内联 JS + 共享 `style.css` 设计系统。针对 OV2640/无 AI 精简适配，不是从 S3 照抄。
 

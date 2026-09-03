@@ -325,6 +325,24 @@ void app_main(void)
     camera_release_sd_bus();
     ESP_LOGI(TAG, "=== Step 5/19: SD SPI bus released (camera deferred to after WiFi) ===");
 
+    /* Step 5.5/19: POST /api/format 的"安全格式化"路径。
+     * GPIO14 上相机与 SD 共享 SPI 总线，相机运行中 esp_vfs_fat_sdcard_format()
+     * 必挂死；此处相机尚未初始化（两条启动路径都未到 camera_init），是唯一
+     * 安全时机。格式化完成后释放总线，正常启动流程 Step 14 会再次挂载。 */
+    if (storage_format_pending()) {
+        ESP_LOGW(TAG, "=== Step 5.5/19: SD format requested — erasing card before camera init ===");
+        if (storage_init() == ESP_OK) {
+            if (storage_format() == ESP_OK) {
+                ESP_LOGI(TAG, "=== Step 5.5/19: SD card formatted OK ===");
+            } else {
+                ESP_LOGE(TAG, "=== Step 5.5/19: SD format FAILED ===");
+            }
+            storage_deinit();  /* 释放总线；Step 14 重新挂载 */
+        }
+        /* 无论成败都清除请求，避免格式化失败导致重启循环 */
+        storage_format_clear();
+    }
+
     /* Step 6/19: WiFi init (netif + event loop) */
     ret = wifi_init();
     ESP_ERROR_CHECK(ret);
@@ -353,8 +371,8 @@ void app_main(void)
     bool has_wifi = cfg->wifi_ssid[0] != '\0' && cfg->wifi_pass[0] != '\0';
 
     if (has_wifi) {
-        ESP_LOGI(TAG, "=== Step 9/19: Starting STA mode (SSID: %s) ===", cfg->wifi_ssid);
-        ret = wifi_start_sta(cfg->wifi_ssid, cfg->wifi_pass);
+        ret = wifi_start_sta_preferred();  /* 2026-09-03: 从上次成功网络启动（NVS 记忆） */
+        ESP_LOGI(TAG, "=== Step 9/19: STA start (preferred network), ret=%s ===", esp_err_to_name(ret));
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "WiFi STA start failed: %s", esp_err_to_name(ret));
             led_set_status(LED_ERROR);

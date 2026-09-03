@@ -1,293 +1,405 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mi&amp;Bee CAM 仪表盘</title>
-<style>
-/* ==================================================================
- * MiBee Cam — 共享设计系统 (style.css)
- * 所有页面共用，浏览器缓存后二刷起每页只传 HTML。
- * 设计语言：teal 主色 + 卡片 + 状态点/徽章 + 进度条。
- * ================================================================ */
-
-*{margin:0;padding:0;box-sizing:border-box}
-
-:root{
-  --c:#0D9488;       /* 主色 teal */
-  --cd:#0F766E;      /* 深主色 */
-  --bg:#F8FAFB;      /* 页面背景 */
-  --card:#fff;       /* 卡片背景 */
-  --t:#1E293B;       /* 主文字 */
-  --t2:#64748B;      /* 次文字 */
-  --bdr:#E2E8F0;     /* 边框 */
-  --red:#DC2626;
-  --yel:#D97706;
-  --grn:#059669;
-}
-
-body{
-  font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
-  background:var(--bg);color:var(--t);font-size:14px;
-  -webkit-text-size-adjust:100%;
-}
-
-/* ── 页头 + 导航 ── */
-.hdr{
-  background:linear-gradient(135deg,#0F766E,#0D9488);color:#fff;
-  padding:12px 16px;display:flex;align-items:center;gap:10px;
-}
-.hdr h1{font-size:17px;font-weight:700;letter-spacing:.3px}
-.hdr .sub{font-size:12px;opacity:.75;margin-left:auto}
-
-.nav{background:var(--card);border-bottom:1px solid var(--bdr);display:flex}
-.nav a{
-  flex:1;text-align:center;padding:10px 0;font-size:13px;color:var(--t2);
-  text-decoration:none;border-bottom:2px solid transparent;transition:all .15s;
-}
-.nav a.act{color:var(--c);border-bottom-color:var(--c);font-weight:600}
-.nav a:hover{background:#F1F5F9}
-
-/* ── 容器 ── */
-.main{padding:12px;max-width:600px;margin:0 auto;padding-bottom:24px}
-.main.wide{max-width:860px}
-
-/* ── 卡片 / 信息行 ── */
-.card{
-  background:var(--card);border-radius:10px;padding:14px 16px;margin-bottom:10px;
-  box-shadow:0 1px 3px rgba(0,0,0,.06);
-}
-.ct{
-  font-size:13px;color:var(--t2);margin-bottom:8px;font-weight:600;
-  text-transform:uppercase;letter-spacing:.5px;
-}
-.row{display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #F1F5F9}
-.row:last-child{border-bottom:none}
-.row .l{color:var(--t2)}
-.row .v{font-weight:500;color:var(--t);text-align:right;max-width:62%;word-break:break-all}
-
-.grid{display:grid;grid-template-columns:1fr;gap:10px}
-@media(min-width:480px){.grid{grid-template-columns:1fr 1fr}}
-
-/* ── 折叠分组 (设置页) ── */
-.sec{
-  background:var(--card);border-radius:10px;margin-bottom:10px;
-  box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden;
-}
-.sec-h{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:12px 16px;cursor:pointer;user-select:none;transition:background .15s;
-}
-.sec-h:hover{background:#F8FAFB}
-.sec-h .sec-t{font-size:14px;font-weight:600;color:var(--t)}
-.sec-h .sec-arrow{font-size:12px;color:var(--t2);transition:transform .2s}
-.sec.open .sec-arrow{transform:rotate(90deg)}
-.sec-b{display:none;padding:0 16px 14px;border-top:1px solid var(--bdr)}
-.sec.open .sec-b{display:block}
-
-/* ── 表单 ── */
-.fld{margin-bottom:10px}
-.fld:last-child{margin-bottom:0}
-.fld label{display:block;font-size:13px;color:var(--t2);margin-bottom:4px;font-weight:500}
-.fld input[type="text"],.fld input[type="password"],.fld input[type="number"],.fld input[type="file"],.fld select{
-  width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;
-  font-size:14px;font-family:inherit;background:#FAFBFC;color:var(--t);
-}
-.fld input:focus,.fld select:focus{outline:none;border-color:var(--c);background:#fff}
-.range-r{display:flex;align-items:center;gap:10px}
-.range-r input[type="range"]{flex:1}
-.range-v{min-width:40px;text-align:center;font-weight:700;color:var(--c);font-size:15px}
-.chk-r{display:flex;align-items:center;margin-bottom:10px}
-.chk-r label{margin-bottom:0;font-size:14px;color:var(--t);cursor:pointer}
-.chk-r input[type="checkbox"]{margin-right:6px;transform:scale(1.2)}
-.hint{font-size:12px;color:var(--t2);margin-top:2px;line-height:1.5}
-
-/* ── 按钮 ── */
-.btn-row{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
-.btn{
-  padding:10px 20px;border:none;border-radius:6px;font-size:14px;font-weight:600;
-  cursor:pointer;font-family:inherit;transition:background .15s;
-}
-.btn:disabled{opacity:.5;cursor:not-allowed}
-.btn-sv{background:var(--c);color:#fff}
-.btn-sv:hover{background:var(--cd)}
-.btn-rb{background:var(--yel);color:#fff}
-.btn-rb:hover{background:#B45309}
-.btn-rs{background:var(--red);color:#fff}
-.btn-rs:hover{background:#B91C1C}
-.btn-s{background:var(--card);color:var(--t);border:1px solid var(--bdr)}
-.btn-s:hover{background:#F1F5F9}
-
-/* ── 密码可见切换 ── */
-.pw-w{position:relative}
-.pw-w input{padding-right:36px}
-.pw-w .eye{
-  position:absolute;right:6px;top:50%;transform:translateY(-50%);
-  cursor:pointer;user-select:none;font-size:16px;color:var(--t2);line-height:1;
-}
-
-/* ── 状态点 / 徽章 ── */
-.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:middle}
-.dot.g{background:var(--grn)}
-.dot.y{background:var(--yel)}
-.dot.r{background:var(--red)}
-.dot.pulse{animation:pls 1s infinite}
-@keyframes pls{0%,100%{opacity:1}50%{opacity:.3}}
-.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
-.badge.g{background:#ECFDF5;color:var(--grn)}
-.badge.y{background:#FFFBEB;color:var(--yel)}
-.badge.r{background:#FEF2F2;color:var(--red)}
-
-/* ── 进度条 ── */
-.bar-w{background:#E2E8F0;border-radius:4px;height:8px;margin:6px 0;overflow:hidden}
-.bar-f{height:100%;border-radius:4px;transition:width .5s}
-.bar-f.g{background:var(--c)}
-.bar-f.y{background:var(--yel)}
-.bar-f.r{background:var(--red)}
-.bar-t{font-size:12px;color:var(--t2)}
-
-/* ── Toast ── */
-.toast{
-  position:fixed;top:16px;left:50%;transform:translateX(-50%);
-  padding:10px 24px;border-radius:8px;font-size:14px;z-index:100;
-  opacity:0;transition:opacity .3s;pointer-events:none;font-weight:500;
-}
-.toast.show{opacity:1}
-.toast.ok{background:var(--c);color:#fff}
-.toast.err{background:var(--red);color:#fff}
-
-/* ── 加载旋转 ── */
-.spinner{width:32px;height:32px;border:3px solid #E2E8F0;border-top-color:var(--c);border-radius:50%;animation:spin 1s linear infinite;margin:12px auto}
-@keyframes spin{to{transform:rotate(360deg)}}
-
-/* ── 空状态 ── */
-.empty{text-align:center;padding:40px 20px;color:var(--t2);font-size:14px}
-.empty .icon{font-size:40px;margin-bottom:12px;opacity:.4}
-
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+    <meta name="theme-color" content="#0D0F13">
+    <title>MiBee Cam</title>
+    <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<div class="hdr">
-<h1>Mi&amp;Bee CAM</h1>
-<span class="sub" id="devName">--</span>
+
+<!-- SVG icon sprite -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-cam" viewBox="0 0 24 24"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.6l1.2-1.8h7.4L16.9 6h1.6A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/><circle cx="12" cy="12.3" r="3.4"/></symbol>
+  <symbol id="i-ai" viewBox="0 0 24 24"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/><circle cx="12" cy="12" r="4.2"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H12z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M2.5 9a15 15 0 0 1 19 0M5.5 12.5a10.5 10.5 0 0 1 13 0M8.5 16a6 6 0 0 1 7 0"/><circle cx="12" cy="19.2" r="1.1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-cast" viewBox="0 0 24 24"><path d="M3 8V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/><path d="M3 12a8 8 0 0 1 8 8M3 16a4 4 0 0 1 4 4"/><circle cx="3.5" cy="19.5" r=".8" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.9a1.7 1.7 0 0 0-.34-1.88l-.06-.06A2 2 0 1 1 7.03 4.1l.06.06a1.7 1.7 0 0 0 1.88.34H9a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.88v.08a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z" transform="translate(0 -1)"/><circle cx="12" cy="12.5" r="3.6"/></symbol>
+  <symbol id="i-speaker" viewBox="0 0 24 24"><path d="M4 9.5v5h3.5L12 19V5L7.5 9.5z"/><path d="M16 9a4.2 4.2 0 0 1 0 6M18.5 6.8a7.6 7.6 0 0 1 0 10.4"/></symbol>
+  <symbol id="i-record" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.5" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.6" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-snap" viewBox="0 0 24 24"><rect x="3" y="6.5" width="18" height="13" rx="2.5"/><circle cx="12" cy="13" r="3.4"/><path d="M8.5 6.5 10 4h4l1.5 2.5"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2.4"/><path d="M8 10.5V7.6a4 4 0 0 1 8 0v2.9M12 15v2"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5 5l1.4 1.4M17.6 17.6 19 19M19 5l-1.4 1.4M6.4 17.6 5 19"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 5.5v5h-5M4 18.5v-5h5"/><path d="M19.4 10.5a8 8 0 0 0-14-3M4.6 13.5a8 8 0 0 0 14 3"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7.5 11 12 15.5 16.5 11M4.5 19.5h15"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 6.5h15M9 6V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V6M7 6.5l.8 13a1.5 1.5 0 0 0 1.5 1.4h5.4a1.5 1.5 0 0 0 1.5-1.4l.8-13"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5 22 20H2z"/><path d="M12 9.5v4.5M12 17.2v.2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M4.5 12.5 10 18 19.5 7"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.2"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M4 4l16 16M9.9 5.9A9.9 9.9 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17.6 17.6 0 0 1-3.2 3.9M6 7.3A17 17 0 0 0 2.5 12S6 18.5 12 18.5a9.6 9.6 0 0 0 3.4-.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
+  <symbol id="i-sd" viewBox="0 0 24 24"><path d="M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8.5 7v2M11 7v2M13.5 7v2"/></symbol>
+  <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2.8v3.2M15 2.8v3.2M9 18v3.2M15 18v3.2M2.8 9H6M2.8 15H6M18 9h3.2M18 15h3.2"/></symbol>
+  <symbol id="i-temp" viewBox="0 0 24 24"><path d="M10 13.5V5a2 2 0 1 1 4 0v8.5a4.5 4.5 0 1 1-4 0z"/><circle cx="12" cy="17.5" r="1.6" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v13a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 20z"/><path d="M13.5 3v4.5H18"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.6 2.3 4 5.2 4 8.5s-1.4 6.2-4 8.5c-2.6-2.3-4-5.2-4-8.5s1.4-6.2 4-8.5z"/></symbol>
+</svg>
+
+<div class="app">
+  <!-- Header -->
+  <header class="app-header">
+    <div class="brand">
+      <span class="status-dot" id="net-dot"></span>
+      <div class="brand-text">
+        <span class="brand-name" id="hd-name">MiBee Cam</span>
+        <span class="brand-sub" id="hd-sub">--</span>
+      </div>
+    </div>
+    <div class="hd-actions">
+      <button class="icon-btn" id="btn-lock" data-i18n-title="auth.title">
+        <svg class="icon"><use href="#i-lock"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-theme" data-i18n-title="theme.toggle">
+        <svg class="icon" id="icon-theme"><use href="#i-moon"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-lang" data-i18n-title="lang.toggle">
+        <span style="font-size:12px;font-weight:700" id="lang-label">EN</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="app-body">
+    <!-- Stage column -->
+    <section class="stage-col">
+      <div class="video-stage" id="video-stage">
+        <img id="stream-img" class="stream-img" src="" alt="stream">
+        <canvas id="stream-overlay" class="stream-overlay" width="640" height="480"></canvas>
+        <div class="stage-skeleton" id="stage-skeleton">
+          <div class="spinner"></div>
+          <span id="stage-hint" data-i18n="stream.connecting">Connecting…</span>
+        </div>
+        <div class="stage-top">
+          <div class="rec-pill" id="rec-pill" hidden>
+            <span class="rec-dot"></span>
+            <span id="rec-file"></span>
+          </div>
+          <div class="chip-clients" id="chip-clients">0</div>
+        </div>
+        <div class="stage-controls">
+          <button class="stage-ctrl" id="btn-snapshot">
+            <svg class="icon"><use href="#i-snap"/></svg><span data-i18n="stream.snapshot">Snapshot</span>
+          </button>
+          <button class="stage-ctrl" id="btn-audio" hidden>
+            <svg class="icon"><use href="#i-speaker"/></svg><span data-i18n="stream.audio">Listen</span>
+          </button>
+          <button class="stage-ctrl" id="btn-record" hidden>
+            <svg class="icon"><use href="#i-record"/></svg><span data-i18n="storage.record">Record</span>
+          </button>
+          <button class="stage-ctrl" id="btn-fullscreen">
+            <svg class="icon"><use href="#i-expand"/></svg><span data-i18n="stream.fullscreen">Full</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="stats-strip" id="stats-strip"><!-- stat chips injected --></div>
+    </section>
+
+    <!-- Control deck -->
+    <section class="deck">
+      <nav class="seg" id="seg-tabs">
+        <button class="seg-btn active" data-tab="camera"><svg class="icon"><use href="#i-camera"/></svg><span data-i18n="section.camera">Camera</span></button>
+        <button class="seg-btn" data-tab="ai" hidden><svg class="icon"><use href="#i-ai"/></svg><span data-i18n="section.ai_features">AI</span></button>
+        <button class="seg-btn" data-tab="flash" hidden><svg class="icon"><use href="#i-bolt"/></svg><span data-i18n="section.flash_led">Light</span></button>
+        <button class="seg-btn" data-tab="storage" hidden><svg class="icon"><use href="#i-sd"/></svg><span data-i18n="section.storage">Storage</span></button>
+        <button class="seg-btn" data-tab="network"><svg class="icon"><use href="#i-wifi"/></svg><span data-i18n="section.wifi_config">WiFi</span></button>
+        <button class="seg-btn" data-tab="streaming" hidden><svg class="icon"><use href="#i-cast"/></svg><span data-i18n="section.streaming">Streams</span></button>
+        <button class="seg-btn" data-tab="system"><svg class="icon"><use href="#i-gear"/></svg><span data-i18n="section.system">System</span></button>
+      </nav>
+
+      <!-- Camera -->
+      <div class="deck-page active" id="page-camera">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-icon"><svg class="icon"><use href="#i-camera"/></svg></span>
+            <div><div class="card-title" data-i18n="section.camera">Camera</div>
+            <div class="card-sub" id="cam-sub">--</div></div>
+          </div>
+          <div class="field stack" id="row-cam-framesize">
+            <div class="field-label" data-i18n="camera.framesize">Resolution</div>
+            <select id="cam-framesize"></select>
+          </div>
+          <div class="field stack" id="row-cam-quality">
+            <div class="field-label" data-i18n="camera.quality">JPEG Quality</div>
+            <div class="slider-row">
+              <input type="range" id="cam-quality" min="1" max="63" value="12">
+              <span class="slider-val" id="cam-quality-val">12</span>
+            </div>
+          </div>
+          <div class="field stack" id="row-cam-brightness" hidden>
+            <div class="field-label" data-i18n="camera.brightness">Brightness</div>
+            <div class="slider-row">
+              <input type="range" id="cam-brightness" min="-2" max="2" value="0" step="1">
+              <span class="slider-val" id="cam-brightness-val">0</span>
+            </div>
+          </div>
+          <div class="field stack" id="row-cam-contrast" hidden>
+            <div class="field-label" data-i18n="camera.contrast">Contrast</div>
+            <div class="slider-row">
+              <input type="range" id="cam-contrast" min="-2" max="2" value="0" step="1">
+              <span class="slider-val" id="cam-contrast-val">0</span>
+            </div>
+          </div>
+          <div class="field stack" id="row-cam-saturation" hidden>
+            <div class="field-label" data-i18n="camera.saturation">Saturation</div>
+            <div class="slider-row">
+              <input type="range" id="cam-saturation" min="-2" max="2" value="0" step="1">
+              <span class="slider-val" id="cam-saturation-val">0</span>
+            </div>
+          </div>
+          <div class="field stack" id="row-cam-sharpness" hidden>
+            <div class="field-label" data-i18n="camera.sharpness">Sharpness</div>
+            <div class="slider-row">
+              <input type="range" id="cam-sharpness" min="-2" max="2" value="0" step="1">
+              <span class="slider-val" id="cam-sharpness-val">0</span>
+            </div>
+          </div>
+          <div class="field" id="row-cam-day-night" hidden>
+            <div class="field-label" data-i18n="camera.day_night">Day / Night</div>
+            <div class="mini-seg" id="cam-day-night">
+              <button value="0" data-i18n="camera.day_night.color">Color</button>
+              <button value="1" data-i18n="camera.day_night.bw">B&amp;W</button>
+              <button value="2" data-i18n="camera.day_night.auto">Auto</button>
+            </div>
+          </div>
+          <div class="field" id="row-cam-hmirror" hidden>
+            <div class="field-label" data-i18n="camera.hmirror">Mirror</div>
+            <div class="toggle" id="cam-hmirror" role="switch" aria-checked="false" tabindex="0"></div>
+          </div>
+          <div class="field" id="row-cam-vflip" hidden>
+            <div class="field-label" data-i18n="camera.vflip">Flip</div>
+            <div class="toggle" id="cam-vflip" role="switch" aria-checked="false" tabindex="0"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI -->
+      <div class="deck-page" id="page-ai">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-icon"><svg class="icon"><use href="#i-ai"/></svg></span>
+            <div><div class="card-title" data-i18n="section.ai_features">AI Features</div>
+            <div class="card-sub" data-i18n="ai.note">AI requires VGA resolution</div></div>
+          </div>
+          <div class="field"><div class="field-label" data-i18n="ai.face">Face Detection</div>
+            <div class="toggle" id="ai-face" role="switch" aria-checked="false" tabindex="0"></div></div>
+          <div class="field"><div class="field-label" data-i18n="ai.motion">Motion Detection</div>
+            <div class="toggle" id="ai-motion" role="switch" aria-checked="false" tabindex="0"></div></div>
+          <div class="field"><div class="field-label" data-i18n="ai.qr">QR Code</div>
+            <div class="toggle" id="ai-qr" role="switch" aria-checked="false" tabindex="0"></div></div>
+        </div>
+      </div>
+
+      <!-- Flash LED -->
+      <div class="deck-page" id="page-flash">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-icon"><svg class="icon"><use href="#i-bolt"/></svg></span>
+            <div><div class="card-title" data-i18n="section.flash_led">Light</div>
+            <div class="card-sub" data-i18n="flash.hint">0 = off, 100 = full</div></div>
+          </div>
+          <div class="field stack">
+            <div class="field-label" data-i18n="flash.brightness">Brightness</div>
+            <div class="slider-row">
+              <input type="range" id="led-brightness" min="0" max="100" value="0">
+              <span class="slider-val" id="led-brightness-val">0</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Storage -->
+      <div class="deck-page" id="page-storage">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-icon"><svg class="icon"><use href="#i-sd"/></svg></span>
+            <div><div class="card-title" data-i18n="section.storage">Storage</div>
+            <div class="card-sub" id="storage-sub">--</div></div>
+            <button class="icon-btn" id="btn-files-refresh" style="margin-left:auto" data-i18n-title="storage.refresh">
+              <svg class="icon"><use href="#i-refresh"/></svg>
+            </button>
+          </div>
+          <div class="usage" id="storage-usage" hidden>
+            <div class="usage-bar"><div class="usage-fill" id="sd-usage-fill" style="width:0%"></div></div>
+            <div class="usage-text"><span id="sd-usage-text">--</span><span id="sd-usage-free">--</span></div>
+          </div>
+          <div class="files-bar" id="files-bar" hidden>
+            <div class="mini-seg" id="files-type-seg">
+              <button data-type="all" class="active" data-i18n="files.type_all">All</button>
+              <button data-type="photos" data-i18n="files.type_photos">Photos</button>
+              <button data-type="recordings" data-i18n="files.type_recordings">Clips</button>
+            </div>
+            <div class="files-bar-actions">
+              <button class="btn btn-ghost btn-sm" id="btn-files-selectall" data-i18n="files.select_all">Select all</button>
+              <button class="btn btn-danger btn-sm" id="btn-files-del-selected" disabled data-i18n="files.delete_selected">Delete selected</button>
+              <button class="btn btn-ghost btn-sm btn-danger-text" id="btn-files-clear" data-i18n="files.clear_type">Clear</button>
+              <button class="btn btn-ghost btn-sm btn-danger-text" id="btn-files-format" data-i18n="files.format">Format SD</button>
+            </div>
+          </div>
+          <div class="list" id="file-list"></div>
+          <button class="btn btn-secondary btn-block" id="btn-files-more" hidden data-i18n="files.more">Load more</button>
+        </div>
+      </div>
+
+      <!-- Network -->
+      <div class="deck-page" id="page-network">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-icon"><svg class="icon"><use href="#i-wifi"/></svg></span>
+            <div><div class="card-title" data-i18n="section.wifi_config">WiFi</div>
+            <div class="card-sub" data-i18n="network.wifi_hint">Changes apply after reboot</div></div>
+          </div>
+          <div class="field" id="row-wifi-current" hidden>
+            <span class="status-dot ok" id="wifi-current-dot"></span>
+            <div style="min-width:0">
+              <div class="field-label" style="display:flex;align-items:center;gap:6px"><span data-i18n="network.current">Current network</span><span id="wifi-current-name" style="font-weight:650"></span></div>
+              <div class="field-note" id="wifi-current-detail"></div>
+            </div>
+          </div>
+          <div class="field stack">
+            <div class="field-label" data-i18n="network.ssid_label">SSID</div>
+            <div class="ssid-row">
+              <input type="text" id="wifi-ssid" data-i18n-placeholder="network.ssid_placeholder" placeholder="Network name">
+              <button class="btn btn-secondary" id="btn-wifi-scan" style="min-height:42px" data-i18n="network.scan">Scan</button>
+            </div>
+            <div class="list" id="scan-list" hidden></div>
+          </div>
+          <div class="field stack">
+            <div class="field-label" data-i18n="network.password_label">Password</div>
+            <input type="password" id="wifi-pass" data-i18n-placeholder="network.password_placeholder" placeholder="Leave blank to keep current">
+          </div>
+          <div class="field stack" id="row-wifi2-ssid" hidden>
+            <div class="field-label" data-i18n="network.ssid2_label">Backup SSID</div>
+            <div class="field-note" data-i18n="network.backup_hint">Used automatically when the primary network is unreachable</div>
+            <input type="text" id="wifi-ssid2" data-i18n-placeholder="network.ssid2_placeholder" placeholder="Backup network (optional)">
+          </div>
+          <div class="field stack" id="row-wifi2-pass" hidden>
+            <div class="field-label" data-i18n="network.password2_label">Backup Password</div>
+            <input type="password" id="wifi-pass2" data-i18n-placeholder="network.password_placeholder" placeholder="Leave blank to keep current">
+          </div>
+          <div class="field stack">
+            <div class="field-label" data-i18n="network.device_name">Device Name</div>
+            <input type="text" id="device-name" placeholder="MiBeeCam">
+          </div>
+          <div class="field stack">
+            <div class="field-label" data-i18n="network.timezone">Timezone (POSIX)</div>
+            <input type="text" id="timezone" placeholder="CST-8">
+          </div>
+          <button class="btn btn-primary btn-block" id="btn-network-save" style="margin-top:10px">
+            <svg class="icon"><use href="#i-check"/></svg><span data-i18n="network.apply">Save</span>
+          </button>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <span class="card-icon"><svg class="icon"><use href="#i-lock"/></svg></span>
+            <div><div class="card-title" data-i18n="pw.change">Change Password</div>
+            <div class="card-sub" data-i18n="pw.change_msg">Requires the current password</div></div>
+          </div>
+          <button class="btn btn-secondary btn-block" id="btn-change-pw">
+            <svg class="icon"><use href="#i-lock"/></svg><span data-i18n="pw.change">Change Password</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Streaming -->
+      <div class="deck-page" id="page-streaming">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-icon"><svg class="icon"><use href="#i-cast"/></svg></span>
+            <div><div class="card-title" data-i18n="section.streaming">Streams</div>
+            <div class="card-sub" data-i18n="streaming.hint">Open these URLs in VLC / NVR</div></div>
+          </div>
+          <div class="field stack">
+            <div class="field-label" data-i18n="streaming.mjpeg">MJPEG (browser)</div>
+            <div class="ssid-row"><input type="text" id="stream-url-mjpeg" readonly></div>
+          </div>
+          <div class="field stack" id="row-stream-rtsp" hidden>
+            <div class="field-label" data-i18n="streaming.rtsp">RTSP (VLC / NVR)</div>
+            <div class="ssid-row"><input type="text" id="stream-url-rtsp" readonly></div>
+          </div>
+          <div class="field stack" id="row-stream-onvif" hidden>
+            <div class="field-label" data-i18n="streaming.onvif_hint">ONVIF discovery</div>
+            <div class="field-note" data-i18n="streaming.onvif_note">Search by WS-Discovery in Synology / Milestone</div>
+          </div>
+          <div class="field stack" id="row-rtsp-user" hidden>
+            <div class="field-label" data-i18n="streaming.rtsp_user">RTSP Username</div>
+            <input type="text" id="rtsp-user" placeholder="admin">
+          </div>
+          <div class="field stack" id="row-rtsp-pass" hidden>
+            <div class="field-label" data-i18n="streaming.rtsp_pass">RTSP Password</div>
+            <input type="password" id="rtsp-pass" placeholder="••••••••">
+          </div>
+          <div class="field" id="row-onvif-enable" hidden>
+            <div class="field-label" data-i18n="streaming.onvif">ONVIF Discovery</div>
+            <div class="toggle" id="onvif-enable" role="switch" aria-checked="false" tabindex="0"></div>
+          </div>
+          <button class="btn btn-primary btn-block" id="btn-streaming-save" style="margin-top:10px" hidden>
+            <svg class="icon"><use href="#i-check"/></svg><span data-i18n="btn.save">Save</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- System -->
+      <div class="deck-page" id="page-system">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-icon"><svg class="icon"><use href="#i-gear"/></svg></span>
+            <div><div class="card-title" data-i18n="section.system">System</div>
+            <div class="card-sub" id="sys-sub">--</div></div>
+          </div>
+          <div class="field"><div class="field-label" data-i18n="system.fw_version">Firmware</div><span class="mono" id="sys-fw">--</span></div>
+          <div class="field"><div class="field-label" data-i18n="system.uptime">Uptime</div><span class="mono" id="sys-uptime">--</span></div>
+          <div class="field"><div class="field-label" data-i18n="system.free_heap">Free Heap</div><span class="mono" id="sys-heap">--</span></div>
+          <div class="field" id="row-sys-min-heap" hidden><div class="field-label" data-i18n="system.min_heap">Min Heap</div><span class="mono" id="sys-min-heap">--</span></div>
+          <div class="field" id="row-sys-psram" hidden><div class="field-label" data-i18n="system.free_psram">Free PSRAM</div><span class="mono" id="sys-psram">--</span></div>
+          <div class="field" id="row-sys-temp" hidden><div class="field-label" data-i18n="system.chip_temp">Chip Temp</div><span class="mono" id="sys-temp">--</span></div>
+        </div>
+
+        <div class="card" id="ota-panel" hidden>
+          <div class="card-head">
+            <span class="card-icon"><svg class="icon"><use href="#i-download"/></svg></span>
+            <div><div class="card-title" data-i18n="system.ota">Firmware Update</div>
+            <div class="card-sub" data-i18n="system.ota_hint">Device reboots after upload</div></div>
+          </div>
+          <div class="ota-grid">
+            <div class="ota-row">
+              <input type="file" id="ota-fw-file" accept=".bin">
+              <button class="btn btn-primary" id="btn-ota-fw" data-i18n="system.ota_upload">Upload</button>
+            </div>
+            <div class="ota-row">
+              <input type="file" id="ota-spiffs-file" accept=".bin">
+              <button class="btn btn-primary" id="btn-ota-spiffs" data-i18n="system.ota_upload">Upload</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div style="display:flex;gap:10px">
+            <button class="btn btn-secondary" id="btn-reboot" style="flex:1">
+              <svg class="icon"><use href="#i-refresh"/></svg><span data-i18n="system.reboot">Reboot</span>
+            </button>
+            <button class="btn btn-danger" id="btn-reset" style="flex:1">
+              <svg class="icon"><use href="#i-trash"/></svg><span data-i18n="system.factory_reset">Factory Reset</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
 </div>
-<div class="nav">
-<a href="/" class="act">仪表盘</a>
-<a href="/preview.html">实时预览</a>
-<a href="/files.html">文件</a>
-<a href="/config.html">设置</a>
-</div>
-<div class="main">
 
-<div class="card">
-<div class="ct">设备状态</div>
-<div class="row"><span class="l">设备名称</span><span class="v" id="dName">--</span></div>
-<div class="row"><span class="l">运行时间</span><span class="v" id="dUp">--</span></div>
-<div class="row"><span class="l">固件版本</span><span class="v" id="dVer">--</span></div>
-</div>
+<div id="toast-root"></div>
+<div id="modal-root"></div>
 
-<div class="card">
-<div class="ct">摄像头</div>
-<div class="row"><span class="l">状态</span><span class="v" id="cSt">--</span></div>
-<div class="row"><span class="l">传感器</span><span class="v" id="cSen">--</span></div>
-<div class="row"><span class="l">分辨率</span><span class="v" id="cRes">--</span></div>
-<div class="row"><span class="l">推流客户端</span><span class="v" id="cCli">--</span></div>
-</div>
-
-<div class="grid">
-<div class="card">
-<div class="ct">WiFi</div>
-<div class="row"><span class="l">模式</span><span class="v" id="wMode">--</span></div>
-<div class="row"><span class="l">IP地址</span><span class="v" id="wIp">--</span></div>
-<div class="row"><span class="l">信号强度</span><span class="v" id="wRssi">--</span></div>
-</div>
-<div class="card">
-<div class="ct">存储</div>
-<div class="bar-w"><div class="bar-f g" id="sBar" style="width:0%"></div></div>
-<div class="bar-t" id="sTxt">--</div>
-<div class="row" style="margin-top:6px"><span class="l">照片数量</span><span class="v" id="sCnt">--</span></div>
-</div>
-</div>
-
-<div class="grid">
-<div class="card">
-<div class="ct">移动侦测</div>
-<div class="row"><span class="l">状态</span><span class="v" id="mEn">--</span></div>
-<div class="row"><span class="l">事件次数</span><span class="v" id="mEvt">--</span></div>
-</div>
-<div class="card">
-<div class="ct">系统内存</div>
-<div class="row"><span class="l">可用堆</span><span class="v" id="hFree">--</span></div>
-<div class="row"><span class="l">最低堆</span><span class="v" id="hMin">--</span></div>
-</div>
-</div>
-
-<div class="card">
-<div class="ct">录像状态</div>
-<div class="row"><span class="l">状态</span><span class="v" id="rState">--</span></div>
-<div class="row"><span class="l">当前文件</span><span class="v" id="rFile">--</span></div>
-<div class="row"><span class="l">丢帧数</span><span class="v" id="rDrop">--</span></div>
-</div>
-
-</div>
-<div class="toast" id="toast"></div>
-<script>
-function $(s){return document.getElementById(s)}
-function fmtT(s){if(s==null)return'--';s=Math.floor(s);var h=Math.floor(s/3600),m=Math.floor(s%3600/60);if(h>0)return h+'小时'+m+'分钟';if(m>0)return m+'分钟';return s+'秒'}
-function fmtB(b){if(b==null)return'--';if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';if(b<1073741824)return(b/1048576).toFixed(1)+'MB';return(b/1073741824).toFixed(2)+'GB'}
-function badge(c,t){return '<span class="badge '+c+'">'+t+'</span>'}
-function rssiInfo(v){if(v==null||v==0)return '--';if(v>-50)return '<span class="dot g"></span> '+v+'dBm 极好';if(v>-65)return '<span class="dot g"></span> '+v+'dBm 良好';if(v>-75)return '<span class="dot y"></span> '+v+'dBm 一般';return '<span class="dot r"></span> '+v+'dBm 较差'}
-
-/* fetchWithTimeout：弱 WiFi 下避免请求无限挂起 */
-function fetchT(url,opts,ms){opts=opts||{};ms=ms||15000;var c=new AbortController();var t=setTimeout(function(){c.abort()},ms);opts.signal=c.signal;return fetch(url,opts).then(function(r){clearTimeout(t);return r},function(e){clearTimeout(t);throw e})}
-
-function refreshStatus(){
-  fetchT('/api/status').then(function(r){return r.json()}).then(function(d){
-    if(!d||!d.ok)return;var v=d.data;
-    $('dName').textContent=v.device_name||'MiBee CAM';
-    $('devName').textContent=v.device_name||'';
-    $('dUp').textContent=fmtT(v.uptime);
-    $('dVer').textContent=v.firmware_version||'--';
-
-    var cOk=v.camera_ok;
-    $('cSt').innerHTML=cOk?badge('g','已初始化'):badge('r','未初始化');
-    $('cSen').textContent=v.sensor||'OV2640';
-    $('cRes').textContent=v.resolution||'--';
-    $('cCli').textContent=(v.stream_clients!=null?v.stream_clients:'--')+' 个';
-
-    $('wMode').textContent=v.wifi_mode||'--';
-    $('wIp').textContent=v.ip||'--';
-    $('wRssi').innerHTML=rssiInfo(v.wifi_rssi);
-
-    /* SD 卡存储（health_monitor 缓存值，安全读取） */
-    if(v.sd_total_mb>0){
-      var used=v.sd_total_mb-(v.sd_free_mb||0);
-      var pct=Math.round(used*100/v.sd_total_mb);if(pct<0)pct=0;if(pct>100)pct=100;
-      $('sBar').style.width=pct+'%';
-      $('sBar').className='bar-f '+(pct>90?'r':pct>70?'y':'g');
-      $('sTxt').textContent='已用 '+fmtB(used*1048576)+' / '+fmtB(v.sd_total_mb*1048576)+' ('+pct+'%)';
-    }else{$('sBar').style.width='0%';$('sTxt').textContent='SD卡未挂载'}
-    $('sCnt').textContent=(v.photo_count!=null?v.photo_count:'--')+' 张';
-
-    $('mEn').innerHTML=v.motion_enabled?badge('g','已启用'):badge('y','未启用');
-    $('mEvt').textContent=(v.motion_events!=null?v.motion_events:'--')+' 次';
-
-    $('hFree').textContent=fmtB(v.free_heap);
-    $('hMin').textContent=fmtB(v.min_heap);
-  }).catch(function(){})
-
-  /* 录像状态（独立端点） */
-  fetchT('/api/record').then(function(r){return r.json()}).then(function(d){
-    if(!d||!d.ok)return;var v=d.data;
-    var rs={'IDLE':'空闲','RECORDING':'<span class="dot r pulse"></span> 录制中','PAUSED':'已暂停','ERROR':badge('r','错误')};
-    $('rState').innerHTML=rs[v.state]||v.state||'--';
-    $('rFile').textContent=v.current_file?v.current_file.split('/').pop():'--';
-    $('rDrop').textContent=(v.frames_dropped!=null?v.frames_dropped:'--');
-  }).catch(function(){})
-}
-
-setInterval(refreshStatus,10000);
-window.onload=refreshStatus;
-</script>
+<script src="/i18n.js"></script>
+<script src="/app.js"></script>
 </body>
 </html>
