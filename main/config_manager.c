@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include "config_manager.h"
+#include "camera_driver.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "nvs.h"
@@ -284,6 +285,15 @@ esp_err_t config_init(void)
     }
 
     if (ret == ESP_OK && s_config.magic == CONFIG_MAGIC && s_config.version == CONFIG_VERSION) {
+        /* 板级边界（2026-09-04）：旧固件可能存过 q<10（JPEG fb 按 w*h/5 分配
+         * 会超预算）——加载时钳制，运行值与 /api/camera 上报保持一致 */
+        if (s_config.cam_quality < CAMERA_QUALITY_MIN) {
+            ESP_LOGW(TAG, "Legacy cam_quality=%u clamped to %d on load",
+                     s_config.cam_quality, CAMERA_QUALITY_MIN);
+            s_config.cam_quality = CAMERA_QUALITY_MIN;
+        } else if (s_config.cam_quality > CAMERA_QUALITY_MAX) {
+            s_config.cam_quality = CAMERA_QUALITY_MAX;
+        }
         ESP_LOGI(TAG, "Config loaded from NVS (device=%s, wifi_ssid='%s', pass[0]=0x%02x, pass_len=%u)",
                  s_config.device_name, s_config.wifi_ssid, s_config.wifi_pass[0], (unsigned)strlen(s_config.wifi_pass));
         return ESP_OK;
@@ -475,7 +485,8 @@ esp_err_t config_set_motion_saved_threshold(uint8_t threshold)
 
 esp_err_t config_set_jpeg_quality(uint8_t quality)
 {
-    if (quality < 1) quality = 1;
+    /* q<10 overflows the driver's w*h/5 JPEG frame buffer (see camera_driver.h) */
+    if (quality < 10) quality = 10;
     if (quality > 63) quality = 63;
     s_config.cam_quality = quality;
     ESP_LOGI(TAG, "JPEG quality set to %u", quality);

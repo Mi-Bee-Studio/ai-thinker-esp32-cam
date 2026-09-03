@@ -151,6 +151,24 @@ open 后必须立即 `ser.rts=False; ser.dtr=False`（三仓采集器已同步�
    再考虑射频/省电（本板 `wifi_power_save` 出厂即 0=PS_NONE，无需动）。
    本地 ping 抖动大（20~100ms）在重启循环期间测无意义，修复后再测基线。
 
+### 2026-09-04 摄像头上限实测 + 配置校验收紧（已烧录验证）
+
+**实测**（90s MJPEG 探针 + `/api/capture` 计时，SPA 看门狗互踢噪音下限）：
+| 档位 | 推流 fps | 采集侧 fps | p95 帧大小 | 稳定性 |
+|---|---|---|---|---|
+| SVGA q12 | 4.4 | ~5+ | 26KB | 稳 |
+| XGA q12 | 2.7 | ~4.5 | 46KB | 稳 |
+| UXGA q12 | 0.62 | ~1.7 | 184KB | 稳（无崩溃/重启，链路 ~130KB/s 是瓶颈）|
+| UXGA q10 | 0.56 | — | 224KB | 稳，224KB < fb 上限 384KB（w*h/5）|
+
+UXGA 保留在选项里（拍照/延时有价值、设备零故障），但流是幻灯片——用户须知。
+**限制落地**：`camera_driver.h` `CAMERA_QUALITY_MIN/MAX = 10/63`（esp32-camera JPEG fb
+按 w*h/5 分配，q<10 场景复杂时超预算截帧）；`GET /api/camera` 新增
+`quality_min/quality_max`（SPA 滑杆据此钳制）；POST /api/camera 与 /api/config 的
+framesize 校验 **0-24→0-3**（原先可传越界枚举值！）、quality **0-63→10-63**；
+`config_set_jpeg_quality` 与 NVS 加载钳制旧值。分辨率变更仍走互斥锁热重配
+（OV2640 运行时 set_framesize 有效——与 seeed 的 OV5640 不同，PIT-019）。
+
 ## Web UI
 
 > **2026-09-03 起统一为家族 SPA（用户拍板）**：`/` 现服务与三 S3 仓 md5 一致的统一 SPA

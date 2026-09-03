@@ -13,6 +13,14 @@
 #include "esp_err.h"
 #include "esp_camera.h"
 
+/* JPEG quality bounds (lower number = better quality / larger frames).
+ * esp32-camera sizes JPEG frame buffers at width*height/5 (assumes max 1:5
+ * compression); quality < 10 regularly exceeds that on OV2640 and produces
+ * truncated frames. 2026-09-04 measured on this board: UXGA q10 = ~224KB,
+ * safely under the 384KB fb limit. */
+#define CAMERA_QUALITY_MIN 10
+#define CAMERA_QUALITY_MAX 63
+
 /**
  * Initialize the OV2640 camera with the given parameters.
  *
@@ -21,7 +29,7 @@
  *
  * @param resolution   Desired resolution (CAMERA_RES_VGA, etc.)
  * @param fps          Desired frame rate (controls frame_broker capture cadence)
- * @param jpeg_quality JPEG quality 0-63, lower = better quality
+ * @param jpeg_quality JPEG quality 10-63 (CAMERA_QUALITY_MIN..MAX), lower = better
  * @return ESP_OK on success, error code on failure
  */
 esp_err_t camera_init(camera_resolution_t resolution, uint8_t fps, uint8_t jpeg_quality);
@@ -94,7 +102,7 @@ esp_err_t camera_apply_vflip(uint8_t vflip);
  *
  * @param resolution   New resolution
  * @param fps          New frame rate
- * @param jpeg_quality New JPEG quality (0-63)
+ * @param jpeg_quality New JPEG quality (clamped to 10-63)
  * @return ESP_OK on success
  */
 esp_err_t camera_apply_settings(camera_resolution_t resolution, uint8_t fps, uint8_t jpeg_quality);

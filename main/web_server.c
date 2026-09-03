@@ -455,7 +455,12 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
     /* Camera settings (resolution/fps/quality) — also apply live */
     bool camera_changed = false;
     if ((item = cJSON_GetObjectItem(json, "cam_framesize")) && cJSON_IsNumber(item)) {
-        config_set_resolution((camera_resolution_t)item->valueint);
+        int val = item->valueint;
+        if (val < 0 || val >= CAMERA_RES_MAX) {
+            cJSON_Delete(json);
+            return send_json_error(req, "cam_framesize out of range (0-3)", 400);
+        }
+        config_set_resolution((camera_resolution_t)val);
         camera_changed = true;
     }
 
@@ -465,7 +470,12 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
     }
 
     if ((item = cJSON_GetObjectItem(json, "cam_quality")) && cJSON_IsNumber(item)) {
-        config_set_jpeg_quality((uint8_t)item->valueint);
+        int val = item->valueint;
+        if (val < CAMERA_QUALITY_MIN || val > CAMERA_QUALITY_MAX) {
+            cJSON_Delete(json);
+            return send_json_error(req, "cam_quality out of range (10-63)", 400);
+        }
+        config_set_jpeg_quality((uint8_t)val);
         camera_changed = true;
     }
 
@@ -1282,6 +1292,9 @@ static esp_err_t handler_api_camera_get(httpd_req_t *req)
     /* Persisted fields */
     cJSON_AddNumberToObject(data, "cam_framesize", (double)cfg->cam_framesize);
     cJSON_AddNumberToObject(data, "cam_quality",   (double)cfg->cam_quality);
+    /* 契约扩展（2026-09-04）：画质滑杆边界由板端声明，前端据此钳制输入 */
+    cJSON_AddNumberToObject(data, "quality_min",   CAMERA_QUALITY_MIN);
+    cJSON_AddNumberToObject(data, "quality_max",   CAMERA_QUALITY_MAX);
     cJSON_AddNumberToObject(data, "cam_vflip",     (double)cfg->cam_vflip);
     /* 契约 v1.1 §5：分辨率名 + 动态分辨率表（本板 OV2640 固定 0-3 四档） */
     {
@@ -1343,18 +1356,18 @@ static esp_err_t handler_api_camera_post(httpd_req_t *req)
 
     if ((item = cJSON_GetObjectItem(json, "cam_framesize")) && cJSON_IsNumber(item)) {
         int val = item->valueint;
-        if (val < 0 || val > 24) {
+        if (val < 0 || val >= CAMERA_RES_MAX) {
             cJSON_Delete(json);
-            return send_json_error(req, "cam_framesize out of range (0-24)", 400);
+            return send_json_error(req, "cam_framesize out of range (0-3)", 400);
         }
         config_set_resolution((camera_resolution_t)val);
         need_apply = true;
     }
     if ((item = cJSON_GetObjectItem(json, "cam_quality")) && cJSON_IsNumber(item)) {
         int val = item->valueint;
-        if (val < 0 || val > 63) {
+        if (val < CAMERA_QUALITY_MIN || val > CAMERA_QUALITY_MAX) {
             cJSON_Delete(json);
-            return send_json_error(req, "cam_quality out of range (0-63)", 400);
+            return send_json_error(req, "cam_quality out of range (10-63)", 400);
         }
         config_set_jpeg_quality((uint8_t)val);
         need_apply = true;

@@ -239,12 +239,12 @@ All settings are stored in NVS with version 9 schema and accessible via web UI (
 ### Camera Configuration
 ```json
 {
-  "resolution": 6,
-  "quality": 10
+  "cam_framesize": 1,
+  "cam_quality": 12
 }
 ```
-- **Resolution**: 5=VGA, 6=SVGA (default), 7=XGA, 8=UXGA
-- **Quality**: JPEG 1-63 (lower = better, default: 10)
+- **cam_framesize**: 0=VGA, 1=SVGA (default), 2=XGA, 3=UXGA (via `POST /api/camera`; values outside 0-3 return 400)
+- **cam_quality**: JPEG 10-63 (lower = better, default: 12; values outside 10-63 return 400 — the frame buffer is sized for ≥1:5 compression)
 
 ### Motion Detection
 ```json
