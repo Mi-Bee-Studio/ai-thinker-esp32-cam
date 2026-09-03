@@ -20,6 +20,7 @@
 #include "video_recorder.h"
 #include "config_manager.h"
 #include "esp_mac.h"
+#include "device_id.h"
 #include "esp_heap_caps.h"
 #include "lwip/sockets.h"
 #include "lwip/inet.h"
@@ -138,14 +139,24 @@ static void health_timer_callback(void *arg)
     health_collect_metrics();
 
     /* httpd :80 self-heal: probe the local HTTP server every cycle (10s).
-     * If unresponsive for 6 consecutive cycles (60s), reboot to recover. */
+     * If unresponsive for 6 consecutive cycles (60s), reboot to recover.
+     * 2026-09-03 无声重启事故：弱射频掉线 >60s 时探测必然失败（EHOSTUNREACH），
+     * 计数满 6 触发 esp_restart —— 掉线被翻译成"重启"，反而放大不稳定
+     * （日志特征：recv 113 ×N → wifi txq stop → rst:0xc 无 panic 文字）。
+     * 修复：WiFi 未连接时不计数——那说明网络不在，不说明 httpd 死了。 */
     static int httpd_stuck_count = 0;
     if (!probe_httpd_port80()) {
-        httpd_stuck_count++;
-        ESP_LOGW(TAG, "httpd :80 probe failed (%d/6)", httpd_stuck_count);
-        if (httpd_stuck_count >= 6) {
-            ESP_LOGE(TAG, "httpd :80 unresponsive for 60s — rebooting");
-            esp_restart();
+        if (wifi_get_state() != WIFI_STATE_STA_CONNECTED &&
+            wifi_get_state() != WIFI_STATE_AP) {
+            httpd_stuck_count = 0;
+            ESP_LOGW(TAG, "httpd probe failed but WiFi down — not counting (network issue, not httpd)");
+        } else {
+            httpd_stuck_count++;
+            ESP_LOGW(TAG, "httpd :80 probe failed (%d/6)", httpd_stuck_count);
+            if (httpd_stuck_count >= 6) {
+                ESP_LOGE(TAG, "httpd :80 unresponsive for 60s — rebooting");
+                esp_restart();
+            }
         }
     } else {
         httpd_stuck_count = 0;
@@ -325,7 +336,7 @@ const char *health_monitor_get_prometheus_str(void)
         uint32_t boot_time = (now > uptime) ? (now - uptime) : 0;
         uint8_t mac[6];
         char mac_str[18];
-        esp_read_mac(mac, ESP_MAC_WIFI_STA);
+        device_get_mac(mac);
         snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
