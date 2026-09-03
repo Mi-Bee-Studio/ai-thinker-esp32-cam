@@ -6,11 +6,13 @@
 #include "esp_err.h"
 
 // Config version and magic
-#define CONFIG_VERSION  15
+#define CONFIG_VERSION  16
 #define CONFIG_MAGIC    0xA5B6C7D8
 
 // Default values
 #define CONFIG_DEFAULT_TIMEZONE     "CST-8"
+/* 契约 v1.1：家族统一默认管理密码 */
+#define CONFIG_DEFAULT_WEB_PASSWORD "***REMOVED-DEFAULT-PASSWORD***"
 #define CONFIG_DEFAULT_DEVICE_NAME  "MiBeeCam"
 #define CONFIG_DEFAULT_AP_SSID      "MiBeeCam"
 #define CONFIG_DEFAULT_AP_PASS      "12345678"

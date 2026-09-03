@@ -48,6 +48,7 @@
 #include "video_recorder.h"
 #include "onvif_service.h"
 #include "frame_broker.h"
+#include "esp_wifi.h"
 #include "sd_logger.h"
 #include "ota_update.h"
 
@@ -213,27 +214,40 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddStringToObject(data, "firmware_version",
         (app_desc && app_desc->version[0]) ? app_desc->version : "unknown");
 
-    /* Camera */
+    /* Camera — 契约 v1.0: 传感器字段名统一为 camera */
     cJSON_AddBoolToObject(data, "camera_ok", camera_is_initialized());
-    cJSON_AddStringToObject(data, "sensor", camera_get_sensor_name());
+    cJSON_AddStringToObject(data, "camera", camera_get_sensor_name());
 
     /* Resolution as display string */
     static const char *res_names[] = {"VGA", "SVGA", "XGA", "UXGA"};
     cJSON_AddStringToObject(data, "resolution",
         cfg->cam_framesize < CAMERA_RES_MAX ? res_names[cfg->cam_framesize] : "Unknown");
 
-    /* WiFi */
-    const char *wifi_mode_str;
+    /* WiFi — 契约 v1.0: wifi_state 小写枚举（中文展示由前端翻译） */
+    const char *wifi_state_str;
     switch (m->wifi_state) {
-        case WIFI_STATE_AP:              wifi_mode_str = "AP"; break;
-        case WIFI_STATE_STA_CONNECTING:  wifi_mode_str = "STA连接中"; break;
-        case WIFI_STATE_STA_CONNECTED:   wifi_mode_str = "STA已连接"; break;
-        case WIFI_STATE_STA_DISCONNECTED: wifi_mode_str = "STA断开"; break;
-        default:                         wifi_mode_str = "--"; break;
+        case WIFI_STATE_AP:              wifi_state_str = "ap"; break;
+        case WIFI_STATE_STA_CONNECTING:  wifi_state_str = "connecting"; break;
+        case WIFI_STATE_STA_CONNECTED:   wifi_state_str = "connected"; break;
+        case WIFI_STATE_STA_DISCONNECTED: wifi_state_str = "disconnected"; break;
+        default:                         wifi_state_str = "unknown"; break;
     }
-    cJSON_AddStringToObject(data, "wifi_mode", wifi_mode_str);
+    cJSON_AddStringToObject(data, "wifi_state", wifi_state_str);
     cJSON_AddStringToObject(data, "ip", wifi_get_ip_str());
     cJSON_AddNumberToObject(data, "wifi_rssi", (double)m->wifi_rssi);
+
+    /* 当前实际连接的网络（区别于 /api/config 里的"配置值"）：主/备槽位 + 实时 AP 信息。
+     * seeed 同名字段先例：current_ssid / wifi_channel。 */
+    cJSON_AddStringToObject(data, "wifi_net", wifi_using_secondary() ? "secondary" : "primary");
+    if (m->wifi_state == WIFI_STATE_STA_CONNECTED) {
+        wifi_ap_record_t ap_info;
+        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+            cJSON_AddStringToObject(data, "current_ssid", (const char *)ap_info.ssid);
+            cJSON_AddNumberToObject(data, "wifi_channel", (double)ap_info.primary);
+        }
+    } else {
+        cJSON_AddStringToObject(data, "current_ssid", "");
+    }
 
     /* SPIFFS storage (cached in health metrics, updated every 30s) */
     cJSON_AddNumberToObject(data, "spiffs_total", (double)m->spiffs_total);
@@ -244,16 +258,38 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "sd_total_mb", (double)m->sd_total_mb);
     cJSON_AddNumberToObject(data, "photo_count", (double)m->photo_count);
 
+    /* 契约对齐（seeed 先例）：统一 SPA 读 sd_present / sd_*_bytes / sd_free_percent。
+     * 2026-09-03 事故：缺这些字段时 SPA 存储卡片显示"未检测到 SD 卡"而文件列表正常。 */
+    cJSON_AddBoolToObject(data, "sd_present", storage_is_available());
+    cJSON_AddNumberToObject(data, "sd_total_bytes", (double)((uint64_t)m->sd_total_mb * 1048576ULL));
+    cJSON_AddNumberToObject(data, "sd_free_bytes", (double)((uint64_t)m->sd_free_mb * 1048576ULL));
+    if (m->sd_total_mb > 0) {
+        cJSON_AddNumberToObject(data, "sd_free_percent",
+                                (double)((uint64_t)m->sd_free_mb * 100ULL / m->sd_total_mb));
+    }
+
+    /* 统一 SPA 读 status.recording（seeed 先例）；本板原来只有 /api/record */
+    switch (recorder_get_state()) {
+        case RECORDER_RECORDING: cJSON_AddStringToObject(data, "recording", "recording"); break;
+        case RECORDER_PAUSED:    cJSON_AddStringToObject(data, "recording", "paused"); break;
+        default:                 cJSON_AddStringToObject(data, "recording", "idle"); break;
+    }
+
     /* Motion */
     cJSON_AddBoolToObject(data, "motion_enabled", motion_detect_is_running());
     cJSON_AddNumberToObject(data, "motion_events", (double)m->motion_events);
+
+    /* Timelapse 运行态（契约 v1.1：/api/timelapse/status 并入此处） */
+    cJSON_AddBoolToObject(data, "timelapse_running", timelapse_is_running());
+    cJSON_AddNumberToObject(data, "timelapse_photo_count", (double)timelapse_get_photo_count());
 
     /* Heap */
     cJSON_AddNumberToObject(data, "free_heap", (double)m->free_heap);
     cJSON_AddNumberToObject(data, "min_heap", (double)m->min_free_heap);
 
-    /* Stream clients */
+    /* Stream clients — 契约 v1.0: 附带上限 */
     cJSON_AddNumberToObject(data, "stream_clients", (double)mjpeg_streamer_get_client_count());
+    cJSON_AddNumberToObject(data, "stream_clients_max", 1);
 
     /* Brightness */
     cJSON_AddNumberToObject(data, "brightness_pct", (double)m->brightness_pct);
@@ -457,6 +493,11 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
 
     /* Web password (has dedicated setter) */
     if ((item = cJSON_GetObjectItem(json, "web_password")) && cJSON_IsString(item)) {
+        /* 契约 v1.1：拒绝空/过短密码 */
+        if (strlen(item->valuestring) < 6) {
+            cJSON_Delete(json);
+            return send_json_error(req, "web_password must be at least 6 characters", HTTPD_400_BAD_REQUEST);
+        }
         config_set_web_password(item->valuestring);
     }
 
@@ -547,6 +588,12 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
 
         if (timelapse_changed) {
             config_set_timelapse(tl_enabled, tl_interval, tl_burst);
+            /* 契约 v1.1 收敛：timelapse 启停统一走 config 字段，独立端点已移除 */
+            if (tl_enabled && !timelapse_is_running()) {
+                timelapse_start();
+            } else if (!tl_enabled && timelapse_is_running()) {
+                timelapse_stop();
+            }
         }
     }
 
@@ -648,9 +695,12 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
         if (item && cJSON_IsNumber(item)) { cl_high = (uint8_t)item->valueint; cl_changed = true; }
 
         if (cl_changed) {
-            if (cl_low <= cl_high) {
+            /* V16 语义 = 空闲百分比（家族统一，seeed 先例）：
+             * free < low 触发清理，删到 free >= high 停止 → 必须 low < high。
+             * 旧"已用百分比"语义的反向校验已废弃。 */
+            if (cl_low >= cl_high) {
                 cJSON_Delete(json);
-                return send_json_error(req, "cleanup_low_pct must be greater than cleanup_high_pct", 400);
+                return send_json_error(req, "cleanup_low_pct must be less than cleanup_high_pct (free-percent semantics)", 400);
             }
             config_set_cleanup(cl_low, cl_high);
         }
@@ -802,25 +852,20 @@ static esp_err_t handler_api_files(httpd_req_t *req)
     int offset = atoi(offset_str);
     if (offset < 0) offset = 0;
 
-    cJSON *arr = cJSON_CreateArray();
     cJSON *data = cJSON_CreateObject();
-    cJSON_AddItemToObject(data, "files", arr);
-    cJSON_AddNumberToObject(data, "sd_free_mb", (double)hm->sd_free_mb);
-    cJSON_AddNumberToObject(data, "sd_total_mb", (double)hm->sd_total_mb);
 
+    /* 先把所选类型的完整列表拼进 combined，再统一切片分页。
+     * 旧实现对 type=all 时 offset 只作用于照片段、录像段恒从 0 开始，
+     * 前端用 offset 翻页会出现重复/漏项。 */
+    cJSON *combined = cJSON_CreateArray();
     int total = 0;
 
     if (strcmp(type, "photos") == 0 || strcmp(type, "all") == 0) {
         cJSON *photos = storage_get_photo_list_json();
         if (photos) {
-            int photo_count = cJSON_GetArraySize(photos);
-            total += photo_count;
-            for (int i = offset; i < photo_count && (i - offset) < limit; i++) {
-                cJSON *item = cJSON_GetArrayItem(photos, i);
-                if (item) {
-                    cJSON *clone = cJSON_Duplicate(item, 1);
-                    if (clone) cJSON_AddItemToArray(arr, clone);
-                }
+            total += cJSON_GetArraySize(photos);
+            while (cJSON_GetArraySize(photos) > 0) {
+                cJSON_AddItemToArray(combined, cJSON_DetachItemFromArray(photos, 0));
             }
             cJSON_Delete(photos);
         }
@@ -829,20 +874,27 @@ static esp_err_t handler_api_files(httpd_req_t *req)
     if (strcmp(type, "recordings") == 0 || strcmp(type, "all") == 0) {
         cJSON *recordings = storage_get_recording_list_json();
         if (recordings) {
-            int rec_count = cJSON_GetArraySize(recordings);
-            total += rec_count;
-            int rec_offset = (strcmp(type, "all") == 0) ? 0 : offset;
-            for (int i = rec_offset; i < rec_count && (i - rec_offset) < limit; i++) {
-                cJSON *item = cJSON_GetArrayItem(recordings, i);
-                if (item) {
-                    cJSON *clone = cJSON_Duplicate(item, 1);
-                    if (clone) cJSON_AddItemToArray(arr, clone);
-                }
+            total += cJSON_GetArraySize(recordings);
+            while (cJSON_GetArraySize(recordings) > 0) {
+                cJSON_AddItemToArray(combined, cJSON_DetachItemFromArray(recordings, 0));
             }
             cJSON_Delete(recordings);
         }
     }
 
+    cJSON *arr = cJSON_CreateArray();
+    cJSON_AddItemToObject(data, "files", arr);
+    for (int i = offset; i < total && (i - offset) < limit; i++) {
+        cJSON *item = cJSON_GetArrayItem(combined, i);
+        if (item) {
+            cJSON *clone = cJSON_Duplicate(item, 1);
+            if (clone) cJSON_AddItemToArray(arr, clone);
+        }
+    }
+    cJSON_Delete(combined);
+
+    cJSON_AddNumberToObject(data, "sd_free_mb", (double)hm->sd_free_mb);
+    cJSON_AddNumberToObject(data, "sd_total_mb", (double)hm->sd_total_mb);
     cJSON_AddNumberToObject(data, "total", total);
     cJSON_AddNumberToObject(data, "offset", offset);
     cJSON_AddNumberToObject(data, "limit", limit);
@@ -851,8 +903,22 @@ static esp_err_t handler_api_files(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------ */
-/*  DELETE /api/files?name=xxx                                         */
+/*  DELETE /api/files?name=xxx[&type=photo|recording]                  */
 /* ------------------------------------------------------------------ */
+
+#ifndef RECORDINGS_PATH
+#define RECORDINGS_PATH "/sdcard/recordings"  /* 与 storage_manager.c 内部定义一致 */
+#endif
+
+/** @brief 当前正在写入的录像段文件（若是返回其相对名，否则 NULL） */
+static const char *current_recording_relname(void)
+{
+    const char *cur = recorder_get_current_file();
+    if (!cur || !cur[0]) return NULL;
+    const char *prefix = RECORDINGS_PATH "/";
+    if (strncmp(cur, prefix, strlen(prefix)) == 0) return cur + strlen(prefix);
+    return cur;
+}
 
 static esp_err_t handler_api_files_delete(httpd_req_t *req)
 {
@@ -871,6 +937,10 @@ static esp_err_t handler_api_files_delete(httpd_req_t *req)
         return send_json_error(req, "missing name parameter", 400);
     }
 
+    /* type 可选；缺省 photo 保持向后兼容 */
+    char ftype[16] = "photo";
+    httpd_query_key_value(query, "type", ftype, sizeof(ftype));
+
     /* Path traversal protection */
     if (strstr(name, "..") != NULL) {
         return send_json_error(req, "invalid file name", 400);
@@ -880,7 +950,21 @@ static esp_err_t handler_api_files_delete(httpd_req_t *req)
         return send_json_error(req, "SD card not available", 503);
     }
 
-    esp_err_t ret = storage_delete_photo(name);
+    const char *cur_rel = current_recording_relname();
+    if (cur_rel && strcmp(cur_rel, name) == 0) {
+        return send_json_error(req, "file is currently being recorded", 409);
+    }
+
+    esp_err_t ret;
+    if (strcmp(ftype, "recording") == 0) {
+        ret = storage_delete_recording(name);
+    } else {
+        ret = storage_delete_photo(name);
+        if (ret != ESP_OK) {
+            /* 未指明 type 或 type=photo 的名字可能是录像 — 回落尝试录像路径 */
+            ret = storage_delete_recording(name);
+        }
+    }
     if (ret != ESP_OK) {
         return send_json_error(req, "delete failed", 500);
     }
@@ -894,6 +978,111 @@ static esp_err_t handler_api_files_delete(httpd_req_t *req)
     }
 
     return send_json_ok(req, NULL);
+}
+
+/* ------------------------------------------------------------------ */
+/*  POST /api/files/batch  {names:[...]}  或  {scope:"all|photos|recordings"} */
+/*  契约 v1.2：与 seeed 同名端点同语义（seeed 现仅支持 names）。        */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handler_api_files_batch(httpd_req_t *req)
+{
+    esp_err_t auth_ret = require_auth(req, "/api/files/batch");
+    if (auth_ret != ESP_OK) {
+        return auth_ret;
+    }
+
+    if (!storage_is_available()) {
+        return send_json_error(req, "SD card not available", 503);
+    }
+
+    if (req->content_len <= 0 || req->content_len > 16384) {
+        return send_json_error(req, "invalid request body", 400);
+    }
+    char *buf = malloc(req->content_len + 1);
+    if (!buf) return send_json_error(req, "out of memory", 500);
+    int len = httpd_req_recv(req, buf, req->content_len);
+    if (len <= 0) { free(buf); return send_json_error(req, "empty request body", 400); }
+    buf[len] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) return send_json_error(req, "invalid JSON", 400);
+
+    /* 组装待删清单：显式 names 优先；否则按 scope 从缓存列表展开 */
+    cJSON *list = cJSON_CreateArray();
+    cJSON *names = cJSON_GetObjectItem(root, "names");
+    cJSON *scope = cJSON_GetObjectItem(root, "scope");
+    bool have_photos_scope = false, have_recordings_scope = false;
+
+    if (cJSON_IsArray(names)) {
+        cJSON *it;
+        cJSON_ArrayForEach(it, names) {
+            if (cJSON_IsString(it) && it->valuestring[0]) {
+                cJSON_AddItemToArray(list, cJSON_CreateString(it->valuestring));
+            }
+        }
+    } else if (cJSON_IsString(scope)) {
+        if (strcmp(scope->valuestring, "photos") == 0 || strcmp(scope->valuestring, "all") == 0) {
+            have_photos_scope = true;
+            cJSON *photos = storage_get_photo_list_json();
+            if (photos) {
+                cJSON *it;
+                cJSON_ArrayForEach(it, photos) {
+                    cJSON *n = cJSON_GetObjectItem(it, "name");
+                    if (cJSON_IsString(n)) cJSON_AddItemToArray(list, cJSON_CreateString(n->valuestring));
+                }
+                cJSON_Delete(photos);
+            }
+        }
+        if (strcmp(scope->valuestring, "recordings") == 0 || strcmp(scope->valuestring, "all") == 0) {
+            have_recordings_scope = true;
+            cJSON *recs = storage_get_recording_list_json();
+            if (recs) {
+                cJSON *it;
+                cJSON_ArrayForEach(it, recs) {
+                    cJSON *n = cJSON_GetObjectItem(it, "name");
+                    if (cJSON_IsString(n)) cJSON_AddItemToArray(list, cJSON_CreateString(n->valuestring));
+                }
+                cJSON_Delete(recs);
+            }
+        }
+    }
+
+    if (!cJSON_GetArraySize(list) && !cJSON_IsArray(names) && !cJSON_IsString(scope)) {
+        cJSON_Delete(root);
+        cJSON_Delete(list);
+        return send_json_error(req, "missing 'names' array or 'scope' string", 400);
+    }
+
+    const char *cur_rel = current_recording_relname();
+    int deleted = 0, failed = 0;
+
+    cJSON *it;
+    cJSON_ArrayForEach(it, list) {
+        const char *name = cJSON_GetStringValue(it);
+        if (!name || strstr(name, "..")) { failed++; continue; }
+        if (cur_rel && strcmp(cur_rel, name) == 0) { failed++; continue; }
+
+        /* 名字路由：scope 展开时类型已知；显式 names 先试照片再试录像 */
+        esp_err_t ret = ESP_FAIL;
+        if (have_photos_scope && !have_recordings_scope) {
+            ret = storage_delete_photo(name);
+        } else if (have_recordings_scope && !have_photos_scope) {
+            ret = storage_delete_recording(name);
+        } else {
+            ret = storage_delete_photo(name);
+            if (ret != ESP_OK) ret = storage_delete_recording(name);
+        }
+        if (ret == ESP_OK) deleted++; else failed++;
+    }
+    cJSON_Delete(list);
+    cJSON_Delete(root);
+
+    cJSON *data = cJSON_CreateObject();
+    cJSON_AddNumberToObject(data, "deleted", deleted);
+    cJSON_AddNumberToObject(data, "failed", failed);
+    return send_json_ok(req, data);
 }
 
 /* ------------------------------------------------------------------ */
@@ -987,6 +1176,32 @@ static esp_err_t handler_api_led(httpd_req_t *req)
     }
     set_cors_headers(req);
 
+    /* 契约 v1.1 主语义：JSON body {"brightness":0-100}（0=灭，>0=亮）；
+     * 兼容遗留 ?action=on|off|toggle 查询参数式（MPA 仍在使用） */
+    {
+        char *led_body = read_body(req, 256);
+        if (led_body) {
+            cJSON *led_json = cJSON_Parse(led_body);
+            free(led_body);
+            if (led_json) {
+                cJSON *bri = cJSON_GetObjectItem(led_json, "brightness");
+                if (bri && cJSON_IsNumber(bri)) {
+                    int b = bri->valueint;
+                    cJSON_Delete(led_json);
+                    if (b < 0 || b > 100) {
+                        return send_json_error(req, "brightness must be 0-100", HTTPD_400_BAD_REQUEST);
+                    }
+                    if (b == 0) flash_led_off(); else flash_led_on();
+                    cJSON *led_data = cJSON_CreateObject();
+                    cJSON_AddNumberToObject(led_data, "brightness", b);
+                    return send_json_ok(req, led_data);
+                }
+                cJSON_Delete(led_json);
+                /* JSON 无 brightness 字段 → 落回 ?action= 流程 */
+            }
+        }
+    }
+
     /* POST: toggle/on/off via ?action= query param */
     char query[32] = {0};
     char action[16] = {0};
@@ -1019,6 +1234,9 @@ static esp_err_t handler_api_capabilities(httpd_req_t *req)
     set_cors_headers(req);
 
     cJSON *data = cJSON_CreateObject();
+    /* 契约 v1.0：12 个布尔能力位 + api_version/wifi_scan（见 docs/api-contract.md） */
+    cJSON_AddStringToObject(data, "api_version", "1.2");
+    cJSON_AddBoolToObject(data, "wifi_scan", true);
     /* ai-thinker capabilities matrix */
     cJSON_AddBoolToObject(data, "ai", false);
     cJSON_AddBoolToObject(data, "sd", true);
@@ -1065,6 +1283,23 @@ static esp_err_t handler_api_camera_get(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "cam_framesize", (double)cfg->cam_framesize);
     cJSON_AddNumberToObject(data, "cam_quality",   (double)cfg->cam_quality);
     cJSON_AddNumberToObject(data, "cam_vflip",     (double)cfg->cam_vflip);
+    /* 契约 v1.1 §5：分辨率名 + 动态分辨率表（本板 OV2640 固定 0-3 四档） */
+    {
+        static const char *res_names[] = {"VGA", "SVGA", "XGA", "UXGA"};
+        static const char *res_labels[] = {
+            "VGA (640x480)", "SVGA (800x600)", "XGA (1024x768)", "UXGA (1600x1200)"
+        };
+        cJSON_AddStringToObject(data, "resolution",
+            cfg->cam_framesize < 4 ? res_names[cfg->cam_framesize] : "Unknown");
+        cJSON *res_arr = cJSON_CreateArray();
+        for (int i = 0; i < 4; i++) {
+            cJSON *item = cJSON_CreateObject();
+            cJSON_AddStringToObject(item, "label", res_labels[i]);
+            cJSON_AddNumberToObject(item, "value", i);
+            cJSON_AddItemToArray(res_arr, item);
+        }
+        cJSON_AddItemToObject(data, "supported_resolutions", res_arr);
+    }
     /* Not persisted on this board — sensor defaults (0/false) match the
      * SPA's `?? 0` / `?? false` fallbacks, so the camera tab populates
      * with valid OV2640 defaults instead of staying blank. */
@@ -1191,62 +1426,37 @@ static esp_err_t handler_api_ai_status(httpd_req_t *req)
 /*  GET /api/timelapse/start, /api/timelapse/stop, /api/timelapse/status */
 /* ------------------------------------------------------------------ */
 
-static esp_err_t handler_api_timelapse_start(httpd_req_t *req)
-{
-    esp_err_t auth_ret = require_auth(req, "/api/timelapse/start");
-    if (auth_ret != ESP_OK) {
-        return auth_ret;
-    }
-    esp_err_t ret = timelapse_start();
-    if (ret != ESP_OK) {
-        return send_json_error(req, "timelapse start failed", 500);
-    }
-    return send_json_ok(req, NULL);
-}
-
-static esp_err_t handler_api_timelapse_stop(httpd_req_t *req)
-{
-    esp_err_t auth_ret = require_auth(req, "/api/timelapse/stop");
-    if (auth_ret != ESP_OK) {
-        return auth_ret;
-    }
-    esp_err_t ret = timelapse_stop();
-    if (ret != ESP_OK) {
-        return send_json_error(req, "timelapse stop failed", 500);
-    }
-    return send_json_ok(req, NULL);
-}
-
-static esp_err_t handler_api_timelapse_status(httpd_req_t *req)
-{
-    const cam_config_t *cfg = config_get();
-    cJSON *data = cJSON_CreateObject();
-    cJSON_AddBoolToObject(data, "running", timelapse_is_running());
-    cJSON_AddNumberToObject(data, "interval_s", (double)cfg->timelapse_interval_s);
-    cJSON_AddNumberToObject(data, "burst_count", (double)cfg->timelapse_burst_count);
-    cJSON_AddNumberToObject(data, "photo_count", (double)timelapse_get_photo_count());
-    cJSON_AddNumberToObject(data, "burst_photo_count", (double)timelapse_get_burst_photo_count());
-    cJSON_AddNumberToObject(data, "current_interval_s", (double)timelapse_get_current_interval_s());
-    cJSON_AddNumberToObject(data, "mode", (double)timelapse_get_mode());
-    return send_json_ok(req, data);
-}
-
-/* ------------------------------------------------------------------ */
-/*  POST /api/format  — Format SD card (all data lost!)               */
-/* ------------------------------------------------------------------ */
-
 static esp_err_t handler_api_format(httpd_req_t *req)
 {
+    esp_err_t auth_ret = require_auth(req, "/api/format");
+    if (auth_ret != ESP_OK) {
+        return auth_ret;
+    }
+
     if (!storage_is_available()) {
         return send_json_error(req, "SD card not available", 503);
     }
 
-    /* SD card format via API is disabled.
-     * The camera's active I2S DMA interferes with SDSPI bus write operations,
-     * causing esp_vfs_fat_sdcard_format() to hang and trigger watchdog reset.
-     * Users should format the TF card on a PC instead. */
-    ESP_LOGW(TAG, "Format SD via API rejected (SPI bus conflict with camera)");
-    return send_json_error(req, "Format via API not available while camera is running. Please format on PC.", 503);
+    /* GPIO14 上相机与 SD 共享 SPI 总线：相机运行中 esp_vfs_fat_sdcard_format()
+     * 必挂死（相机 I2S DMA 干扰 SDSPI，触发看门狗，2026-09-03 前旧实现因此直接 503）。
+     * 安全路径：持久化格式化请求 → 应答后重启 → 开机在相机初始化之前
+     * （main.c Step 5.5）执行格式化。 */
+    esp_err_t ret = storage_format_request_set();
+    if (ret != ESP_OK) {
+        return send_json_error(req, "cannot persist format request", 500);
+    }
+
+    ESP_LOGW(TAG, "Format SD requested via API — rebooting to format before camera init");
+
+    cJSON *data = cJSON_CreateObject();
+    cJSON_AddStringToObject(data, "message",
+                            "Format scheduled. Device reboots; SD card is erased during boot.");
+    esp_err_t resp = send_json_ok(req, data);
+
+    /* 给 httpd ~2s 把应答发完再重启 */
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    esp_restart();
+    return resp;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1437,8 +1647,60 @@ static esp_err_t handler_static(httpd_req_t *req)
 /*  URI registration table                                             */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/*  GET /api/scan — WiFi 扫描（契约 v1.0 核心端点，按 RSSI 降序）       */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handler_api_scan(httpd_req_t *req)
+{
+    set_cors_headers(req);
+
+    /* 注意：本板 WiFi RF 较弱，扫描会短暂中断 STA 流量，属预期行为 */
+    wifi_scan_config_t sc = { .show_hidden = false };
+    esp_err_t err = esp_wifi_scan_start(&sc, true);
+    if (err != ESP_OK) {
+        return send_json_error(req, "Scan failed (WiFi not ready?)",
+                               HTTPD_500_INTERNAL_SERVER_ERROR);
+    }
+
+    uint16_t n = 0;
+    esp_wifi_scan_get_ap_num(&n);
+    if (n > 20) n = 20;
+
+    wifi_ap_record_t *recs = malloc(sizeof(wifi_ap_record_t) * (n ? n : 1));
+    if (!recs) {
+        esp_wifi_clear_ap_list();
+        return send_json_error(req, "No memory", HTTPD_500_INTERNAL_SERVER_ERROR);
+    }
+    esp_wifi_scan_get_ap_records(&n, recs);
+
+    for (int i = 1; i < (int)n; i++) {
+        wifi_ap_record_t key = recs[i];
+        int j = i - 1;
+        while (j >= 0 && recs[j].rssi < key.rssi) {
+            recs[j + 1] = recs[j];
+            j--;
+        }
+        recs[j + 1] = key;
+    }
+
+    cJSON *data = cJSON_CreateObject();
+    cJSON *arr = cJSON_CreateArray();
+    for (int i = 0; i < (int)n; i++) {
+        cJSON *ap = cJSON_CreateObject();
+        cJSON_AddStringToObject(ap, "ssid", (const char *)recs[i].ssid);
+        cJSON_AddNumberToObject(ap, "rssi", recs[i].rssi);
+        cJSON_AddNumberToObject(ap, "auth", recs[i].authmode);
+        cJSON_AddItemToArray(arr, ap);
+    }
+    free(recs);
+    cJSON_AddItemToObject(data, "networks", arr);
+    return send_json_ok(req, data);
+}
+
+
 typedef struct {
-    const char       *uri;
+    const char        *uri;
     httpd_method_t    method;
     esp_err_t       (*handler)(httpd_req_t *);
 } uri_entry_t;
@@ -1454,12 +1716,13 @@ static const uri_entry_t s_uris[] = {
     { "/metrics",      HTTP_GET,    handler_metrics          },
     { "/api/files",    HTTP_GET,    handler_api_files        },
     { "/api/files",    HTTP_DELETE, handler_api_files_delete  },
+    { "/api/files/batch", HTTP_POST, handler_api_files_batch  },
     { "/api/download", HTTP_GET,    handler_api_download     },
     { "/api/auth",     HTTP_GET,    handler_api_auth         },
+    { "/api/scan",     HTTP_GET,    handler_api_scan         },
     { "/api/capabilities", HTTP_GET, handler_api_capabilities  },
-    { "/api/timelapse/start",  HTTP_POST, handler_api_timelapse_start  },
-    { "/api/timelapse/stop",   HTTP_POST, handler_api_timelapse_stop   },
-    { "/api/timelapse/status", HTTP_GET,  handler_api_timelapse_status },
+    /* 契约 v1.1：timelapse 独立端点已移除 — 启停走 POST /api/config 的
+     * timelapse_enabled，运行态并入 GET /api/status */
     { "/api/format",   HTTP_POST,   handler_api_format       },
     { "/api/storage",  HTTP_GET,    handler_api_storage      },
     { "/api/record",    HTTP_POST,   handler_api_record_post  },

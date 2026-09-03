@@ -20,7 +20,7 @@ static void apply_defaults(cam_config_t *cfg)
     cfg->cam_framesize = CAMERA_RES_VGA;
     cfg->fps = 15;
     cfg->cam_quality = 12;
-    strncpy(cfg->web_password, "", sizeof(cfg->web_password) - 1);
+    strncpy(cfg->web_password, CONFIG_DEFAULT_WEB_PASSWORD, sizeof(cfg->web_password) - 1);
     strncpy(cfg->timezone, CONFIG_DEFAULT_TIMEZONE, sizeof(cfg->timezone) - 1);
     cfg->motion_threshold = 30;
     cfg->motion_cooldown = 10;
@@ -40,8 +40,10 @@ static void apply_defaults(cam_config_t *cfg)
     cfg->record_mode = 0;           /* continuous */
     cfg->record_segment_sec = 300;
     cfg->frame_drop_enabled = 1;
-    cfg->cleanup_low_pct = 80;
-    cfg->cleanup_high_pct = 70;
+    /* V16: cleanup_*_pct 语义统一为"空闲百分比"（家族契约，seeed 先例）：
+     * 空闲 < cleanup_low_pct 触发循环清理，删到空闲 >= cleanup_high_pct 为止 */
+    cfg->cleanup_low_pct = 20;
+    cfg->cleanup_high_pct = 30;
     /* V9: Dual WiFi defaults */
     memset(cfg->wifi_ssid_2, 0, sizeof(cfg->wifi_ssid_2));
     memset(cfg->wifi_pass_2, 0, sizeof(cfg->wifi_pass_2));
@@ -171,6 +173,12 @@ esp_err_t config_init(void)
                         if (s_config.version <= 14) {
                             s_config.wifi_roam_rssi_threshold = -65;
                         }
+                        /* V15→V16: cleanup_*_pct 语义从"已用百分比"改为"空闲百分比"，
+                         * 旧值 80/70（甚至线上的 80/30）在新语义下无意义 → 重置家族默认 */
+                        if (s_config.version <= 15) {
+                            s_config.cleanup_low_pct = 20;
+                            s_config.cleanup_high_pct = 30;
+                        }
                         ESP_LOGI(TAG, "Config migrated V%d->V%d (blob %u->%u), saving",
                                  s_config.version, CONFIG_VERSION, (unsigned)cur_len, (unsigned)sizeof(cam_config_t));
                         config_save();
@@ -230,6 +238,11 @@ esp_err_t config_init(void)
         if (s_config.version <= 14) {
             s_config.wifi_roam_rssi_threshold = -65;
         }
+        /* V15→V16: cleanup_*_pct 语义从"已用百分比"改为"空闲百分比"（家族统一） */
+        if (s_config.version <= 15) {
+            s_config.cleanup_low_pct = 20;
+            s_config.cleanup_high_pct = 30;
+        }
         ESP_LOGI(TAG, "Config migrated V%d->V%d (same-size blob), saving",
                  s_config.version, CONFIG_VERSION);
         config_save();
@@ -245,6 +258,29 @@ esp_err_t config_init(void)
         }
         apply_defaults(&s_config);
         config_save();
+    }
+
+    /* ---- 2026-09-03 密码统一一次性种子（与 seeed 同款）----
+     * 存量设备可能带未知历史密码，按用户要求统一为家族默认。
+     * NVS 标记键保证仅升级后首启执行一次。 */
+    {
+        nvs_handle_t h_pw;
+        uint8_t pw_seeded = 0;
+        if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h_pw) == ESP_OK) {
+            nvs_get_u8(h_pw, "pw_seed_v1", &pw_seeded);
+            nvs_close(h_pw);
+        }
+        if (pw_seeded != 1) {
+            ESP_LOGW(TAG, "One-shot password seed: unifying web_password to family default");
+            strncpy(s_config.web_password, CONFIG_DEFAULT_WEB_PASSWORD,
+                    sizeof(s_config.web_password) - 1);
+            config_save();
+            if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h_pw) == ESP_OK) {
+                nvs_set_u8(h_pw, "pw_seed_v1", 1);
+                nvs_commit(h_pw);
+                nvs_close(h_pw);
+            }
+        }
     }
 
     if (ret == ESP_OK && s_config.magic == CONFIG_MAGIC && s_config.version == CONFIG_VERSION) {
@@ -265,6 +301,12 @@ esp_err_t config_init(void)
     } else {
         ESP_LOGW(TAG, "NVS blob read OK but invalid — NOT overwriting with defaults");
     }
+    }
+    /* 契约 v1.1：空密码迁移到家族统一默认（服务端已拒绝空密码写入） */
+    if (s_config.web_password[0] == '\0') {
+        strncpy(s_config.web_password, CONFIG_DEFAULT_WEB_PASSWORD,
+                sizeof(s_config.web_password) - 1);
+        ESP_LOGI(TAG, "Empty web_password migrated to family default");
     }
     s_config_initialized = true;
     return ESP_OK;
