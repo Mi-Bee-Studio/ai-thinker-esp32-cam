@@ -24,6 +24,7 @@
 #include "esp_mac.h"
 #include "esp_heap_caps.h"
 #include "wifi_manager.h"
+#include "device_id.h"
 #include "lwip/sockets.h"
 #include <string.h>
 #include <stdio.h>
@@ -50,11 +51,8 @@ static const char *TAG = "onvif_disc";
  */
 static void generate_device_uuid(char *out, size_t out_size)
 {
-    uint8_t mac[6] = {0};
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    snprintf(out, out_size,
-             UUID_PREFIX "%02x%02x%02x%02x%02x%02x",
-             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    /* Stable UUID from factory eFuse MAC — consistent with onvif_service.c. */
+    snprintf(out, out_size, "%s", device_get_uuid());
 }
 
 /**

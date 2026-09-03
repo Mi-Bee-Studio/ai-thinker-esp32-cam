@@ -21,6 +21,7 @@ idf_component_register(
         "frame_broker.c"
         "sd_logger.c"
         "ota_update.c"
+        "device_id.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi
