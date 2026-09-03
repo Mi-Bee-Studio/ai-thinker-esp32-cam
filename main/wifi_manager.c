@@ -13,6 +13,8 @@
 #include <string.h>
 #include "config_manager.h"
 #include "sd_logger.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 
 static const char *TAG = "wifi_manager";
 
@@ -25,6 +27,51 @@ static bool s_sta_active = false;
 static int s_sta_retry_count = 0;
 static bool s_using_secondary = false;
 #define MAX_RETRIES_PER_NETWORK 10
+
+/* DHCP 超时兜底（2026-09-03 实测事故：RSSI -82 时关联秒成但 DHCP 广播全丢，
+ * 每 60s 被 AP 踢掉才计 1 次断开，熬满 10 次重试 ≈10 分钟才切备用网络）。
+ * 关联后 12s 无 IP 主动断开计 DHCP 超时，连续 2 次立即切换备用 SSID。 */
+static TimerHandle_t s_dhcp_timer = NULL;
+static int s_dhcp_timeouts = 0;
+#define DHCP_TIMEOUT_MS     (12 * 1000)
+#define DHCP_FAILOVER_AFTER 2
+
+/* 上次成功网络记忆（NVS）：启动直接从上次拿到 IP 的网开始，免去在弱主网
+ * 认证黑洞里空转数分钟。2026-09-03 实测：主 -82dBm/备用 -63dBm 场景。 */
+#define WIFI_PREF_NS "wifi_pref"
+#define WIFI_PREF_KEY "last_net"
+static void save_last_good_net(bool secondary)
+{
+    nvs_handle_t h;
+    if (nvs_open(WIFI_PREF_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, WIFI_PREF_KEY, secondary ? 1 : 0);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+static bool load_last_good_net(void)
+{
+    nvs_handle_t h;
+    uint8_t v = 0;
+    if (nvs_open(WIFI_PREF_NS, NVS_READONLY, &h) == ESP_OK) {
+        nvs_get_u8(h, WIFI_PREF_KEY, &v);
+        nvs_close(h);
+    }
+    return v == 1;
+}
+
+/* 启动入口：从上次拿到 IP 的网络开始（NVS 记忆），弱主网场景免认证黑洞空转 */
+esp_err_t wifi_start_sta_preferred(void)
+{
+    const cam_config_t *cfg = config_get();
+    bool sec = load_last_good_net() && cfg->wifi_ssid_2[0] != '\0';
+    s_using_secondary = sec;
+    ESP_LOGI(TAG, "STA start on %s ('%s')",
+             sec ? "SECONDARY [last-good]" : "primary",
+             sec ? cfg->wifi_ssid_2 : cfg->wifi_ssid);
+    return wifi_start_sta(sec ? cfg->wifi_ssid_2 : cfg->wifi_ssid,
+                          sec ? cfg->wifi_pass_2 : cfg->wifi_pass);
+}
 
 // Callbacks (up to 4)
 typedef struct {
@@ -110,6 +157,34 @@ static void stop_reconnect_timer(void)
     }
 }
 
+/* ---- DHCP 超时兜底 ---- */
+static void dhcp_timer_cb(TimerHandle_t timer)
+{
+    s_dhcp_timeouts++;
+    ESP_LOGW(TAG, "Associated but no IP in %dms (weak-RF DHCP loss, timeout %d/%d) — forcing disconnect",
+             DHCP_TIMEOUT_MS, s_dhcp_timeouts, DHCP_FAILOVER_AFTER);
+    sd_logf(SD_LOG_WARN, "wifi", "DHCP timeout %d/%d, forcing disconnect",
+            s_dhcp_timeouts, DHCP_FAILOVER_AFTER);
+    /* 触发 DISCONNECTED 事件 → 走既有重试/双网切换机制（快速累计） */
+    esp_wifi_disconnect();
+}
+static void start_dhcp_timer(void)
+{
+    if (!s_dhcp_timer) {
+        s_dhcp_timer = xTimerCreate("dhcp_to", pdMS_TO_TICKS(DHCP_TIMEOUT_MS),
+                                    pdFALSE, NULL, dhcp_timer_cb);
+    }
+    if (s_dhcp_timer && !xTimerIsTimerActive(s_dhcp_timer)) {
+        xTimerStart(s_dhcp_timer, 0);
+    }
+}
+static void stop_dhcp_timer(void)
+{
+    if (s_dhcp_timer && xTimerIsTimerActive(s_dhcp_timer)) {
+        xTimerStop(s_dhcp_timer, 0);
+    }
+}
+
 static void reconnect_timer_cb(TimerHandle_t timer)
 {
     if (s_sta_active) {
@@ -133,6 +208,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 
         case WIFI_EVENT_STA_CONNECTED:
             ESP_LOGI(TAG, "STA connected to AP, waiting for IP...");
+            start_dhcp_timer();   /* 弱信号下 DHCP 可能永远不完成 → 12s 兜底 */
             break;
 
         case WIFI_EVENT_STA_DISCONNECTED: {
@@ -144,18 +220,23 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                      disc->reason, wifi_disconnect_reason_str(disc->reason),
                      s_sta_retry_count + 1, MAX_RETRIES_PER_NETWORK);
             stop_reconnect_timer();
+            stop_dhcp_timer();
             set_state(WIFI_STATE_STA_DISCONNECTED);
             s_sta_retry_count++;
 
-            /* Dual WiFi failover: try secondary network after max retries on primary */
-            if (s_sta_retry_count >= MAX_RETRIES_PER_NETWORK) {
+            /* Dual WiFi failover: try secondary network after max retries on primary,
+             * 或 DHCP 超时模式（关联能成、拿不到 IP）连续 2 次立即切换 */
+            bool dhcp_failover = (s_dhcp_timeouts >= DHCP_FAILOVER_AFTER);
+            if (s_sta_retry_count >= MAX_RETRIES_PER_NETWORK || dhcp_failover) {
                 const cam_config_t *cfg = config_get();
                 if (!s_using_secondary && cfg->wifi_ssid_2[0] != '\0') {
-                    ESP_LOGW(TAG, "Primary WiFi failed %d times, switching to secondary: %s",
-                             s_sta_retry_count, cfg->wifi_ssid_2);
-                    sd_logf(SD_LOG_ERROR, "wifi", "Primary WiFi failed, switching to secondary: %s", cfg->wifi_ssid_2);
+                    ESP_LOGW(TAG, "Primary WiFi unusable (retries=%d dhcp_timeouts=%d), switching to secondary: %s",
+                             s_sta_retry_count, s_dhcp_timeouts, cfg->wifi_ssid_2);
+                    sd_logf(SD_LOG_ERROR, "wifi", "Primary WiFi unusable (dhcp_timeouts=%d), switching to secondary: %s",
+                            s_dhcp_timeouts, cfg->wifi_ssid_2);
                     s_using_secondary = true;
                     s_sta_retry_count = 0;
+                    s_dhcp_timeouts = 0;
                     wifi_start_sta(cfg->wifi_ssid_2, cfg->wifi_pass_2);
                     return;
                 } else if (s_using_secondary) {
@@ -164,6 +245,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                     sd_logf(SD_LOG_ERROR, "wifi", "Secondary WiFi also failed, retrying primary: %s", cfg->wifi_ssid);
                     s_using_secondary = false;
                     s_sta_retry_count = 0;
+                    s_dhcp_timeouts = 0;
                     wifi_start_sta(cfg->wifi_ssid, cfg->wifi_pass);
                     return;
                 }
@@ -192,6 +274,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
             snprintf(s_ip_str, sizeof(s_ip_str), IPSTR, IP2STR(&event->ip_info.ip));
             ESP_LOGI(TAG, "STA got IP: %s", s_ip_str);
             stop_reconnect_timer();
+            stop_dhcp_timer();
+            s_dhcp_timeouts = 0;
+            save_last_good_net(s_using_secondary);  /* 下次启动直接走本网 */
             set_state(WIFI_STATE_STA_CONNECTED);
             if (s_sta_retry_count > 0) {
                 sd_logf(SD_LOG_WARN, "wifi", "STA reconnected after %d retries, IP: %s", s_sta_retry_count, s_ip_str);
@@ -516,6 +601,11 @@ wifi_state_t wifi_get_state(void)
 const char *wifi_get_ip_str(void)
 {
     return s_ip_str;
+}
+
+bool wifi_using_secondary(void)
+{
+    return s_using_secondary;
 }
 
 esp_err_t wifi_register_callback(wifi_state_cb_t cb, void *user_data)

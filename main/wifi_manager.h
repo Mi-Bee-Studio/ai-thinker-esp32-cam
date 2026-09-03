@@ -20,6 +20,7 @@ esp_err_t wifi_init(void);
  * @param pass WiFi password
  */
 esp_err_t wifi_start_sta(const char *ssid, const char *pass);
+esp_err_t wifi_start_sta_preferred(void);  /* NVS 记忆上次成功网络，免弱主网黑洞 */
 
 /**
  * @brief Start AP mode (SSID/password from CONFIG_DEFAULT_AP_SSID / CONFIG_DEFAULT_AP_PASS)
@@ -36,6 +37,12 @@ wifi_state_t wifi_get_state(void);
  * @return IP string pointer, or "0.0.0.0" if not connected
  */
 const char *wifi_get_ip_str(void);
+
+/**
+ * @brief Which configured network slot the STA is currently using
+ * @return true = secondary (wifi_ssid_2), false = primary (wifi_ssid)
+ */
+bool wifi_using_secondary(void);
 
 /**
  * @brief Register WiFi state change callback (up to WIFI_MAX_CALLBACKS)
