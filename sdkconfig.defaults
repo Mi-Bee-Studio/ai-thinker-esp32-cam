@@ -83,6 +83,14 @@ CONFIG_LWIP_TCP_MSS=760
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=12
 # Reduce max retransmissions (default 12 ≈ 20min hang, 6 ≈ 19s max)
 CONFIG_LWIP_TCP_MAXRTX=6
+# Socket table + TIME_WAIT lifetime (2026-09-03 EMFILE reboot loop):
+# SPA stream-watchdog reconnects every ~7s and each kicked :81 connection parks in
+# TIME_WAIT for 2×MSL on the device side. Default 10 sockets + 60s MSL (=120s
+# TIME_WAIT) exhausts the table → httpd accept() EMFILE → health self-heal probe
+# fails 6× → reboot → refills in ~12s → loop (21 reboots observed).
+# Same fix as luatos/seeed: 16 slots + 15s MSL (30s TIME_WAIT ≈ 4-5 parked conns).
+CONFIG_LWIP_MAX_SOCKETS=16
+CONFIG_LWIP_TCP_MSL=15000
 
 # OTA firmware update (A/B partitions + bootloader rollback)
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

@@ -16,4 +16,6 @@ endif()
 set(PROJECT_VER "${GIT_VERSION}")
 
 # Embed web UI files into SPIFFS partition
-spiffs_create_partition_image(spiffs main/web_ui FLASH_IN_PROJECT)
+file(GLOB MIBEE_UI_FILES main/web_ui/*)
+# 2026-09-03：目录级依赖不随文件内容编辑触发（三姐妹仓同坑已修），必须显式 DEPENDS
+spiffs_create_partition_image(spiffs main/web_ui FLASH_IN_PROJECT DEPENDS ${MIBEE_UI_FILES})
