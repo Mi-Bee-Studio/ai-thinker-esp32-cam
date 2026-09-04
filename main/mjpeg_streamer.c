@@ -283,6 +283,11 @@ static void mjpeg_listen_task(void *arg)
             continue;
         }
 
+        /* 发送超时兜底（2026-09-04 家族同步）：TCP 零窗口客户端的 send()
+         * 会长期阻塞占住任务；10s 超时让其走断开清理。 */
+        struct timeval snd_to = { .tv_sec = 10, .tv_usec = 0 };
+        setsockopt(client_sock, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof(snd_to));
+
         /* 单槽位：已有连接（含滞留僵尸）一律让位给新连接（用户刚打开的页面） */
         bool slot_ready = false;
         xSemaphoreTake(s_mutex, portMAX_DELAY);

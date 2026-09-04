@@ -350,3 +350,12 @@ For panic/backtrace analysis: the ELF at `build/mibee_cam.elf` + `xtensa-esp32-e
 - **PSRAM required** for camera frame buffers. Board has 8MB PSRAM, 4MB usable.
 - **Hardware-specific**: MiBee Cam only. Pins differ on ESP32-S3 (see sister project `seeed-esp32s3-cam`).
 - **WiFi antenna**: Board has PCB antenna + optional IPEX external antenna (requires soldering 0Ω select resistor). PCB antenna has marginal range.
+
+## 2026-09-04 上午家族修复同步
+- **MJPEG accept 路径补 `SO_SNDTIMEO=10s`**（PIT-024 家族同步；本仓死客户端探测已有）。
+- **统一 logo**：`main/web_ui/favicon.svg`（蜂窝六边形+双蜜黄条纹，四仓同 md5），
+  `index.html` 页头 `<img class="brand-logo">` + `<link rel="icon">`；`style.css` 加 `.brand-logo`。
+  四仓 web_ui 五文件 md5 必须一致（共享 SPA 纪律）。
+- **删除遗留静态页** `config/files/preview/setup.html`（pre-SPA 产物，SPA 已完全覆盖其功能，
+  且 seeed/n16r8 的 SPIFFS 容量本就装不下；git 历史可找回）。
+- **web_ui 新增文件必须 `idf.py reconfigure`**（file(GLOB) 陷阱，PIT-026）；烧录前停该口采集器。
