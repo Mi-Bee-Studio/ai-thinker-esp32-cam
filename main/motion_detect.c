@@ -1,24 +1,26 @@
 /*
- * motion_detect.c - Frame-difference motion detection for AI_Thinker ESP32-CAM
+ * motion_detect.c — Sigma-Delta pixel-domain motion detection + locked-exposure
+ * darkness probe (2026-09-04 rework per external algorithm report).
  *
- * Algorithm (JPEG byte-sampling heuristic):
- *   1. Capture frame A, sample every Nth JPEG byte into a static buffer
- *   2. Return frame A to camera driver
- *   3. Wait ~500ms for scene change
- *   4. Capture frame B, compare its bytes against saved samples
- *   5. If changed bytes exceed threshold → motion detected
- *   6. On trigger: capture fresh frame, save to SD card, enter cooldown
+ * History: the previous implementation compared sampled raw JPEG bytes and
+ * inferred darkness from JPEG file size. Both were structurally unsound in
+ * low light (entropy-coded bytes don't map to pixels; AGC noise inflates
+ * dark-scene JPEGs). This version decodes each analysis frame to a 1/8
+ * grayscale grid (TJpgDec DC path, lm_jpeg.c) and runs the 7-stage ΣΔ
+ * pipeline in lm_motion.c (validated on the host sim: 0 false triggers
+ * across the σ×contrast matrix, detection boundary ≈ 4.5σ̂; see
+ * probe/lm_sim on the workstation).
  *
- * Rationale: OV2640 outputs compressed JPEG — pixel-level comparison would
- * require a full JPEG decode (too heavy for ESP32). Comparing raw JPEG bytes
- * at a coarse sample rate is a lightweight heuristic that works well for
- * detecting scene changes between consecutive frames.
+ * Darkness: lm_dark_probe.c locks AEC/AGC every 30s (only when no stream
+ * clients and recorder idle) and measures true luma — the mean of frames
+ * under auto exposure is only a fallback indicator.
  */
 
 #include <string.h>
 #include <stdio.h>
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "motion_detect.h"
@@ -29,19 +31,20 @@
 #include "time_sync.h"
 #include "health_monitor.h"
 #include "flash_led.h"
+#include "mjpeg_streamer.h"
+#include "video_recorder.h"
+#include "lm_motion.h"
+#include "lm_jpeg.h"
+#include "lm_dark_probe.h"
 
 static const char *TAG = "motion_detect";
-
-/* ---- Tuning constants ---- */
-#define SAMPLE_STEP            10    /* Sample every 10th JPEG byte */
-#define PIXEL_DELTA            150   /* Byte difference threshold for "changed" (bright scene) — filters JPEG entropy-coding noise */
-#define PIXEL_DELTA_DARK       180   /* Higher threshold for dark scenes — filters JPEG noise */
 
 #define MOTION_TASK_PRIORITY   5
 #define MOTION_TASK_STACK_SIZE 8192
 
-#define CAPTURE_INTERVAL_MS    500   /* ~2 FPS detection loop */
-#define STOP_WAIT_MS           5000  /* Max wait for task exit on stop */
+#define ANALYSIS_INTERVAL_MS   250    /* ~4 fps analysis cadence */
+#define PROBE_PERIOD_MS        LM_PROBE_PERIOD_MS
+#define STOP_WAIT_MS           5000
 
 /* ---- Static state ---- */
 static TaskHandle_t s_motion_task_handle = NULL;
@@ -50,14 +53,29 @@ static bool s_in_cooldown = false;
 static int64_t s_cooldown_start_us = 0;
 static uint8_t s_brightness_pct = 50;
 static bool s_scene_dark = false;
-static uint32_t s_unknown_seq = 0; /* Counter for pre-sync fallback filenames */
+static uint32_t s_unknown_seq = 0;
+
+/* lm_motion working state — grid is a fixed max-size scratch (largest
+ * supported frame UXGA 1600×1200 → 200×150); the pipeline re-inits when
+ * the decoded geometry changes. */
+#define LM_GRID_MAX_W 200
+#define LM_GRID_MAX_H 150
+static uint8_t s_grid[LM_GRID_MAX_W * LM_GRID_MAX_H];
+static int s_grid_w = 0, s_grid_h = 0;
+static uint8_t *s_lm_buf = NULL;      /* pipeline working buffer */
+static size_t s_lm_buf_size = 0;
+static bool s_lm_inited = false;
+
+/* diagnostics snapshot for /api/status */
+static lm_result_t s_diag;
+static int32_t s_decode_us = -1;
+static volatile uint32_t s_frames_analyzed = 0;
+
+/* probe scheduling */
+static int64_t s_last_probe_us = -(int64_t)PROBE_PERIOD_MS * 1000;  /* probe soon after boot */
 
 /* ---- Internal helpers ---- */
 
-/**
- * @brief Check if cooldown period has expired
- * @return true if cooldown is still active, false if expired or not in cooldown
- */
 static bool is_in_cooldown(void)
 {
     if (!s_in_cooldown) {
@@ -70,46 +88,129 @@ static bool is_in_cooldown(void)
 
     if (elapsed_us >= cooldown_us) {
         s_in_cooldown = false;
-        ESP_LOGD(TAG, "Cooldown expired (%lld us elapsed, %lld us required)",
-                 (long long)elapsed_us, (long long)cooldown_us);
         return false;
     }
 
     return true;
 }
 
+/* (Re)configure the pipeline for the decoded grid geometry. Returns false on OOM. */
+static bool analysis_alloc(int gw, int gh)
+{
+    size_t buf_sz = lm_motion_buf_size(gw, gh);
+    if (s_lm_buf && gw == s_grid_w && gh == s_grid_h && buf_sz <= s_lm_buf_size) {
+        return true;   /* same geometry, keep pipeline state */
+    }
+
+    uint8_t *lmbuf = heap_caps_malloc(buf_sz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!lmbuf) lmbuf = heap_caps_malloc(buf_sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!lmbuf) {
+        ESP_LOGE(TAG, "pipeline buffer OOM (%ux%u)", (unsigned)gw, (unsigned)gh);
+        return false;
+    }
+    free(s_lm_buf);
+    s_lm_buf = lmbuf; s_lm_buf_size = buf_sz;
+
+    lm_config_t lmcfg;
+    lm_motion_defaults(&lmcfg);
+    /* Map the existing user-facing motion_threshold (percent, default 30)
+     * onto the pipeline's energy trigger: 30→e_hi 18 (sim-validated point);
+     * higher user threshold = less sensitive. */
+    lmcfg.e_hi = 12 + config_get()->motion_threshold / 5;
+    lmcfg.e_lo = lmcfg.e_hi / 2 + 1;
+    /* Blob bbox gate must scale with the grid: a close subject fills the
+     * frame (bbox ≈ grid size) and a fixed max_side=70 rejected it —
+     * measured live: fg=10% blobs=0 E=0 with a person 1m from the lens.
+     * Anti-noise is stage ③ + the σ̂ quiet gate, not the side limit. */
+    lmcfg.max_side = (gw > gh) ? gw : gh;
+    if (lm_motion_init_buf(gw, gh, &lmcfg, s_lm_buf, buf_sz) != 0) {
+        ESP_LOGE(TAG, "lm_motion_init_buf failed");
+        s_lm_inited = false;
+        return false;
+    }
+    s_lm_inited = true;
+    s_grid_w = gw; s_grid_h = gh;
+    ESP_LOGI(TAG, "analysis grid %dx%d (e_hi=%d e_lo=%d)",
+             gw, gh, lmcfg.e_hi, lmcfg.e_lo);
+    return true;
+}
+
+/* Probe callback: pull one broker frame, decode, return its luma mean. */
+static int probe_sample_luma(void)
+{
+    camera_fb_t *fb = NULL;
+    if (frame_broker_get_copy(&fb, 1500) != ESP_OK || fb == NULL) {
+        return -1;
+    }
+    int gw = 0, gh = 0, luma = -1;
+    uint32_t acc = 0;
+    if (lm_jpeg_decode_gray(fb, s_grid, &gw, &gh) > 0) {
+        for (int i = 0; i < gw * gh; i++) acc += s_grid[i];
+        luma = (int)(acc / (uint32_t)(gw * gh));
+    }
+    frame_broker_free(fb);
+    return luma;
+}
+
+static void probe_tick(void)
+{
+    /* Skip while anyone is watching or recording — the exposure lock makes
+     * a couple of frames look wrong. */
+    if (mjpeg_streamer_get_client_count() > 0) return;
+    if (recorder_get_state() == RECORDER_RECORDING ||
+        recorder_get_state() == RECORDER_PAUSED) return;
+
+    int pct = lm_dark_probe_run(probe_sample_luma);
+    if (pct >= 0) {
+        s_brightness_pct = (uint8_t)pct;
+        s_scene_dark = lm_dark_probe_is_dark(pct);
+        ESP_LOGI(TAG, "probe result: %u%% dark=%s", s_brightness_pct,
+                 s_scene_dark ? "YES" : "no");
+    }
+    s_last_probe_us = esp_timer_get_time();
+}
+
 /**
- * @brief Handle motion detected event — save photo to SD card
+ * @brief Handle motion detected event — capture photo with flash if dark.
  *
- * Captures a fresh frame, generates a timestamped filename, and saves
- * via storage_save_photo(). Only saves if SD card is available.
- * If flash was used for detection, recaptures with flash for a clean photo.
+ * Flash warm-up is frame-count driven (report §7.4): after flash on we
+ * discard frames until the sensor's AEC/AWB re-converges, rather than a
+ * fixed 200ms.
  */
 static void handle_motion_event(bool dark_scene)
 {
-    ESP_LOGI(TAG, "Motion detected!%s (scene %s)", dark_scene ? " (auto-flash)" : "", dark_scene ? "DARK" : "bright");
+    ESP_LOGI(TAG, "Motion detected!%s (scene %s)", dark_scene ? " (auto-flash)" : "",
+             dark_scene ? "DARK" : "bright");
     health_monitor_incr_motion_events();
 
-    if (!s_running) return;  /* bail out if motion detect was stopped while we were waiting */
+    if (!s_running) return;
 
     if (!storage_is_available()) {
         ESP_LOGW(TAG, "SD card not available, skipping photo save");
         return;
     }
 
-    /* If scene is dark, capture with flash ON for a usable photo */
     camera_fb_t *fb = NULL;
     if (dark_scene) {
-        ESP_LOGI(TAG, "Dark scene detected, enabling flash for photo");
+        ESP_LOGI(TAG, "Dark scene — flash photo with frame-driven warm-up");
         flash_led_on();
-        vTaskDelay(pdMS_TO_TICKS(200));
-        if (frame_broker_get_copy(&fb, 2000) != ESP_OK || fb == NULL) {
+        /* Discard 3 frames (AEC/AWB re-convergence), bounded by timeouts */
+        for (int i = 0; i < 3; i++) {
+            camera_fb_t *warm = NULL;
+            if (frame_broker_get_copy(&warm, 700) == ESP_OK && warm) {
+                frame_broker_free(warm);
+            } else {
+                break;
+            }
+        }
+        if (frame_broker_get_copy(&fb, 1500) != ESP_OK || fb == NULL) {
             ESP_LOGW(TAG, "Failed to capture with flash");
         }
         flash_led_off();
+        /* Flash polluted the ΣΔ model's view: blank it (report stage ⑦). */
+        lm_motion_flash_guard(15);
     }
 
-    /* If no flash or flash recapture failed, capture normally */
     if (fb == NULL) {
         if (frame_broker_get_copy(&fb, 2000) != ESP_OK || fb == NULL) {
             ESP_LOGW(TAG, "Failed to capture frame for photo save");
@@ -117,13 +218,10 @@ static void handle_motion_event(bool dark_scene)
         }
     }
 
-    /* Generate timestamped filename (FAT-safe: no colons)
-     * If time not synced yet, use counter-based fallback to avoid 1970 timestamps. */
     char filename[64];
     if (time_sync_is_synced()) {
         const char *timestamp = time_sync_get_str();
         snprintf(filename, sizeof(filename), "motion_%s.jpg", timestamp);
-        /* Replace spaces and colons with underscores for FAT compatibility */
         for (char *p = filename; *p; p++) {
             if (*p == ' ' || *p == ':') *p = '_';
         }
@@ -142,21 +240,21 @@ static void handle_motion_event(bool dark_scene)
         ESP_LOGE(TAG, "Failed to save motion photo: %s", esp_err_to_name(err));
     }
 
-    /* Enter cooldown */
     s_in_cooldown = true;
     s_cooldown_start_us = esp_timer_get_time();
     ESP_LOGI(TAG, "Entering cooldown (%u seconds)", config_get()->motion_cooldown);
 }
 
 /**
- * @brief FreeRTOS task entry point for continuous motion detection
+ * @brief FreeRTOS task — decode + ΣΔ pipeline analysis loop
  */
 static void motion_detection_task(void *arg)
 {
-    ESP_LOGI(TAG, "Motion detection task started");
+    ESP_LOGI(TAG, "Motion task started (ΣΔ pixel-domain pipeline)");
+
+    int64_t last_analysis_us = 0;
 
     while (s_running) {
-        /* Skip if camera not ready */
         if (!camera_is_initialized()) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
@@ -164,98 +262,70 @@ static void motion_detection_task(void *arg)
 
         flash_led_init();
 
-        /* Capture reference frame */
-        camera_fb_t *fb_a = NULL;
-        if (frame_broker_get_copy(&fb_a, 2000) != ESP_OK || fb_a == NULL) {
-            ESP_LOGW(TAG, "Failed to capture reference frame");
+        /* Probe cadence (independent of analysis) */
+        if ((esp_timer_get_time() - s_last_probe_us) / 1000 >= PROBE_PERIOD_MS) {
+            probe_tick();
+        }
+
+        /* Analysis cadence gate */
+        int64_t now = esp_timer_get_time();
+        if (now - last_analysis_us < (int64_t)ANALYSIS_INTERVAL_MS * 1000) {
+            vTaskDelay(pdMS_TO_TICKS(30));
+            continue;
+        }
+        last_analysis_us = now;
+
+        camera_fb_t *fb = NULL;
+        if (frame_broker_get_copy(&fb, 2000) != ESP_OK || fb == NULL) {
+            ESP_LOGW(TAG, "No frame for analysis");
+            vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
+        }
+
+        int gw = 0, gh = 0;
+        int64_t t0 = esp_timer_get_time();
+        size_t fb_len = fb->len;
+        int gw_ret = lm_jpeg_decode_gray(fb, s_grid, &gw, &gh);
+        frame_broker_free(fb);
+
+        if (gw_ret <= 0 || gw > LM_GRID_MAX_W || gh > LM_GRID_MAX_H) {
+            ESP_LOGW(TAG, "JPEG decode failed or grid too big (len=%u, %dx%d)",
+                     (unsigned)fb_len, gw, gh);
+            vTaskDelay(pdMS_TO_TICKS(250));
+            continue;
+        }
+        s_decode_us = (int32_t)(esp_timer_get_time() - t0);
+
+        if (!analysis_alloc(gw, gh)) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
 
-        /* Sample bytes from fb_a for later comparison */
-        size_t a_len = fb_a->len;
-        size_t sample_count = (a_len + SAMPLE_STEP - 1) / SAMPLE_STEP;
-        uint8_t *samples_a = (uint8_t *)malloc(sample_count);
-        if (samples_a == NULL) {
-            ESP_LOGW(TAG, "Failed to allocate sample buffer (%u bytes)",
-                     (unsigned)sample_count);
-            frame_broker_free(fb_a);
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
+        s_frames_analyzed++;
+        lm_result_t r;
+        bool trig = s_lm_inited ? lm_motion_process(s_grid, &r) : false;
+        s_diag = r;
+
+        /* Fallback darkness between probes: auto-exposure luma mean is a
+         * weak indicator (AGC biases it toward mid-grey) but better than
+         * the old JPEG-size heuristic. Probe results overwrite it. */
+        if (lm_dark_probe_age_ms() < 0) {
+            s_brightness_pct = (uint8_t)(r.luma_mean * 100 / 255);
+            s_scene_dark = s_brightness_pct < config_get()->flash_threshold;
         }
 
-        for (size_t i = 0, j = 0; i < a_len && j < sample_count; i += SAMPLE_STEP, j++) {
-            samples_a[j] = fb_a->buf[i];
+        ESP_LOGD(TAG, "σ=%d.%02d E=%d A=%d fg=%d%% blobs=%d mode=%d decode=%dms",
+                 r.sigma_x100 / 100, r.sigma_x100 % 100, r.energy, r.energy_smooth,
+                 r.fg_filt_pct, r.blobs, r.mode, s_decode_us / 1000);
+
+        if (trig) {
+            ESP_LOGI(TAG, "TRIGGER ctx: E=%d A=%d blobs=%d fg=%d%% σ=%d.%02d marks=%d dec=%dms",
+                     r.energy, r.energy_smooth, r.blobs, r.fg_filt_pct,
+                     r.sigma_x100 / 100, r.sigma_x100 % 100, r.marks, s_decode_us / 1000);
         }
-
-        /* Brightness detection using JPEG size heuristic */
-        s_brightness_pct = flash_brightness_detect(fb_a);
-        s_scene_dark = flash_is_dark(s_brightness_pct);
-        ESP_LOGI(TAG, "Brightness: jpeg=%uKB, pct=%u%%, dark=%s",
-                 (unsigned)(a_len / 1024), s_brightness_pct,
-                 s_scene_dark ? "YES" : "no");
-
-        bool dark_scene = s_scene_dark;
-
-        /* Return fb_a immediately — free the frame buffer */
-        frame_broker_free(fb_a);
-        fb_a = NULL;
-
-        /* Wait between captures for detectable scene change */
-        vTaskDelay(pdMS_TO_TICKS(CAPTURE_INTERVAL_MS));
-
-        /* Capture comparison frame — no flash during detection.
-         * Flash between ref/comp frames creates false 80%+ diffs.
-         * Flash is used ONLY for the final photo capture in handle_motion_event(). */
-        camera_fb_t *fb_b = NULL;
-        if (frame_broker_get_copy(&fb_b, 2000) != ESP_OK || fb_b == NULL) {
-            ESP_LOGW(TAG, "Failed to capture comparison frame");
-            free(samples_a);
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
+        if (trig && !is_in_cooldown()) {
+            handle_motion_event(s_scene_dark);
         }
-        size_t min_len = (a_len < fb_b->len) ? a_len : fb_b->len;
-        size_t total = 0;
-        size_t changed = 0;
-        int delta_thresh = dark_scene ? PIXEL_DELTA_DARK : PIXEL_DELTA;
-        for (size_t i = 0, j = 0; i < min_len && j < sample_count; i += SAMPLE_STEP, j++) {
-            total++;
-            int diff = (int)samples_a[j] - (int)fb_b->buf[i];
-            if (diff < 0) diff = -diff;
-            if (diff > delta_thresh) {
-                changed++;
-            }
-        }
-
-        /*
-         * Motion threshold: in dark scenes, JPEG frames have low byte variance
-         * so we lower the effective threshold to remain sensitive.
-         */
-        uint8_t threshold = config_get()->motion_threshold;
-        uint8_t effective_thresh = dark_scene
-            ? (threshold > 20 ? threshold / 4 : 5)
-            : threshold;
-        bool motion = false;
-        if (total > 0) {
-            uint8_t percent = (uint8_t)((changed * 100) / total);
-            motion = (percent >= effective_thresh);
-            ESP_LOGI(TAG, "[DBG] diff: %u/%u = %u%% (thresh=%u%%%s, delta=%d, motion=%s, cooldown=%s)",
-                     (unsigned)changed, (unsigned)total, percent,
-                     effective_thresh, dark_scene ? "-dark" : "", delta_thresh, motion ? "YES" : "no",
-                     is_in_cooldown() ? "YES" : "no");
-        }
-
-        /* Free fb_b and sample buffer */
-        frame_broker_free(fb_b);
-        free(samples_a);
-
-        /* Trigger action on motion (if not in cooldown) */
-        if (motion && !is_in_cooldown()) {
-            handle_motion_event(dark_scene);
-        }
-
-        /* Brief yield to prevent watchdog trigger */
-        vTaskDelay(pdMS_TO_TICKS(100));
     }
 
     ESP_LOGI(TAG, "Motion detection task exiting");
@@ -271,7 +341,7 @@ esp_err_t motion_detect_init(void)
     s_in_cooldown = false;
     s_cooldown_start_us = 0;
     s_motion_task_handle = NULL;
-    ESP_LOGI(TAG, "Motion detection module initialized");
+    memset(&s_diag, 0, sizeof(s_diag));
     return ESP_OK;
 }
 
@@ -284,7 +354,6 @@ esp_err_t motion_detect_start(void)
 
     s_running = true;
     s_in_cooldown = false;
-    s_cooldown_start_us = 0;
 
     BaseType_t ret = xTaskCreatePinnedToCore(
         motion_detection_task,
@@ -293,7 +362,7 @@ esp_err_t motion_detect_start(void)
         NULL,
         MOTION_TASK_PRIORITY,
         &s_motion_task_handle,
-        tskNO_AFFINITY  /* no pinning — avoid Core 1 httpd starvation */
+        tskNO_AFFINITY
     );
 
     if (ret != pdPASS) {
@@ -302,7 +371,7 @@ esp_err_t motion_detect_start(void)
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "Motion detection started (threshold=%u%%, cooldown=%us)",
+    ESP_LOGI(TAG, "Motion detection started (ΣΔ pipeline, threshold=%u, cooldown=%us)",
              config_get()->motion_threshold, config_get()->motion_cooldown);
     return ESP_OK;
 }
@@ -316,7 +385,6 @@ esp_err_t motion_detect_stop(void)
     ESP_LOGI(TAG, "Stopping motion detection...");
     s_running = false;
 
-    /* Wait for task to exit */
     TickType_t timeout = pdMS_TO_TICKS(STOP_WAIT_MS);
     while (s_motion_task_handle != NULL && timeout > 0) {
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -330,7 +398,6 @@ esp_err_t motion_detect_stop(void)
     }
 
     s_in_cooldown = false;
-    ESP_LOGI(TAG, "Motion detection stopped");
     return ESP_OK;
 }
 
@@ -348,10 +415,28 @@ uint8_t motion_detect_get_brightness_pct(void)
 
 uint8_t motion_detect_get_brightness_method(void)
 {
-    return 1;  /* JPEG heuristic */
+    /* 2 = locked-exposure grayscale probe; 1 = auto-exposure luma fallback */
+    return lm_dark_probe_age_ms() >= 0 ? 2 : 1;
 }
 
 bool motion_detect_is_scene_dark(void)
 {
     return s_scene_dark;
+}
+
+/* ---- Diagnostics for /api/status ---- */
+
+const lm_result_t *motion_detect_get_diag(void)
+{
+    return &s_diag;
+}
+
+uint32_t motion_detect_get_frames_analyzed(void)
+{
+    return s_frames_analyzed;
+}
+
+int32_t motion_detect_get_decode_us(void)
+{
+    return s_decode_us;
 }

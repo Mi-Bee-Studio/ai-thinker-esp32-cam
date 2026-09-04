@@ -22,6 +22,9 @@ idf_component_register(
         "sd_logger.c"
         "ota_update.c"
         "device_id.c"
+        "lm_motion.c"
+        "lm_jpeg.c"
+        "lm_dark_probe.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi
@@ -45,4 +48,5 @@ idf_component_register(
         esp_system
         app_update
         log
+        tjpgd
     )

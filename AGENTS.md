@@ -359,3 +359,34 @@ For panic/backtrace analysis: the ELF at `build/mibee_cam.elf` + `xtensa-esp32-e
 - **删除遗留静态页** `config/files/preview/setup.html`（pre-SPA 产物，SPA 已完全覆盖其功能，
   且 seeed/n16r8 的 SPIFFS 容量本就装不下；git 历史可找回）。
 - **web_ui 新增文件必须 `idf.py reconfigure`**（file(GLOB) 陷阱，PIT-026）；烧录前停该口采集器。
+
+## 2026-09-04 运动检测算法重做（ΣΔ 像素域流水线，外部报告评估落地）
+
+外部团队报告（暗光运动检测算法调研）评估结论 + 落地实现。**评估三诊断全部属实**
+（JPEG 字节比对无物理意义 / JPEG 体积当亮度暗光方向反转 / 无时空验证），
+报告声称"已交付"的代码实物并不存在——全部由本仓自行实现。
+
+- **核心文件**：`main/lm_motion.c/h`（七级 ΣΔ 流水线，纯 C 整数运算，调用方供内存）
+  `main/lm_jpeg.c/h`（TJpgDec 1/8 DC-only 解码，vendor 在 `components/tjpgd/`）
+  `main/lm_dark_probe.c/h`（锁定曝光暗度探针）+ `motion_detect.c` 重写。
+- **桌面回归**：`tools/lm_sim/`（gcc 主机仿真，复现报告 σ×对比度矩阵）——
+  **42 组全部 0 误报**；边界 σ=8→C40（=4.5σ̂ 精确复现）、σ=4/5→C30（较报告保守一档，
+  换全矩阵零误报）、σ≥12 静默门（报告 §2 自己的"宁可漏报"教义）。改 lm_motion 必跑。
+- **与报告的三处偏差（均有实测依据）**：
+  1. 条件式 ΣΔ（ICIP09 Alg.2）在重噪声下逐像素冻结振荡、σ̂ 塌缩——改回无条件更新
+     （Alg.1），全局鲁棒性由③级重收敛承担；
+  2. 暗度探针不切 GRAYSCALE 格式（报告自己的最大告警项：deinit/init 100-200ms 断流），
+     改为**锁 AEC/AGC + 复用运动解码器的亮度均值**——同物理、零切换成本；
+  3. blob 外接框上限随网格缩放（固定 70 在真机上把 1 米内的人整框拒掉：fg=10% blobs=0）。
+- **上板实测**（.139）：SVGA→100×75 网格 79ms/帧、VGA→80×60 44ms/帧，3.4fps 分析；
+  探针锁定曝光 luma=9→3% 判暗（旧 JPEG 体积法同场景报 100%——方向反转实锤）；
+  闪光灯 3 次开灭零误触（③级真机验证）；静态 6min+ 零事件；两次触发均带
+  `TRIGGER ctx` 能量上下文（短暂运动的尾帧触发，E 先冲高后归零属 N-of-M 设计代价）。
+- **诊断**：`/api/status` 新增 `motion_diag`{sigma_x100, energy, energy_smooth, fg_pct,
+  blobs, mode, luma_mean, decode_us, frames}；`brightness_method` 语义修正：
+  1=自动曝光亮度回退（原标签"register"是历史错标），2=锁定曝光探针。
+- **遗留观察**：本板弱网漫游（primary -81dBm）令推流/状态访问忽好忽坏——
+  流媒体 fps 波动是链路问题非流水线（A/B：motion ON 时反而最高）；SD readdir
+  在相机运行后不可靠是老毛病（按名下载正常，列表缓存空）。
+- **参数映射**：`motion_threshold`（0-100，默认 30）映射 e_hi=12+thr/5、e_lo=e_hi/2+1；
+  `flash_threshold`（默认 40）为暗度判定线；探针周期 30s 仅在无观众/非录制时运行。

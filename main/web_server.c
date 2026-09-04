@@ -291,11 +291,27 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "stream_clients", (double)mjpeg_streamer_get_client_count());
     cJSON_AddNumberToObject(data, "stream_clients_max", 1);
 
-    /* Brightness */
+    /* Brightness — method 2 = locked-exposure probe, 1 = auto-exposure luma */
     cJSON_AddNumberToObject(data, "brightness_pct", (double)m->brightness_pct);
     cJSON_AddStringToObject(data, "brightness_method",
-        m->brightness_method == 1 ? "register" : (m->brightness_method == 2 ? "grayscale" : "init"));
+        m->brightness_method == 1 ? "luma" : (m->brightness_method == 2 ? "grayscale" : "init"));
     cJSON_AddBoolToObject(data, "scene_dark", m->scene_dark);
+
+    /* ΣΔ motion pipeline diagnostics (2026-09-04 rework) */
+    {
+        const lm_result_t *d = motion_detect_get_diag();
+        cJSON *md = cJSON_CreateObject();
+        cJSON_AddNumberToObject(md, "sigma_x100", d->sigma_x100);
+        cJSON_AddNumberToObject(md, "energy", d->energy);
+        cJSON_AddNumberToObject(md, "energy_smooth", d->energy_smooth);
+        cJSON_AddNumberToObject(md, "fg_pct", d->fg_filt_pct);
+        cJSON_AddNumberToObject(md, "blobs", d->blobs);
+        cJSON_AddNumberToObject(md, "mode", d->mode);          /* 0 normal 1 warmup 2 reconverge 3 blind */
+        cJSON_AddNumberToObject(md, "luma_mean", d->luma_mean);
+        cJSON_AddNumberToObject(md, "decode_us", motion_detect_get_decode_us());
+        cJSON_AddNumberToObject(md, "frames", motion_detect_get_frames_analyzed());
+        cJSON_AddItemToObject(data, "motion_diag", md);
+    }
 
     /* Flash LED */
     cJSON_AddBoolToObject(data, "flash_on", flash_led_is_on());
