@@ -76,7 +76,10 @@ void lm_motion_defaults(lm_config_t *c)
 {
     memset(c, 0, sizeof(*c));
     c->logn = 2;              /* N = 4 → threshold ≈ 2.7σ */
-    c->vmin = 2;
+    /* 4 absorbs pure JPEG-DC quantization flicker (±2DN patchy drift seen
+     * on-device in the near-zero-noise DC domain); sim-validated rows are
+     * unchanged since V* ≈ 2.7σ dominates whenever σ ≥ 1. */
+    c->vmin = 4;
     c->vmax = 80;
     c->gchg_fg_pct = 25;
     c->gchg_frames = 3;

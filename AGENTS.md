@@ -390,3 +390,13 @@ For panic/backtrace analysis: the ELF at `build/mibee_cam.elf` + `xtensa-esp32-e
   在相机运行后不可靠是老毛病（按名下载正常，列表缓存空）。
 - **参数映射**：`motion_threshold`（0-100，默认 30）映射 e_hi=12+thr/5、e_lo=e_hi/2+1；
   `flash_threshold`（默认 40）为暗度判定线；探针周期 30s 仅在无观众/非录制时运行。
+
+### 探针诱发误触的三连修复（2026-09-04 上板迭代，验收浸泡通过后定稿）
+1. **探针过渡帧误触**：锁/恢复曝光的过渡帧在 DC 域（σ̂≈0、V 落 vmin）产生补丁式
+   ±2DN 量化漂移 → 成形 blob E=60-120 → 每个探针周期必触发。修复：探针全程
+   `lm_motion_flash_guard(30)` + `vmin 2→4`（吸收纯量化闪烁，仿真复验 42 组仍全零误报）。
+2. **引导顺序缺陷**：首次探针跑在流水线首次解码之前 → guard 被 `init_buf→reset()`
+   清零 → AEC 恢复漂移在 warmup 结束后以 E=61 blob 触发。修复：探针门控
+   `s_lm_inited && frame_no≥30`。
+3. 验收浸泡（终版固件）：10min 仅 1 次触发（用户真实运动），探针周期零诱发，
+   LED 照度阶跃×3 零误触，VGA/SVGA 双几何冷启动干净。

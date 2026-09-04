@@ -154,13 +154,25 @@ static int probe_sample_luma(void)
 
 static void probe_tick(void)
 {
+    /* Pipeline must be live and settled first: the boot-time probe used to
+     * fire before the first decode, its flash-guard was then wiped by
+     * lm_motion_init_buf()->reset(), and the AEC restore transients right
+     * after warmup triggered as E=61 blobs (2026-09-04 boot trace). */
+    if (!s_lm_inited || s_diag.frame_no < 30) return;
+
     /* Skip while anyone is watching or recording — the exposure lock makes
      * a couple of frames look wrong. */
     if (mjpeg_streamer_get_client_count() > 0) return;
     if (recorder_get_state() == RECORDER_RECORDING ||
         recorder_get_state() == RECORDER_PAUSED) return;
 
+    /* The probe's exposure lock/unlock produces transition frames with
+     * patchy ±2DN DC quantization drift — measured live as E≈60-120 blobs
+     * that triggered the pipeline every probe cycle. Blank the model for
+     * the whole window plus settle time (2026-09-04 live trace). */
+    lm_motion_flash_guard(30);
     int pct = lm_dark_probe_run(probe_sample_luma);
+    lm_motion_flash_guard(30);
     if (pct >= 0) {
         s_brightness_pct = (uint8_t)pct;
         s_scene_dark = lm_dark_probe_is_dark(pct);
