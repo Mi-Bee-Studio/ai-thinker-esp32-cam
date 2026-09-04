@@ -186,13 +186,17 @@ memory 层 PSRAM fb 预算（256K floor，只能收紧）。`GET /api/camera` �
 `res_cap_source`（sensor/board/memory）；列表/POST/AT+CAMRES 全部改走 effective。
 本板满配不变（0-3 四档、source=sensor）。
 
-### 2026-09-04 晚 API parity：free_psram 补齐（契约 §4 违约修复）
+### 2026-09-04 晚 API parity：free_psram 补齐（契约 §4 违约修复，已烧录验证）
 
 本板有 4MB PSRAM 但 /api/status 一直没发 `free_psram`（SPA 的 PSRAM 芯片/
 系统面板行因此缺失）。同轮 n16r8 补齐 wifi_rssi/wifi_channel/chip_temp
-（用户报障"119 无信号显示"的根因）。⚠ **本轮固件（三层上限 + free_psram）
-因弱射频 Web OTA 连续 6 次断流未能上板**——板子下次插 USB（ttyUSB0）时
-烧 `build/mibee_cam.bin` 完成验证（先停该口采集器）。
+（用户报障"119 无信号显示"的根因）。
+**USB 部署验证（2026-09-04 晚，ttyUSB0）**：弱射频 Web OTA 连续 6 次断流后
+改串口烧写（两块 CH340 无序列号致 by-id 名字冲突，认口靠 ttyUSB0/ttyUSB1 区分）。
+上板全过：`res_cap_source=sensor`（OV2640 传感器上限即板上限）、四档列表、
+POST 越界 400 带来源、`free_psram` 3.8MB、capture 0.17s、ΣΔ 流水线与暗度探针
+正常（暗景 2-3% luma）、单次干净启动无 rst。注意本仓 CH340 烧后仍需
+`esptool --chip esp32 --no-stub run` 释放复位。
 
 ## Web UI
 
