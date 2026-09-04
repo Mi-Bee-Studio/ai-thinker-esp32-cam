@@ -46,7 +46,7 @@ AT+REBOOT / AT+RESTORE`（+能力裁剪项）。红线：**任何读指令不回
 > 新增 `stream_clients_max`=1）。MPA(index.html) 已同步改读新字段。
 > 注：本仓实际分区为双 OTA 1.5MB×2 + SPIFFS 956KB（本文旧描述"单 factory 3.5MB/无OTA"已过时，OTA 端点存在且可用）。
 >
-> **契约 v1.1（2026-09-02）**：统一默认密码（真实值仅存本地 sdkconfig `CONFIG_MIBEE_CAM_DEFAULT_WEB_PASSWORD`，严禁入库；空密码加载自动迁移）、拒绝 <6 位密码；
+> **契约 v1.1（2026-09-02）**：公开默认密码统一为 `mibeecam2026`（Kconfig 默认值，可入文档；本地部署可在 gitignored sdkconfig 用 `CONFIG_MIBEE_CAM_DEFAULT_WEB_PASSWORD` 覆盖；空密码加载自动迁移）、拒绝 <6 位密码；
 > `/api/timelapse/*` 三端点已移除（启停走 POST /api/config 的 `timelapse_enabled`，
 > 运行态在 GET /api/status 的 `timelapse_running`/`timelapse_photo_count`）；
 > `/api/led` 新增 JSON body 主语义（`{"brightness":0-100}`），`?action=` 保留兼容；api_version=1.1。

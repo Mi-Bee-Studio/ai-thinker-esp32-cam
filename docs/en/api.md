@@ -26,12 +26,12 @@ The following endpoints require authentication:
 - `POST /api/auth` — Verify web password
 
 ### Authentication Method
-Use the `X-Password` header with the web password (default: "admin"):
+Use the `X-Password` header with the web password (default: "mibeecam2026"):
 
 ```bash
 curl -X POST http://192.168.1.100/api/config \
   -H "Content-Type: application/json" \
-  -H "X-Password: admin" \
+  -H "X-Password: mibeecam2026" \
   -d '{"wifi_ssid":"MyNetwork"}'
 ```
 
@@ -116,7 +116,7 @@ Verify web password and return authentication status.
 **Request Body**
 ```json
 {
-  "password": "admin"
+  "password": "mibeecam2026"
 }
 ```
 
@@ -133,12 +133,12 @@ Verify web password and return authentication status.
 # Check authentication
 curl -X POST http://192.168.1.100/api/auth \
   -H "Content-Type: application/json" \
-  -d '{"password":"admin"}'
+  -d '{"password":"mibeecam2026"}'
 
 # Change password
 curl -X POST http://192.168.1.100/api/config \
   -H "Content-Type: application/json" \
-  -H "X-Password: admin" \
+  -H "X-Password: mibeecam2026" \
   -d '{"web_password":"newpassword"}'
 
 # Verify new password
@@ -221,25 +221,25 @@ Updates device configuration. Requires authentication.
 # Update WiFi credentials
 curl -X POST http://192.168.1.100/api/config \
   -H "Content-Type: application/json" \
-  -H "X-Password: admin" \
+  -H "X-Password: mibeecam2026" \
   -d '{"wifi_ssid":"MyNetwork","wifi_pass":"MyPassword"}'
 
 # Update motion detection settings
 curl -X POST http://192.168.1.100/api/config \
   -H "Content-Type: application/json" \
-  -H "X-Password: admin" \
+  -H "X-Password: mibeecam2026" \
   -d '{"motion_threshold":3,"motion_cooldown":15}'
 
 # Update camera quality
 curl -X POST http://192.168.1.100/api/config \
   -H "Content-Type: application/json" \
-  -H "X-Password: admin" \
+  -H "X-Password: mibeecam2026" \
   -d '{"jpeg_quality":10}'
 
 # Update timelapse settings
 curl -X POST http://192.168.1.100/api/config \
   -H "Content-Type: application/json" \
-  -H "X-Password: admin" \
+  -H "X-Password: mibeecam2026" \
   -d '{"timelapse_enabled":true,"timelapse_interval_s":60}'
 ```
 
@@ -263,7 +263,7 @@ Resets configuration to factory defaults. Requires authentication.
 **Curl Example**
 ```bash
 curl -X POST http://192.168.1.100/api/reset \
-  -H "X-Password: admin"
+  -H "X-Password: mibeecam2026"
 ```
 
 #### POST /api/reboot
@@ -282,7 +282,7 @@ Reboots the device. Requires authentication.
 **Curl Example**
 ```bash
 curl -X POST http://192.168.1.100/api/reboot \
-  -H "X-Password: admin"
+  -H "X-Password: mibeecam2026"
 ```
 
 ### 5. Camera Functions
@@ -484,7 +484,7 @@ Deletes a specific photo from SD card. Requires authentication.
 ```bash
 # Delete specific photo
 curl -X DELETE "http://192.168.1.100/api/files?name=2024-12-30-14-30-25.jpg" \
-  -H "X-Password: admin"
+  -H "X-Password: mibeecam2026"
 
 # List photos before deletion
 curl -s http://192.168.1.100/api/files | jq -r '.photos[].name'
@@ -524,7 +524,7 @@ Starts timelapse recording. Requires authentication.
 # Start timelapse (1 minute intervals, 3 photos)
 curl -X POST http://192.168.1.100/api/timelapse/start \
   -H "Content-Type: application/json" \
-  -H "X-Password: admin" \
+  -H "X-Password: mibeecam2026" \
   -d '{"interval_seconds":60,"burst_count":3}'
 ```
 
@@ -545,7 +545,7 @@ Stops timelapse recording. Requires authentication.
 ```bash
 # Stop timelapse
 curl -X POST http://192.168.1.100/api/timelapse/stop \
-  -H "X-Password: admin"
+  -H "X-Password: mibeecam2026"
 ```
 
 #### GET /api/timelapse/status
@@ -603,17 +603,17 @@ Controls flash LED status. Requires authentication.
 ```bash
 # Turn flash on
 curl -X POST http://192.168.1.100/api/flash \
-  -H "X-Password: admin" \
+  -H "X-Password: mibeecam2026" \
   -d '{"action":"on"}'
 
 # Turn flash off
 curl -X POST http://192.168.1.100/api/flash \
-  -H "X-Password: admin" \
+  -H "X-Password: mibeecam2026" \
   -d '{"action":"off"}'
 
 # Toggle flash state
 curl -X POST http://192.168.1.100/api/flash \
-  -H "X-Password: admin"
+  -H "X-Password: mibeecam2026"
 ```
 
 ### 11. Recording Control
@@ -638,11 +638,11 @@ Start or stop video recording. Requires authentication.
 ```bash
 # Start continuous recording
 curl -X POST "http://192.168.1.100/api/record?action=start" \
-  -H "X-Password: admin"
+  -H "X-Password: mibeecam2026"
 
 # Stop recording
 curl -X POST "http://192.168.1.100/api/record?action=stop" \
-  -H "X-Password: admin"
+  -H "X-Password: mibeecam2026"
 ```
 
 #### GET /api/record

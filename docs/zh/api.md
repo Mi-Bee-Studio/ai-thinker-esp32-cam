@@ -32,7 +32,7 @@ MiBee Cam 提供 RESTful API 接口，允许通过 HTTP 请求控制和监控系
 
 某些需要身份验证的操作：
 ```http
-X-Password: admin
+X-Password: mibeecam2026
 ```
 
 ### 响应格式
@@ -171,7 +171,7 @@ Host: 192.168.1.100
 ```http
 POST /api/config
 Host: 192.168.1.100
-X-Password: admin
+X-Password: mibeecam2026
 Content-Type: application/json
 
 {
@@ -216,7 +216,7 @@ Content-Type: application/json
 ```http
 GET /api/auth
 Host: 192.168.1.100
-X-Password: admin
+X-Password: mibeecam2026
 ```
 
 **响应**
@@ -323,7 +323,7 @@ Host: 192.168.1.100
 ```http
 DELETE /api/files?name=2024-12-30_14-35-42.jpg
 Host: 192.168.1.100
-X-Password: admin
+X-Password: mibeecam2026
 ```
 
 **参数**
@@ -370,7 +370,7 @@ Content-Length: 45232
 ```http
 POST /api/record?action=start
 Host: 192.168.1.100
-X-Password: admin
+X-Password: mibeecam2026
 ```
 
 **参数**
@@ -389,11 +389,11 @@ X-Password: admin
 ```bash
 # 启动连续录像
 curl -X POST "http://192.168.1.100/api/record?action=start" \
-  -H "X-Password: admin"
+  -H "X-Password: mibeecam2026"
 
 # 停止录像
 curl -X POST "http://192.168.1.100/api/record?action=stop" \
-  -H "X-Password: admin"
+  -H "X-Password: mibeecam2026"
 ```
 
 ### `/api/record` - 获取录像状态
@@ -459,7 +459,7 @@ Host: 192.168.1.100
 ```http
 POST /api/timelapse/start
 Host: 192.168.1.100
-X-Password: admin
+X-Password: mibeecam2026
 ```
 
 **响应**
@@ -480,7 +480,7 @@ X-Password: admin
 ```http
 POST /api/timelapse/stop
 Host: 192.168.1.100
-X-Password: admin
+X-Password: mibeecam2026
 ```
 
 **响应**
@@ -523,7 +523,7 @@ Host: 192.168.1.100
 ```http
 POST /api/flash
 Host: 192.168.1.100
-X-Password: admin
+X-Password: mibeecam2026
 ```
 
 **响应**
@@ -543,7 +543,7 @@ X-Password: admin
 ```http
 POST /api/reboot
 Host: 192.168.1.100
-X-Password: admin
+X-Password: mibeecam2026
 ```
 
 **响应**
@@ -565,7 +565,7 @@ X-Password: admin
 ```http
 POST /api/reset
 Host: 192.168.1.100
-X-Password: admin
+X-Password: mibeecam2026
 ```
 
 **响应**
@@ -636,11 +636,11 @@ curl -s http://192.168.1.100/api/config | jq .
 # 更新配置
 curl -X POST http://192.168.1.100/api/config \
   -H "Content-Type: application/json" \
-  -H "X-Password: admin" \
+  -H "X-Password: mibeecam2026" \
   -d '{"wifi_ssid":"MyNetwork","wifi_pass":"MyPass","resolution":1}'
 
 # 验证密码
-curl -H "X-Password: admin" http://192.168.1.100/api/auth
+curl -H "X-Password: mibeecam2026" http://192.168.1.100/api/auth
 ```
 
 ### 摄像头控制
@@ -662,18 +662,18 @@ curl -o photo.jpg "http://192.168.1.100/api/download?name=2024-12-30_14-35-42.jp
 
 # 删除文件
 curl -X DELETE "http://192.168.1.100/api/files?name=2024-12-30_14-35-42.jpg" \
-  -H "X-Password: admin"
+  -H "X-Password: mibeecam2026"
 ```
 
 ### 录像控制
 ```bash
 # 启动录像
 curl -X POST "http://192.168.1.100/api/record?action=start" \
-  -H "X-Password: admin"
+  -H "X-Password: mibeecam2026"
 
 # 停止录像
 curl -X POST "http://192.168.1.100/api/record?action=stop" \
-  -H "X-Password: admin"
+  -H "X-Password: mibeecam2026"
 
 # 查看录像状态
 curl -s http://192.168.1.100/api/record | jq .
@@ -683,11 +683,11 @@ curl -s http://192.168.1.100/api/record | jq .
 ```bash
 # 启动延时摄影
 curl -X POST http://192.168.1.100/api/timelapse/start \
-  -H "X-Password: admin"
+  -H "X-Password: mibeecam2026"
 
 # 停止延时摄影
 curl -X POST http://192.168.1.100/api/timelapse/stop \
-  -H "X-Password: admin"
+  -H "X-Password: mibeecam2026"
 
 # 查看延时状态
 curl -s http://192.168.1.100/api/timelapse/status | jq .
@@ -697,15 +697,15 @@ curl -s http://192.168.1.100/api/timelapse/status | jq .
 ```bash
 # 控制闪光灯
 curl -X POST http://192.168.1.100/api/flash \
-  -H "X-Password: admin"
+  -H "X-Password: mibeecam2026"
 
 # 重启设备
 curl -X POST http://192.168.1.100/api/reboot \
-  -H "X-Password: admin"
+  -H "X-Password: mibeecam2026"
 
 # 恢复出厂设置
 curl -X POST http://192.168.1.100/api/reset \
-  -H "X-Password: admin"
+  -H "X-Password: mibeecam2026"
 
 # 获取 Prometheus 指标
 curl -s http://192.168.1.100/api/metrics

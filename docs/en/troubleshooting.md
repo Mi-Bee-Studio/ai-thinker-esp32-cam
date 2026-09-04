@@ -440,7 +440,7 @@ curl http://<ip>/metrics | grep heap_free
 
 **Solutions**:
 - **Web interface**: Go to Configuration page → Reset to Defaults
-- **API endpoint**: `curl -X POST http://<device-ip>/api/reset -H "X-Password: admin"`
+- **API endpoint**: `curl -X POST http://<device-ip>/api/reset -H "X-Password: mibeecam2026"`
 - **Serial command**: Type `reset` in serial monitor
 
 **Note**: GPIO0 serves as camera master clock (XCLK) and cannot be used as a general-purpose button.
