@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
+#include "sdkconfig.h"
 
 // Config version and magic
 #define CONFIG_VERSION  16
@@ -11,8 +12,8 @@
 
 // Default values
 #define CONFIG_DEFAULT_TIMEZONE     "CST-8"
-/* 契约 v1.1：家族统一默认管理密码 */
-#define CONFIG_DEFAULT_WEB_PASSWORD "***REMOVED-DEFAULT-PASSWORD***"
+/* 契约 v1.1：家族统一默认管理密码（真实值仅存本地 sdkconfig，仓库只留占位默认） */
+#define CONFIG_DEFAULT_WEB_PASSWORD CONFIG_MIBEE_CAM_DEFAULT_WEB_PASSWORD
 #define CONFIG_DEFAULT_DEVICE_NAME  "MiBeeCam"
 #define CONFIG_DEFAULT_AP_SSID      "MiBeeCam"
 #define CONFIG_DEFAULT_AP_PASS      "12345678"
