@@ -21,6 +21,28 @@
 #define CAMERA_QUALITY_MIN 10
 #define CAMERA_QUALITY_MAX 63
 
+/* ── 分辨率三层上限（2026-09-04 家族统一，PIT-021 附录）─────────────
+ * effective = min(传感器上限, 板级实测上限, 运行时 fb 预算)：
+ *  1. sensor  — esp32-camera 自动检测（camera_sensor_info_t.max_size，
+ *               OV2640→UXGA），换传感器候选表自适应收缩；
+ *  2. board   — 本板实测常数（唯一手工数字，禁止沿用姐妹板数值）：
+ *               2026-09-04 实测 UXGA 采集 ~1.7fps / 推流 ~0.6fps 无崩溃
+ *               ——本板上限即传感器上限；
+ *  3. memory  — 运行时 fb 预算校验（宽*高/5*fb_count + floor ≤ 可用
+ *               PSRAM），只能收紧，防御 PSRAM 退化态。
+ * GET /api/camera 下发 res_cap_source 报告被哪一层钳制（诊断用）。 */
+#define CAMERA_RES_BOARD_MAX CAMERA_RES_UXGA
+
+/**
+ * @brief 当前实际可用最大分辨率 min(sensor, board, memory)
+ */
+camera_resolution_t camera_get_effective_max_res(void);
+
+/**
+ * @brief 上限被哪一层钳制（sensor / board / memory），静态字符串
+ */
+const char *camera_res_cap_source(void);
+
 /**
  * Initialize the OV2640 camera with the given parameters.
  *

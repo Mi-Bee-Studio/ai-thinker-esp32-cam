@@ -75,19 +75,21 @@ static void process_at_command(char *line)
         return;
     }
 
-    /* AT+CAMRES? / AT+CAMRES=n (0-3，热重配 — 与 web 同路径) */
+    /* AT+CAMRES? / AT+CAMRES=n (热重配 — 与 web 同路径，三层上限) */
     if (strcmp(line, "AT+CAMRES?") == 0 || strcmp(line, "AT+CAMRES") == 0) {
         static const char *res_names[] = {"VGA", "SVGA", "XGA", "UXGA"};
         const cam_config_t *c = config_get();
-        printf("Resolution: %s  supported: 0-3 (VGA/SVGA/XGA/UXGA)\r\n",
-               (c->cam_framesize < 4) ? res_names[c->cam_framesize] : "?");
+        printf("Resolution: %s  supported: 0-%d (cap source: %s)\r\n",
+               (c->cam_framesize < 4) ? res_names[c->cam_framesize] : "?",
+               (int)camera_get_effective_max_res(), camera_res_cap_source());
         printf("OK\r\n");
         return;
     }
     if (strncmp(line, "AT+CAMRES=", 10) == 0) {
         int n = atoi(line + 10);
-        if (n < 0 || n >= CAMERA_RES_MAX) {
-            printf("ERROR: resolution must be 0-3\r\n");
+        if (n < 0 || n > (int)camera_get_effective_max_res()) {
+            printf("ERROR: resolution must be 0-%d (cap source: %s)\r\n",
+                   (int)camera_get_effective_max_res(), camera_res_cap_source());
             return;
         }
         config_set_resolution((camera_resolution_t)n);

@@ -176,6 +176,16 @@ framesize 校验 **0-24→0-3**（原先可传越界枚举值！）、quality **
 `config_set_jpeg_quality` 与 NVS 加载钳制旧值。分辨率变更仍走互斥锁热重配
 （OV2640 运行时 set_framesize 有效——与 seeed 的 OV5640 不同，PIT-019）。
 
+### 2026-09-04 分辨率三层上限（家族统一）
+
+`camera_get_effective_max_res() = min(sensor, board, memory)`（camera_driver.c，
+细节见 PITFALLS PIT-021 附录）：sensor 层查 esp32-camera 组件能力表
+（`esp_camera_sensor_get_info().max_size`，勿手抄 PID 表），换传感器候选表自适应；
+board 层 `CAMERA_RES_BOARD_MAX=UXGA`（本板上限=传感器上限，实测矩阵见上节）；
+memory 层 PSRAM fb 预算（256K floor，只能收紧）。`GET /api/camera` 下发
+`res_cap_source`（sensor/board/memory）；列表/POST/AT+CAMRES 全部改走 effective。
+本板满配不变（0-3 四档、source=sensor）。
+
 ## Web UI
 
 > **2026-09-03 起统一为家族 SPA（用户拍板）**：`/` 现服务与三 S3 仓 md5 一致的统一 SPA
@@ -239,13 +249,28 @@ idf.py --version   # → ESP-IDF v6.0.1
 ```bash
 idf.py set-target esp32          # ESP32 only (NOT S2/S3)
 idf.py build                      # Incremental build
-idf.py -p /dev/ttyUSB0 flash      # Flash via serial
+idf.py -p /dev/ttyUSB0 flash      # USB fallback ONLY — see flashing policy below
 idf.py -p /dev/ttyUSB0 monitor    # Serial monitor
 idf.py fullclean                  # Removes build/ + managed_components/
 
 # Regenerate sdkconfig from defaults (REQUIRED after editing sdkconfig.defaults):
 rm sdkconfig && idf.py set-target esp32 && idf.py build
 ```
+
+**Flashing policy (root AGENTS.md, 2026-09-04): Web OTA is the default delivery path
+for this repo** (dual OTA slots 1.5MB×2, endpoints live — see API table above):
+
+```bash
+curl -X POST http://<ip>/api/ota/upload -H 'X-Password: <pwd>' \
+     -H 'Content-Type: application/octet-stream' \
+     --max-time 300 --data-binary @build/mibee_cam.bin      # firmware → next slot → reboot
+curl -X POST http://<ip>/api/ota/spiffs -H 'X-Password: <pwd>' \
+     --data-binary @build/spiffs.bin                        # UI (erases SPIFFS; risky on weak WiFi)
+```
+
+Verify: `/api/ota/info` `running_partition` flipped; after a UI upload, device
+`/app.js` md5 == repo file (PIT-017). USB only for blank chips, rescue, or
+network-unreachable devices.
 
 **`sdkconfig` is generated and gitignored.** A stale `sdkconfig` silently overrides `sdkconfig.defaults` — always delete it after changing defaults.
 

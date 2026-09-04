@@ -472,9 +472,14 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
     bool camera_changed = false;
     if ((item = cJSON_GetObjectItem(json, "cam_framesize")) && cJSON_IsNumber(item)) {
         int val = item->valueint;
-        if (val < 0 || val >= CAMERA_RES_MAX) {
+        int eff_max = (int)camera_get_effective_max_res();
+        if (val < 0 || val > eff_max) {
             cJSON_Delete(json);
-            return send_json_error(req, "cam_framesize out of range (0-3)", 400);
+            char msg[80];
+            snprintf(msg, sizeof(msg),
+                     "cam_framesize out of range (0-%d, source: %s)",
+                     eff_max, camera_res_cap_source());
+            return send_json_error(req, msg, 400);
         }
         config_set_resolution((camera_resolution_t)val);
         camera_changed = true;
@@ -1312,22 +1317,26 @@ static esp_err_t handler_api_camera_get(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "quality_min",   CAMERA_QUALITY_MIN);
     cJSON_AddNumberToObject(data, "quality_max",   CAMERA_QUALITY_MAX);
     cJSON_AddNumberToObject(data, "cam_vflip",     (double)cfg->cam_vflip);
-    /* 契约 v1.1 §5：分辨率名 + 动态分辨率表（本板 OV2640 固定 0-3 四档） */
+    /* 契约 v1.1 §5：分辨率名 + 动态分辨率表（三层上限：sensor ∩ board ∩
+     * memory，本板 OV2640 满配 0-3；换小传感器时列表自动收缩） */
     {
         static const char *res_names[] = {"VGA", "SVGA", "XGA", "UXGA"};
         static const char *res_labels[] = {
             "VGA (640x480)", "SVGA (800x600)", "XGA (1024x768)", "UXGA (1600x1200)"
         };
+        int eff_max = (int)camera_get_effective_max_res();
         cJSON_AddStringToObject(data, "resolution",
             cfg->cam_framesize < 4 ? res_names[cfg->cam_framesize] : "Unknown");
         cJSON *res_arr = cJSON_CreateArray();
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i <= eff_max && i < 4; i++) {
             cJSON *item = cJSON_CreateObject();
             cJSON_AddStringToObject(item, "label", res_labels[i]);
             cJSON_AddNumberToObject(item, "value", i);
             cJSON_AddItemToArray(res_arr, item);
         }
         cJSON_AddItemToObject(data, "supported_resolutions", res_arr);
+        /* 契约扩展（2026-09-04）：上限被哪一层钳制（sensor/board/memory） */
+        cJSON_AddStringToObject(data, "res_cap_source", camera_res_cap_source());
     }
     /* Not persisted on this board — sensor defaults (0/false) match the
      * SPA's `?? 0` / `?? false` fallbacks, so the camera tab populates
@@ -1372,9 +1381,14 @@ static esp_err_t handler_api_camera_post(httpd_req_t *req)
 
     if ((item = cJSON_GetObjectItem(json, "cam_framesize")) && cJSON_IsNumber(item)) {
         int val = item->valueint;
-        if (val < 0 || val >= CAMERA_RES_MAX) {
+        int eff_max = (int)camera_get_effective_max_res();
+        if (val < 0 || val > eff_max) {
             cJSON_Delete(json);
-            return send_json_error(req, "cam_framesize out of range (0-3)", 400);
+            char msg[80];
+            snprintf(msg, sizeof(msg),
+                     "cam_framesize out of range (0-%d, source: %s)",
+                     eff_max, camera_res_cap_source());
+            return send_json_error(req, msg, 400);
         }
         config_set_resolution((camera_resolution_t)val);
         need_apply = true;
