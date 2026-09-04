@@ -73,7 +73,7 @@
 | `wifi_state` | str | 小写枚举 `ap\|connecting\|connected\|disconnected` |
 | `ip` | str | IP |
 | `wifi_rssi` / `wifi_channel` | num | STA 时返回 |
-| `current_ssid` | str | **当前实际连接**的 SSID（区别于 config 的配置值；未连接为 `""`；seeed/ai-thinker 已实现，其余仓跟进时补） |
+| `current_ssid` | str | **当前实际连接**的 SSID（区别于 config 的配置值；未连接为 `""`；四仓已实现） |
 | `wifi_net` | str | 当前使用的配置槽位 `primary\|secondary`（双 WiFi 板返回，单 WiFi 板省略） |
 | `camera` | str | 实测传感器型号（OV2640/OV3660/OV5640；**信设备不信文档**） |
 | `resolution` | str | 当前分辨率名 |
@@ -84,6 +84,12 @@
 
 "不适用即省略"是通用规则：任何板不支持的字段直接不出现在 JSON 中，前端按字段缺省隐藏控件。
 板级扩展字段允许追加（如 seeed 的 `recording`/`sd_*`、luatos 的 `heap_baseline`）。
+
+> **2026-09-04 parity 审计**（四板实测矩阵 × SPA 字段消费交叉核对）：n16r8 补齐
+> `wifi_rssi`/`wifi_channel`/`chip_temp`（S3 温度传感器，方案同 seeed/luatos），
+> ai-thinker 补齐 `free_psram`（本板 4MB PSRAM）。剩余差异均为硬件/功能正当：
+> `chip_temp` 缺于经典 ESP32（无传感器）、`free_psram` 缺于 luatos（无 PSRAM）、
+> SD/录像/延时/传感器微调字段随能力与持久化支持按上规则省略。
 
 ## 5. `/api/camera` 与分辨率/画质刻度
 

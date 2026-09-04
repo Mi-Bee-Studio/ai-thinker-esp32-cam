@@ -44,6 +44,7 @@
 #include "time_sync.h"
 #include "timelapse.h"
 #include "esp_spiffs.h"
+#include "esp_heap_caps.h"   /* free_psram：本板有 4MB PSRAM（2026-09-04 API 对齐三姐妹板） */
 
 #include "video_recorder.h"
 #include "onvif_service.h"
@@ -286,6 +287,9 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     /* Heap */
     cJSON_AddNumberToObject(data, "free_heap", (double)m->free_heap);
     cJSON_AddNumberToObject(data, "min_heap", (double)m->min_free_heap);
+    /* PSRAM（SPA 统计条/系统面板的 PSRAM 芯片；无 PSRAM 的板按契约省略） */
+    cJSON_AddNumberToObject(data, "free_psram",
+        (double)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
     /* Stream clients — 契约 v1.0: 附带上限 */
     cJSON_AddNumberToObject(data, "stream_clients", (double)mjpeg_streamer_get_client_count());

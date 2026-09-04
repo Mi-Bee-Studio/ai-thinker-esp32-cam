@@ -186,6 +186,14 @@ memory 层 PSRAM fb 预算（256K floor，只能收紧）。`GET /api/camera` �
 `res_cap_source`（sensor/board/memory）；列表/POST/AT+CAMRES 全部改走 effective。
 本板满配不变（0-3 四档、source=sensor）。
 
+### 2026-09-04 晚 API parity：free_psram 补齐（契约 §4 违约修复）
+
+本板有 4MB PSRAM 但 /api/status 一直没发 `free_psram`（SPA 的 PSRAM 芯片/
+系统面板行因此缺失）。同轮 n16r8 补齐 wifi_rssi/wifi_channel/chip_temp
+（用户报障"119 无信号显示"的根因）。⚠ **本轮固件（三层上限 + free_psram）
+因弱射频 Web OTA 连续 6 次断流未能上板**——板子下次插 USB（ttyUSB0）时
+烧 `build/mibee_cam.bin` 完成验证（先停该口采集器）。
+
 ## Web UI
 
 > **2026-09-03 起统一为家族 SPA（用户拍板）**：`/` 现服务与三 S3 仓 md5 一致的统一 SPA
