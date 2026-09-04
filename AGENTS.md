@@ -4,6 +4,13 @@ ESP32-CAM firmware (mibee-cam) — OV2640 camera with MJPEG streaming, motion de
 
 **Sister project:** `Mi-Bee-Studio/seeed-esp32s3-cam` — ESP32-S3 variant, same team, same WiFi config patterns but better RF. Reference it when comparing WiFi behavior.
 
+## AT command interface (family contract v1.0, 2026-09-04)
+
+统一契约：`docs/at-command.md`（四仓 md5 一致，地位同 api-contract）。核心集：
+`AT / AT+HELP / AT+GMR / AT+STATUS / AT+WIFI?|= / AT+IP? / AT+CAMRES?|= / AT+CAMQUAL?|= /
+AT+REBOOT / AT+RESTORE`（+能力裁剪项）。红线：**任何读指令不回显密码**；CAMQUAL 边界
+10-63（PIT-021）。本板串口 /dev/ttyUSB0（CH340，开串口即复位，PIT-003）。CAMRES/CAMQUAL 热重配；实现于 main/serial_config.c。
+
 ## STRUCTURE
 
 15 firmware modules (1:1 `.c`/`.h`) + vendored cJSON in `main/`. Web UI in `main/web_ui/` (SPIFFS). Docs in `docs/{en,zh}/`.

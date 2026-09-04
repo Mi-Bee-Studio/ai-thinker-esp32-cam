@@ -9,6 +9,10 @@
 #include "freertos/task.h"
 #include "config_manager.h"
 #include "common.h"
+#include "camera_driver.h"
+#include "wifi_manager.h"
+#include "esp_timer.h"
+#include "esp_app_desc.h"
 
 static const char *TAG = "serial_cfg";
 
@@ -21,6 +25,117 @@ static void process_at_command(char *line)
     /* AT — basic handshake */
     if (strcmp(line, "AT") == 0) {
         printf("OK\r\n");
+        return;
+    }
+
+    /* ── 家族核心指令（docs/at-command.md v1.0，2026-09-04 统一） ── */
+
+    /* AT+WIFI? — query (不回显密码) */
+    if (strcmp(line, "AT+WIFI?") == 0) {
+        bool conn = (wifi_get_state() == WIFI_STATE_STA_CONNECTED);
+        const cam_config_t *c = config_get();
+        printf("State: %s\r\nSSID: %s\r\nIP: %s\r\n",
+               conn ? "connected" : "disconnected",
+               c->wifi_ssid[0] ? c->wifi_ssid : "(not set)",
+               conn ? wifi_get_ip_str() : "-");
+        printf("OK\r\n");
+        return;
+    }
+
+    /* AT+GMR — version/chip/board */
+    if (strcmp(line, "AT+GMR") == 0) {
+        const esp_app_desc_t *app = esp_app_get_description();
+        printf("MiBee Cam (ai-thinker ESP32 + OV2640)\r\n"
+               "Firmware: %s %s\r\nESP-IDF: %s\r\n",
+               app->project_name, app->version, app->idf_ver);
+        printf("OK\r\n");
+        return;
+    }
+
+    /* AT+STATUS — consolidated status */
+    if (strcmp(line, "AT+STATUS") == 0) {
+        const cam_config_t *c = config_get();
+        bool conn = (wifi_get_state() == WIFI_STATE_STA_CONNECTED);
+        static const char *res_names[] = {"VGA", "SVGA", "XGA", "UXGA"};
+        printf("Board:      AI-Thinker ESP32-CAM (OV2640)\r\n"
+               "Uptime:     %lld s\r\n"
+               "Heap:       %lu bytes\r\n"
+               "WiFi:       %s\r\n"
+               "SSID:       %s\r\n"
+               "IP:         %s\r\n"
+               "Camera:     res=%s quality=%u [%d-%d]\r\n",
+               (long long)(esp_timer_get_time() / 1000000),
+               (unsigned long)esp_get_free_heap_size(),
+               conn ? "STA connected" : "disconnected",
+               c->wifi_ssid[0] ? c->wifi_ssid : "(none)",
+               conn ? wifi_get_ip_str() : "-",
+               (c->cam_framesize < 4) ? res_names[c->cam_framesize] : "?",
+               c->cam_quality, CAMERA_QUALITY_MIN, CAMERA_QUALITY_MAX);
+        printf("OK\r\n");
+        return;
+    }
+
+    /* AT+CAMRES? / AT+CAMRES=n (0-3，热重配 — 与 web 同路径) */
+    if (strcmp(line, "AT+CAMRES?") == 0 || strcmp(line, "AT+CAMRES") == 0) {
+        static const char *res_names[] = {"VGA", "SVGA", "XGA", "UXGA"};
+        const cam_config_t *c = config_get();
+        printf("Resolution: %s  supported: 0-3 (VGA/SVGA/XGA/UXGA)\r\n",
+               (c->cam_framesize < 4) ? res_names[c->cam_framesize] : "?");
+        printf("OK\r\n");
+        return;
+    }
+    if (strncmp(line, "AT+CAMRES=", 10) == 0) {
+        int n = atoi(line + 10);
+        if (n < 0 || n >= CAMERA_RES_MAX) {
+            printf("ERROR: resolution must be 0-3\r\n");
+            return;
+        }
+        config_set_resolution((camera_resolution_t)n);
+        const cam_config_t *now = config_get();
+        esp_err_t ret = camera_apply_settings(now->cam_framesize, now->fps, now->cam_quality);
+        if (ret != ESP_OK) {
+            printf("ERROR: camera apply failed (%s) — saved, applies next boot\r\n",
+                   esp_err_to_name(ret));
+            return;
+        }
+        printf("OK — resolution set to %d (applied)\r\n", n);
+        return;
+    }
+
+    /* AT+CAMQUAL? / AT+CAMQUAL=n (10-63，热重配) */
+    if (strcmp(line, "AT+CAMQUAL?") == 0 || strcmp(line, "AT+CAMQUAL") == 0) {
+        const cam_config_t *c = config_get();
+        printf("Quality: %u  range: [%d-%d]\r\n",
+               c->cam_quality, CAMERA_QUALITY_MIN, CAMERA_QUALITY_MAX);
+        printf("OK\r\n");
+        return;
+    }
+    if (strncmp(line, "AT+CAMQUAL=", 11) == 0) {
+        int n = atoi(line + 11);
+        if (n < CAMERA_QUALITY_MIN || n > CAMERA_QUALITY_MAX) {
+            printf("ERROR: quality must be %d-%d\r\n",
+                   CAMERA_QUALITY_MIN, CAMERA_QUALITY_MAX);
+            return;
+        }
+        config_set_jpeg_quality((uint8_t)n);
+        const cam_config_t *now = config_get();
+        esp_err_t ret = camera_apply_settings(now->cam_framesize, now->fps, now->cam_quality);
+        if (ret != ESP_OK) {
+            printf("ERROR: camera apply failed (%s) — saved, applies next boot\r\n",
+                   esp_err_to_name(ret));
+            return;
+        }
+        printf("OK — quality set to %d (applied)\r\n", n);
+        return;
+    }
+
+    /* AT+RESTORE — factory reset (契约核心名；AT+RESET 为历史别名) */
+    if (strcmp(line, "AT+RESTORE") == 0) {
+        printf("OK — factory reset, rebooting...\r\n");
+        fflush(stdout);
+        config_reset();
+        vTaskDelay(pdMS_TO_TICKS(500));
+        esp_restart();
         return;
     }
 
@@ -104,17 +219,31 @@ static void process_at_command(char *line)
         return;
     }
 
+    /* AT+IP? */
+    if (strcmp(line, "AT+IP?") == 0 || strcmp(line, "AT+IP") == 0) {
+        bool conn = (wifi_get_state() == WIFI_STATE_STA_CONNECTED);
+        printf("IP: %s\r\n", conn ? wifi_get_ip_str() : "-");
+        printf("OK\r\n");
+        return;
+    }
+
     /* AT+HELP */
     if (strcmp(line, "AT+HELP") == 0) {
-        printf("\r\nCommands:\r\n"
+        printf("\r\nCommands (family contract v1.0):\r\n"
                "  AT                       handshake\r\n"
-               "  AT+WIFI=ssid,password    set WiFi, save, reboot\r\n"
-               "  AT+DEVICE=name           set device name\r\n"
-               "  AT+TZ=CST-8              set timezone\r\n"
-               "  AT+CONFIG                print config JSON\r\n"
-               "  AT+RESET                 factory reset + reboot\r\n"
-               "  AT+REBOOT                reboot\r\n"
                "  AT+HELP                  this message\r\n"
+               "  AT+GMR                   firmware/board version\r\n"
+               "  AT+STATUS                consolidated status\r\n"
+               "  AT+WIFI?                 WiFi state (no password)\r\n"
+               "  AT+WIFI=ssid,password    set WiFi, save, reboot\r\n"
+               "  AT+IP?                   IP address\r\n"
+               "  AT+CAMRES? | AT+CAMRES=n resolution 0-3 (hot)\r\n"
+               "  AT+CAMQUAL? | AT+CAMQUAL=n quality 10-63 (hot)\r\n"
+               "  AT+REBOOT                reboot\r\n"
+               "  AT+RESTORE | AT+RESET    factory reset + reboot\r\n"
+               "  AT+DEVICE=name           set device name (legacy)\r\n"
+               "  AT+TZ=CST-8              set timezone (legacy)\r\n"
+               "  AT+CONFIG                print config JSON (legacy)\r\n"
                "OK\r\n");
         return;
     }
