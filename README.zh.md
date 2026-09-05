@@ -110,7 +110,7 @@ idf.py -p /dev/ttyUSB0 flash monitor
 
 首次启动时，设备进入 AP 模式：
 
-1. 连接 WiFi 网络 **MiBeeCam**（密码：`12345678`）
+1. 连接 WiFi 网络 **MiBeeCam**（密码：`mibeecam2026`）
 2. 在浏览器中打开 **http://192.168.4.1**
 3. 进入配置页面，输入您的 WiFi SSID 和密码
 4. 保存配置 — 设备重启并以 STA 模式连接到您的网络

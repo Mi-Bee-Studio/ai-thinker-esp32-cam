@@ -104,7 +104,7 @@ idf.py -p /dev/ttyUSB0 flash monitor
 
 ### First-time Configuration
 
-1. **Connect to AP Mode**: On first boot, the device creates WiFi network **MiBeeCam** (password: `12345678`)
+1. **Connect to AP Mode**: On first boot, the device creates WiFi network **MiBeeCam** (password: `mibeecam2026`)
 2. **Access Web Interface**: Open `http://192.168.4.1` in your browser
 3. **Configure WiFi**: Enter your WiFi SSID and password in the settings page
 4. **Apply Changes**: Save configuration — device reboots and connects in STA mode
@@ -224,7 +224,7 @@ All settings are stored in NVS with version 9 schema and accessible via web UI (
   "wifi_pass_2": "backup_password",
   "allow_ap_fallback": true,
   "ap_ssid": "MiBeeCam",
-  "ap_pass": "12345678"
+  "ap_pass": "mibeecam2026"
 }
 ```
 

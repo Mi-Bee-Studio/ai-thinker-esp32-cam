@@ -115,7 +115,7 @@ I (2345) main: System startup complete
 
 When the device boots for the first time, it will enter AP mode because no WiFi credentials are stored:
 
-1. **Connect to WiFi**: Connect to the network **MiBeeCam** (password: `12345678`)
+1. **Connect to WiFi**: Connect to the network **MiBeeCam** (password: `mibeecam2026`)
 2. **Access Web Interface**: Open your web browser and navigate to **http://192.168.4.1**
 3. **Configure WiFi**: 
    - Go to the "Configuration" page

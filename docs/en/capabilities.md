@@ -47,7 +47,7 @@ The firmware is a **pure JPEG capture + MJPEG streaming** ESP32-CAM firmware. Ta
 | Feature | Description |
 |---------|-------------|
 | **WiFi STA Mode** | Connect with stored SSID/password, auto-reconnect on disconnect |
-**WiFi AP Mode** | Fallback for first boot, SSID `MiBeeCam`, password `12345678` |
+**WiFi AP Mode** | Fallback for first boot, SSID `MiBeeCam`, password `mibeecam2026` |
 **WiFi AP Fallback** | Connect to backup SSID if primary fails, configurable |
 | **TX Power Adjustable** | 0-80 (0.25dBm units, 80=20dBm) |
 | **Power Save Mode** | `WIFI_PS_MIN_MODEM` |

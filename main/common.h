@@ -16,7 +16,7 @@
 #define CONFIG_DEFAULT_WEB_PASSWORD CONFIG_MIBEE_CAM_DEFAULT_WEB_PASSWORD
 #define CONFIG_DEFAULT_DEVICE_NAME  "MiBeeCam"
 #define CONFIG_DEFAULT_AP_SSID      "MiBeeCam"
-#define CONFIG_DEFAULT_AP_PASS      "12345678"
+#define CONFIG_DEFAULT_AP_PASS      "mibeecam2026"
 
 // Camera resolutions
 typedef enum {

@@ -17,7 +17,7 @@ This guide explains how to use the MiBee Cam firmware, including configuration, 
 3. Access: `http://<device-ip>/`
 
 #### AP Mode (First-time Setup)
-1. Connect to WiFi network: **MiBeeCam** (password: `12345678`)
+1. Connect to WiFi network: **MiBeeCam** (password: `mibeecam2026`)
 2. Access: `http://192.168.4.1/`
 
 ### Web Interface Pages

@@ -49,7 +49,7 @@
 | 功能 | 说明 |
 |------|------|
 | **WiFi STA 模式** | 配置 SSID/密码后自动连接，支持断线重连 |
-**WiFi AP 模式** | 首次未配网时进入，SSID `MiBeeCam`，密码 `12345678` |
+**WiFi AP 模式** | 首次未配网时进入，SSID `MiBeeCam`，密码 `mibeecam2026` |
 | **WiFi STA 模式备选** | 配置第二个 WiFi 网络（仅 STA 连接失败时回退） | `wifi_ssid_2`, `wifi_pass_2`, `allow_ap_fallback` |
 | **TX 功率可调** | 0-80（0.25dBm 单位，80=20dBm） |
 | **省电模式** | `WIFI_PS_MIN_MODEM` |
