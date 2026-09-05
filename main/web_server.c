@@ -59,6 +59,7 @@
 #include <sys/socket.h>
 #include <netinet/tcp.h>
 #include <time.h>
+#include <sys/time.h>
 #include <sys/stat.h>
 #include <errno.h>
 #include <unistd.h>
@@ -1270,7 +1271,7 @@ static esp_err_t handler_api_capabilities(httpd_req_t *req)
 
     cJSON *data = cJSON_CreateObject();
     /* 契约 v1.0：12 个布尔能力位 + api_version/wifi_scan（见 docs/api-contract.md） */
-    cJSON_AddStringToObject(data, "api_version", "1.2");
+    cJSON_AddStringToObject(data, "api_version", "1.3");
     cJSON_AddBoolToObject(data, "wifi_scan", true);
     /* ai-thinker capabilities matrix */
     cJSON_AddBoolToObject(data, "ai", false);
@@ -1440,32 +1441,56 @@ static esp_err_t handler_api_led_get(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------ */
-/*  GET /api/ai/status  - Empty AI result shape (no AI on this board)  */
-/*                                                                    */
-/* The SPA polls /api/ai/status every 500ms unconditionally, even when */
-/* capabilities.ai=false hides the AI tab. Without this handler every  */
-/* poll returned a 404 with a non-JSON body, which (a) threw inside    */
-/* app.js's api() helper and (b) kept httpd busy serving error         */
-/* responses. Returning a valid empty shape lets pollAI() no-op       */
-/* silently.                                                          */
+/*  POST /api/time — 手动设置系统时间（契约 v1.2 §2 核心端点，v1.3 补齐） */
 /* ------------------------------------------------------------------ */
 
-static esp_err_t handler_api_ai_status(httpd_req_t *req)
+static esp_err_t handler_api_time(httpd_req_t *req)
 {
-    set_cors_headers(req);
+    esp_err_t auth_ret = require_auth(req, "/api/time");
+    if (auth_ret != ESP_OK) {
+        return auth_ret;
+    }
 
-    cJSON *data = cJSON_CreateObject();
-    cJSON *face = cJSON_CreateObject();
-    cJSON_AddItemToObject(face, "boxes", cJSON_CreateArray());
-    cJSON_AddItemToObject(data, "face", face);
-    cJSON *motion = cJSON_CreateObject();
-    cJSON_AddNumberToObject(motion, "score", 0);
-    cJSON_AddBoolToObject(motion, "detected", false);
-    cJSON_AddItemToObject(data, "motion", motion);
-    cJSON *qr = cJSON_CreateObject();
-    cJSON_AddStringToObject(qr, "text", "");
-    cJSON_AddItemToObject(data, "qr", qr);
-    return send_json_ok(req, data);
+    char *body = read_body(req, 256);
+    if (!body) {
+        return send_json_error(req, "Empty body", 400);
+    }
+    cJSON *json = cJSON_Parse(body);
+    free(body);
+    if (!json) {
+        return send_json_error(req, "Invalid JSON", 400);
+    }
+
+    const cJSON *jy  = cJSON_GetObjectItem(json, "year");
+    const cJSON *jmo = cJSON_GetObjectItem(json, "month");
+    const cJSON *jd  = cJSON_GetObjectItem(json, "day");
+    const cJSON *jh  = cJSON_GetObjectItem(json, "hour");
+    const cJSON *jmi = cJSON_GetObjectItem(json, "min");
+    const cJSON *js  = cJSON_GetObjectItem(json, "sec");
+
+    if (!cJSON_IsNumber(jy) || !cJSON_IsNumber(jmo) || !cJSON_IsNumber(jd) ||
+        !cJSON_IsNumber(jh) || !cJSON_IsNumber(jmi) || !cJSON_IsNumber(js)) {
+        cJSON_Delete(json);
+        return send_json_error(req, "Missing time fields", 400);
+    }
+
+    struct tm tm_now = {
+        .tm_year = jy->valueint - 1900,
+        .tm_mon  = jmo->valueint - 1,
+        .tm_mday = jd->valueint,
+        .tm_hour = jh->valueint,
+        .tm_min  = jmi->valueint,
+        .tm_sec  = js->valueint,
+    };
+    time_t epoch = mktime(&tm_now);
+    cJSON_Delete(json);
+
+    if (epoch < (time_t)1577836800) {  /* < 2020-01-01: 非法日期 */
+        return send_json_error(req, "Invalid date", 400);
+    }
+    struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
+    settimeofday(&tv, NULL);
+    return send_json_ok(req, NULL);
 }
 
 
@@ -1768,6 +1793,8 @@ static const uri_entry_t s_uris[] = {
     { "/api/auth",     HTTP_GET,    handler_api_auth         },
     { "/api/scan",     HTTP_GET,    handler_api_scan         },
     { "/api/capabilities", HTTP_GET, handler_api_capabilities  },
+    /* 契约 v1.3：补齐 §2 核心端点 POST /api/time（此前缺席，家族唯一缺口） */
+    { "/api/time",     HTTP_POST,   handler_api_time         },
     /* 契约 v1.1：timelapse 独立端点已移除 — 启停走 POST /api/config 的
      * timelapse_enabled，运行态并入 GET /api/status */
     { "/api/format",   HTTP_POST,   handler_api_format       },
@@ -1778,7 +1805,10 @@ static const uri_entry_t s_uris[] = {
     { "/api/led",         HTTP_GET,    handler_api_led_get       },
     { "/api/camera",      HTTP_GET,    handler_api_camera_get    },
     { "/api/camera",      HTTP_POST,   handler_api_camera_post   },
-    { "/api/ai/status",   HTTP_GET,    handler_api_ai_status     },
+    /* 契约 v1.3：ai/status 桩移除（SPA 轮询本就 Caps.ai 门控，见 app.js
+     * loadCapsRetry——桩是历史遗留，违反 "false ⇒ 不注册" 红线）；
+     * OTA URL 触发补齐（与 n16r8/seeed 语义一致） */
+    { "/api/ota",      HTTP_POST,   handler_api_ota_url      },
     { "/api/ota/info",   HTTP_GET,    handler_api_ota_info     },
     { "/api/ota/upload", HTTP_POST,   handler_api_ota_upload   },
     { "/api/ota/spiffs", HTTP_POST,   handler_api_spiffs_upload },

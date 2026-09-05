@@ -38,6 +38,7 @@ idf_component_register(
         fatfs
         sdmmc
         esp_http_client
+        esp_https_ota
         tcp_transport
         mbedtls
         esp_netif

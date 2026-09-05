@@ -193,21 +193,21 @@ static void sta_services_task(void *arg)
     }
 
 
-    /* ── Step 14/16: Video recorder init + cleanup + segment callback ── */
+    /* ── Step 14.5/19: Video recorder init + cleanup + segment callback ── */
     if (camera_is_initialized() && storage_is_available()) {
         esp_err_t ret_rec = recorder_init();
         if (ret_rec == ESP_OK) {
             recorder_cleanup_incomplete();
             recorder_set_segment_cb(on_segment_complete);
-            ESP_LOGI(TAG, "=== Step 14/16: Video recorder initialized ===");
+            ESP_LOGI(TAG, "=== Step 14.5/19: Video recorder initialized ===");
         } else {
             ESP_LOGW(TAG, "Video recorder init failed: %s", esp_err_to_name(ret_rec));
         }
     } else {
-        ESP_LOGW(TAG, "=== Step 14/16: Video recorder skipped (no camera or SD) ===");
+        ESP_LOGW(TAG, "=== Step 14.5/19: Video recorder skipped (no camera or SD) ===");
     }
 
-    /* ── Step 15/16: Auto-record ── */
+    /* ── Step 14.6/19: Auto-record ── */
 
 
 

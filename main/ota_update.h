@@ -41,4 +41,15 @@ esp_err_t handler_api_ota_upload(httpd_req_t *req);
  */
 esp_err_t handler_api_spiffs_upload(httpd_req_t *req);
 
+/**
+ * @brief POST /api/ota handler (URL-triggered OTA, contract v1.3)
+ *
+ * Accepts {"url":"http://..."} and pulls the firmware image over HTTP,
+ * writes it to the inactive OTA partition and reboots. Only http:// URLs
+ * (LAN distribution). Same semantics as n16r8/seeed.
+ *
+ * Requires X-Password header for authentication.
+ */
+esp_err_t handler_api_ota_url(httpd_req_t *req);
+
 #endif /* OTA_UPDATE_H */
