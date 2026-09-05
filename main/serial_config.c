@@ -94,7 +94,7 @@ static void process_at_command(char *line)
         }
         config_set_resolution((camera_resolution_t)n);
         const cam_config_t *now = config_get();
-        esp_err_t ret = camera_apply_settings(now->cam_framesize, now->fps, now->cam_quality);
+        esp_err_t ret = camera_apply_settings(now->cam_framesize, now->cam_fps, now->cam_quality);
         if (ret != ESP_OK) {
             printf("ERROR: camera apply failed (%s) — saved, applies next boot\r\n",
                    esp_err_to_name(ret));
@@ -121,7 +121,7 @@ static void process_at_command(char *line)
         }
         config_set_jpeg_quality((uint8_t)n);
         const cam_config_t *now = config_get();
-        esp_err_t ret = camera_apply_settings(now->cam_framesize, now->fps, now->cam_quality);
+        esp_err_t ret = camera_apply_settings(now->cam_framesize, now->cam_fps, now->cam_quality);
         if (ret != ESP_OK) {
             printf("ERROR: camera apply failed (%s) — saved, applies next boot\r\n",
                    esp_err_to_name(ret));
@@ -187,30 +187,24 @@ static void process_at_command(char *line)
         return;
     }
 
-    /* AT+CONFIG — print current config */
+    /* AT+CONFIG — print current config（契约 v1.1 别名，归一 AT+STATUS；
+     * 字段名随配置契约 v1.0 对齐） */
     if (strcmp(line, "AT+CONFIG") == 0) {
         const cam_config_t *c = config_get();
         printf("{\"device\":\"%s\",\"ssid\":\"%s\",\"pass_set\":%s,"
-               "\"resolution\":%d,\"fps\":%d,\"quality\":%d,"
-               "\"motion_threshold\":%d,\"record_mode\":%d,"
-               "\"timezone\":\"%s\",\"version\":%lu}"
+               "\"resolution\":%d,\"cam_fps\":%d,\"quality\":%d,"
+               "\"motion_sensitivity\":%d,\"record_mode\":%d,"
+               "\"timezone\":\"%s\",\"schema_version\":%d}"
                "\r\nOK\r\n",
                c->device_name, c->wifi_ssid, c->wifi_pass[0] ? "true" : "false",
-               c->cam_framesize, c->fps, c->cam_quality,
-               c->motion_threshold, c->record_mode,
-               c->timezone, (unsigned long)c->version);
+               c->cam_framesize, c->cam_fps, c->cam_quality,
+               c->motion_sensitivity, c->record_mode,
+               c->timezone, CONFIG_SCHEMA_VERSION);
         return;
     }
 
-    /* AT+RESET — factory reset */
-    if (strcmp(line, "AT+RESET") == 0) {
-        printf("OK — factory reset, rebooting...\r\n");
-        fflush(stdout);
-        config_reset();
-        vTaskDelay(pdMS_TO_TICKS(500));
-        esp_restart();
-        return;
-    }
+    /* AT+RESET 已删除（契约 v1.1：未登记且曾映射为恢复出厂，跨板反射危险）。
+     * 恢复出厂统一走 AT+RESTORE。 */
 
     /* AT+REBOOT */
     if (strcmp(line, "AT+REBOOT") == 0) {

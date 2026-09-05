@@ -225,9 +225,13 @@ static void timelapse_task(void *arg)
         frame_broker_free(fb_comp);
         free(samples);
 
+        /* 家族超集模型（契约 §3.2）：sensitivity 越大越灵敏 → 像素变化率
+         * 触发阈值 internal = 100 - sensitivity（默认 70 → 30，同旧默认） */
+        uint8_t internal_thresh =
+            (uint8_t)(100 - (cfg->motion_sensitivity > 100 ? 100 : cfg->motion_sensitivity));
         uint8_t effective_thresh = dark_scene
-            ? (cfg->motion_threshold > 20 ? cfg->motion_threshold / 4 : 5)
-            : cfg->motion_threshold;
+            ? (internal_thresh > 20 ? internal_thresh / 4 : 5)
+            : internal_thresh;
 
         bool motion = false;
         if (total > 0) {

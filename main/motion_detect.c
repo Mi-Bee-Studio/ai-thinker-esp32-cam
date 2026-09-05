@@ -51,6 +51,8 @@ static TaskHandle_t s_motion_task_handle = NULL;
 static volatile bool s_running = false;
 static bool s_in_cooldown = false;
 static int64_t s_cooldown_start_us = 0;
+static volatile bool s_motion_recent = false;  /* 最近分析周期持续检出（契约 §3.2 active 语义） */
+static volatile bool s_cfg_dirty = false;      /* 灵敏度等参数变更 → 重建管线 */
 static uint8_t s_brightness_pct = 50;
 static bool s_scene_dark = false;
 static uint32_t s_unknown_seq = 0;
@@ -84,9 +86,12 @@ static bool is_in_cooldown(void)
 
     const cam_config_t *cfg = config_get();
     int64_t elapsed_us = esp_timer_get_time() - s_cooldown_start_us;
-    int64_t cooldown_us = (int64_t)cfg->motion_cooldown * 1000000LL;
+    /* 家族超集模型：持续活动期以 active_interval_s 为再触发间隔；
+     * 活动停止（s_motion_recent=false）后回退 cooldown_s。 */
+    int64_t limit_us = (int64_t)(s_motion_recent ? cfg->motion_active_interval_s
+                                                 : cfg->motion_cooldown_s) * 1000000LL;
 
-    if (elapsed_us >= cooldown_us) {
+    if (elapsed_us >= limit_us) {
         s_in_cooldown = false;
         return false;
     }
@@ -98,8 +103,8 @@ static bool is_in_cooldown(void)
 static bool analysis_alloc(int gw, int gh)
 {
     size_t buf_sz = lm_motion_buf_size(gw, gh);
-    if (s_lm_buf && gw == s_grid_w && gh == s_grid_h && buf_sz <= s_lm_buf_size) {
-        return true;   /* same geometry, keep pipeline state */
+    if (s_lm_buf && !s_cfg_dirty && gw == s_grid_w && gh == s_grid_h && buf_sz <= s_lm_buf_size) {
+        return true;   /* same geometry & config, keep pipeline state */
     }
 
     uint8_t *lmbuf = heap_caps_malloc(buf_sz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -113,10 +118,10 @@ static bool analysis_alloc(int gw, int gh)
 
     lm_config_t lmcfg;
     lm_motion_defaults(&lmcfg);
-    /* Map the existing user-facing motion_threshold (percent, default 30)
-     * onto the pipeline's energy trigger: 30→e_hi 18 (sim-validated point);
-     * higher user threshold = less sensitive. */
-    lmcfg.e_hi = 12 + config_get()->motion_threshold / 5;
+    /* 家族超集模型（契约 §3.2）：motion_sensitivity 0-100（越大越灵敏）映射到
+     * 管线能量触发阈值：sensitivity 70（默认）→ 内部 threshold 30 → e_hi 18
+     * （sim 验证点），与旧版完全等价：internal_thr = 100 - sensitivity。 */
+    lmcfg.e_hi = 12 + (100 - config_get()->motion_sensitivity) / 5;
     lmcfg.e_lo = lmcfg.e_hi / 2 + 1;
     /* Blob bbox gate must scale with the grid: a close subject fills the
      * frame (bbox ≈ grid size) and a fixed max_side=70 rejected it —
@@ -130,6 +135,7 @@ static bool analysis_alloc(int gw, int gh)
     }
     s_lm_inited = true;
     s_grid_w = gw; s_grid_h = gh;
+    s_cfg_dirty = false;
     ESP_LOGI(TAG, "analysis grid %dx%d (e_hi=%d e_lo=%d)",
              gw, gh, lmcfg.e_hi, lmcfg.e_lo);
     return true;
@@ -254,7 +260,8 @@ static void handle_motion_event(bool dark_scene)
 
     s_in_cooldown = true;
     s_cooldown_start_us = esp_timer_get_time();
-    ESP_LOGI(TAG, "Entering cooldown (%u seconds)", config_get()->motion_cooldown);
+    ESP_LOGI(TAG, "Entering rate-limit (cooldown=%us, active=%us)",
+             config_get()->motion_cooldown_s, config_get()->motion_active_interval_s);
 }
 
 /**
@@ -335,7 +342,10 @@ static void motion_detection_task(void *arg)
                      r.energy, r.energy_smooth, r.blobs, r.fg_filt_pct,
                      r.sigma_x100 / 100, r.sigma_x100 % 100, r.marks, s_decode_us / 1000);
         }
-        if (trig && !is_in_cooldown()) {
+        /* 活动状态跟踪（契约 §3.2 active 语义）：本周期有触发即视为持续活动 */
+        s_motion_recent = trig;
+        /* motion_enabled=0 → 检测照跑（诊断/状态上报），只是不落盘不联动 */
+        if (trig && config_get()->motion_enabled && !is_in_cooldown()) {
             handle_motion_event(s_scene_dark);
         }
     }
@@ -383,9 +393,16 @@ esp_err_t motion_detect_start(void)
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "Motion detection started (ΣΔ pipeline, threshold=%u, cooldown=%us)",
-             config_get()->motion_threshold, config_get()->motion_cooldown);
+    ESP_LOGI(TAG, "Motion detection started (ΣΔ pipeline, sensitivity=%u, cooldown=%us, active=%us)",
+             config_get()->motion_sensitivity, config_get()->motion_cooldown_s,
+             config_get()->motion_active_interval_s);
     return ESP_OK;
+}
+
+void motion_detect_apply_config(void)
+{
+    /* 灵敏度/阈值参数变更 → 下一分析周期重建管线（几何不变也重建） */
+    s_cfg_dirty = true;
 }
 
 esp_err_t motion_detect_stop(void)

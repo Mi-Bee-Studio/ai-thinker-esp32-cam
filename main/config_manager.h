@@ -21,6 +21,11 @@ esp_err_t config_init(void);
 const cam_config_t *config_get(void);
 
 /**
+ * @brief Get a mutex-protected snapshot copy of current config（契约 §1 统一访问层）
+ */
+void config_get_copy(cam_config_t *out);
+
+/**
  * @brief Save current config to NVS
  * @return ESP_OK on success
  */
@@ -65,18 +70,22 @@ esp_err_t config_set_resolution(camera_resolution_t res);
 esp_err_t config_set_web_password(const char *pass);
 
 /**
- * @brief Set motion detection settings, save immediately
+ * @brief Set motion detection settings (家族超集模型，契约 §3.2), save immediately
+ * @param enabled 1=on
+ * @param sensitivity 0-100, higher = more sensitive（旧 threshold 迁移: 100-t）
+ * @param cooldown_s 1-300, min seconds between triggers
+ * @param active_interval_s 1-30, re-trigger interval while motion is continuous
  */
-esp_err_t config_set_motion(uint8_t threshold, uint8_t cooldown);
+esp_err_t config_set_motion(uint8_t enabled, uint8_t sensitivity, uint16_t cooldown_s, uint8_t active_interval_s);
 /**
  * @brief Set device name, save immediately
  */
 esp_err_t config_set_device_name(const char *name);
 
 /**
- * @brief Set FPS, save immediately
+ * @brief Set camera FPS, save immediately
  */
-esp_err_t config_set_fps(uint8_t fps);
+esp_err_t config_set_cam_fps(uint8_t fps);
 
 /**
  * @brief Set JPEG quality, save immediately
@@ -99,12 +108,16 @@ esp_err_t config_set_vflip(uint8_t vflip);
  * @param power_save 0=WIFI_PS_NONE, 1=WIFI_PS_MIN_MODEM
  */
 esp_err_t config_set_wifi_power(uint8_t tx_power, uint8_t power_save);
-esp_err_t config_set_motion_saved_threshold(uint8_t threshold);
 
 /**
- * @brief Set flash threshold, save immediately
+ * @brief Set flash threshold (板级扩展), save immediately
  */
 esp_err_t config_set_flash_threshold(uint8_t threshold);
+
+/**
+ * @brief Set ONVIF enable (契约核心字段，重启生效), save immediately
+ */
+esp_err_t config_set_onvif_enable(uint8_t enable);
 
 esp_err_t config_set_timelapse(uint8_t enabled, uint16_t interval_s, uint8_t burst_count);
 esp_err_t config_set_timelapse_dynamic(uint8_t mode, uint16_t min_interval, uint16_t max_interval, uint8_t decay_factor, uint16_t decay_period);
@@ -148,15 +161,16 @@ esp_err_t config_set_xclk_freq(uint8_t mhz);
 
 /**
  * @brief Set WiFi RSSI-based roaming parameters, save immediately
- * @param rssi_threshold Scan for better AP when current RSSI below this (default -75)
- * @param rssi_gap Min RSSI difference (dBm) to trigger switch (default 10)
+ * @param rssi Scan for better AP when current RSSI below this (0=off, default -65)
+ * @param gap_s Min RSSI difference (dBm) to trigger switch (default 10)
  */
-esp_err_t config_set_wifi_roam(int8_t rssi_threshold, uint8_t rssi_gap);
+esp_err_t config_set_wifi_roam(int8_t rssi, uint8_t gap_s);
 
 /**
- * @brief Load WiFi config from /sdcard/config.txt (key=value format)
- * Parses ssid and password, updates NVS if changed.
- * The config file is preserved on SD card for persistent use.
+ * @brief Load WiFi credentials from SD provisioning file（契约 §9）
+ * 家族格式 /sdcard/config/wifi.txt（KEY=VALUE）；legacy /sdcard/config.txt
+ * （wifi.ssid= 风格）兼容读取一个版本。仅在 NVS 无凭据时生效；首行
+ * `one_time` 标记在成功导入后删除文件。
  * @return ESP_OK if config was updated, ESP_ERR_NOT_FOUND if no file/unchanged
  */
 esp_err_t config_load_from_sd(void);

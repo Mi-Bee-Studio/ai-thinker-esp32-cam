@@ -84,7 +84,7 @@ static void sta_services_task(void *arg)
         for (int attempt = 1; attempt <= 3; attempt++) {
             esp_err_t cam_ret = camera_init(
                 (camera_resolution_t)cam_cfg->cam_framesize,
-                cam_cfg->fps, cam_cfg->cam_quality);
+                cam_cfg->cam_fps, cam_cfg->cam_quality);
             if (cam_ret == ESP_OK) {
                 ESP_LOGI(TAG, "Camera initialized after WiFi connect (attempt %d)", attempt);
                 break;
@@ -158,18 +158,28 @@ static void sta_services_task(void *arg)
     mjpeg_stream_server_start(81);
     ESP_LOGI(TAG, "MJPEG streamer started on port 81");
 
-    /* Start ONVIF WS-Discovery (once) — after web server so SOAP handlers are registered */
-    onvif_discovery_init();
-    ESP_LOGI(TAG, "ONVIF discovery started");
+    /* Start ONVIF WS-Discovery (once) — after web server so SOAP handlers are registered.
+     * 契约核心字段 onvif_enable（本板默认 1；关闭时不启动发现，SOAP 处理器
+     * 在 web_server_start 内同受门控） */
+    if (config_get()->onvif_enable) {
+        onvif_discovery_init();
+        ESP_LOGI(TAG, "ONVIF discovery started");
+    } else {
+        ESP_LOGI(TAG, "ONVIF disabled in config (onvif_enable=0)");
+    }
 
-    /* Start motion detection (once) */
+    /* Start motion detection (once) — 契约 §3.2：motion_enabled=0 不启动任务 */
     if (!s_motion_started) {
-        esp_err_t ret = motion_detect_start();
-        if (ret == ESP_OK) {
-            s_motion_started = true;
-            ESP_LOGI(TAG, "Motion detection started");
+        if (config_get()->motion_enabled) {
+            esp_err_t ret = motion_detect_start();
+            if (ret == ESP_OK) {
+                s_motion_started = true;
+                ESP_LOGI(TAG, "Motion detection started");
+            } else {
+                ESP_LOGE(TAG, "Motion detection start failed: %s", esp_err_to_name(ret));
+            }
         } else {
-            ESP_LOGE(TAG, "Motion detection start failed: %s", esp_err_to_name(ret));
+            ESP_LOGI(TAG, "Motion detection disabled in config (motion_enabled=0)");
         }
     }
 
@@ -398,7 +408,7 @@ void app_main(void)
             const cam_config_t *cam_cfg = config_get();
             esp_err_t cam_ret = camera_init(
                 (camera_resolution_t)cam_cfg->cam_framesize,
-                cam_cfg->fps, cam_cfg->cam_quality);
+                cam_cfg->cam_fps, cam_cfg->cam_quality);
             if (cam_ret == ESP_OK) {
                 ESP_LOGI(TAG, "Camera initialized (AP mode)");
                 esp_err_t fb_ret = frame_broker_init();

@@ -202,6 +202,20 @@ static esp_err_t send_unauthorized(httpd_req_t *req)
 /*  GET /api/status                                                    */
 /* ------------------------------------------------------------------ */
 
+/* Family scale framesize_t → short label (Contract v1.3 §5) */
+static const char *framesize_label(int val)
+{
+    switch (val) {
+        case 10: return "VGA";
+        case 11: return "SVGA";
+        case 12: return "XGA";
+        case 13: return "HD";
+        case 14: return "SXGA";
+        case 15: return "UXGA";
+        default: return "Unknown";
+    }
+}
+
 static esp_err_t handler_api_status(httpd_req_t *req)
 {
     const health_metrics_t *m = health_monitor_get_metrics();
@@ -220,10 +234,7 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddBoolToObject(data, "camera_ok", camera_is_initialized());
     cJSON_AddStringToObject(data, "camera", camera_get_sensor_name());
 
-    /* Resolution as display string */
-    static const char *res_names[] = {"VGA", "SVGA", "XGA", "UXGA"};
-    cJSON_AddStringToObject(data, "resolution",
-        cfg->cam_framesize < CAMERA_RES_MAX ? res_names[cfg->cam_framesize] : "Unknown");
+    cJSON_AddStringToObject(data, "resolution", framesize_label(cfg->cam_framesize));
 
     /* WiFi — 契约 v1.0: wifi_state 小写枚举（中文展示由前端翻译） */
     const char *wifi_state_str;
@@ -338,12 +349,15 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON_AddStringToObject(data, "wifi_ssid_2", cfg->wifi_ssid_2);
     cJSON_AddNumberToObject(data, "allow_ap_fallback", (double)cfg->allow_ap_fallback);
     cJSON_AddNumberToObject(data, "cam_framesize", (double)cfg->cam_framesize);
-    cJSON_AddNumberToObject(data, "fps", (double)cfg->fps);
+    cJSON_AddNumberToObject(data, "cam_fps", (double)cfg->cam_fps);
     cJSON_AddNumberToObject(data, "cam_quality", (double)cfg->cam_quality);
     cJSON_AddNumberToObject(data, "xclk_freq_mhz", (double)cfg->xclk_freq_mhz);
     cJSON_AddStringToObject(data, "timezone", cfg->timezone);
-    cJSON_AddNumberToObject(data, "motion_threshold", (double)cfg->motion_threshold);
-    cJSON_AddNumberToObject(data, "motion_cooldown", (double)cfg->motion_cooldown);
+    /* 家族 motion 超集（契约 §3.2） */
+    cJSON_AddNumberToObject(data, "motion_enabled", (double)cfg->motion_enabled);
+    cJSON_AddNumberToObject(data, "motion_sensitivity", (double)cfg->motion_sensitivity);
+    cJSON_AddNumberToObject(data, "motion_cooldown_s", (double)cfg->motion_cooldown_s);
+    cJSON_AddNumberToObject(data, "motion_active_interval_s", (double)cfg->motion_active_interval_s);
     cJSON_AddNumberToObject(data, "cam_vflip", (double)cfg->cam_vflip);
     cJSON_AddNumberToObject(data, "wifi_tx_power", (double)cfg->wifi_tx_power);
     cJSON_AddNumberToObject(data, "wifi_power_save", (double)cfg->wifi_power_save);
@@ -359,7 +373,7 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
 
     /* Recording settings */
     cJSON_AddNumberToObject(data, "record_mode", (double)cfg->record_mode);
-    cJSON_AddNumberToObject(data, "record_segment_sec", (double)cfg->record_segment_sec);
+    cJSON_AddNumberToObject(data, "segment_sec", (double)cfg->segment_sec);
     cJSON_AddNumberToObject(data, "frame_drop_enabled", (double)cfg->frame_drop_enabled);
 
     /* Storage cleanup thresholds */
@@ -370,8 +384,9 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "save_to_sd", (double)cfg->save_to_sd);
     cJSON_AddNumberToObject(data, "sd_log_enabled", (double)cfg->sd_log_enabled);
     cJSON_AddNumberToObject(data, "wifi_reconnect_hours", (double)cfg->wifi_reconnect_hours);
-    cJSON_AddNumberToObject(data, "wifi_roam_rssi_threshold", (double)cfg->wifi_roam_rssi_threshold);
-    cJSON_AddNumberToObject(data, "wifi_roam_rssi_gap", (double)cfg->wifi_roam_rssi_gap);
+    cJSON_AddNumberToObject(data, "wifi_roam_rssi", (double)cfg->wifi_roam_rssi);
+    cJSON_AddNumberToObject(data, "wifi_roam_gap_s", (double)cfg->wifi_roam_gap_s);
+    cJSON_AddNumberToObject(data, "onvif_enable", (double)cfg->onvif_enable);
 
     return send_json_ok(req, data);
 }
@@ -379,6 +394,26 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
 /* ------------------------------------------------------------------ */
 /*  POST /api/config                                                   */
 /* ------------------------------------------------------------------ */
+
+/* 本板可选分辨率表（家族刻度 framesize_t，契约 v1.3 §5）。
+ * HD/SXGA 传感器虽支持，但历史可选档为四档，维持不变。 */
+static const struct { const char *label; int value; } s_supported_res[] = {
+    { "VGA (640x480)",    10 },
+    { "SVGA (800x600)",   11 },
+    { "XGA (1024x768)",   12 },
+    { "UXGA (1600x1200)", 15 },
+};
+
+/* POST 值合法性 = 在可选表内 且 ≤ 三层上限（与 supported_resolutions 同源） */
+static bool res_value_supported(int val, int eff_max)
+{
+    for (size_t i = 0; i < sizeof(s_supported_res) / sizeof(s_supported_res[0]); i++) {
+        if (s_supported_res[i].value == val) {
+            return val <= eff_max;
+        }
+    }
+    return false;
+}
 
 static esp_err_t handler_api_config_post(httpd_req_t *req)
 {
@@ -478,20 +513,25 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
     if ((item = cJSON_GetObjectItem(json, "cam_framesize")) && cJSON_IsNumber(item)) {
         int val = item->valueint;
         int eff_max = (int)camera_get_effective_max_res();
-        if (val < 0 || val > eff_max) {
+        if (!res_value_supported(val, eff_max)) {
             cJSON_Delete(json);
-            char msg[80];
+            char msg[96];
             snprintf(msg, sizeof(msg),
-                     "cam_framesize out of range (0-%d, source: %s)",
-                     eff_max, camera_res_cap_source());
+                     "cam_framesize %d unsupported (max %d %s, source: %s)",
+                     val, eff_max, framesize_label(eff_max), camera_res_cap_source());
             return send_json_error(req, msg, 400);
         }
         config_set_resolution((camera_resolution_t)val);
         camera_changed = true;
     }
 
-    if ((item = cJSON_GetObjectItem(json, "fps")) && cJSON_IsNumber(item)) {
-        config_set_fps((uint8_t)item->valueint);
+    if ((item = cJSON_GetObjectItem(json, "cam_fps")) && cJSON_IsNumber(item)) {
+        int val = item->valueint;
+        if (val < 1 || val > 30) {
+            cJSON_Delete(json);
+            return send_json_error(req, "cam_fps out of range (1-30)", 400);
+        }
+        config_set_cam_fps((uint8_t)val);
         camera_changed = true;
     }
 
@@ -519,7 +559,7 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
      * controls during this window. */
     if (camera_changed) {
         const cam_config_t *cur = config_get();
-        esp_err_t cam_ret = camera_apply_settings(cur->cam_framesize, cur->fps, cur->cam_quality);
+        esp_err_t cam_ret = camera_apply_settings(cur->cam_framesize, cur->cam_fps, cur->cam_quality);
         if (cam_ret != ESP_OK) {
             ESP_LOGE(TAG, "camera_apply_settings failed: %s", esp_err_to_name(cam_ret));
             cJSON_Delete(json);
@@ -545,47 +585,58 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
         tzset();
     }
 
-    /* Motion detection (has dedicated setter) */
+    /* Motion detection — 家族超集模型（契约 §3.2，旧 threshold/saved_threshold
+     * V-save 技巧随字段废弃，enable 成为显式字段） */
     {
+        const cam_config_t *cur = config_get();
         bool set_motion = false;
-        uint8_t threshold = config_get()->motion_threshold;
-        uint8_t cooldown = config_get()->motion_cooldown;
-        bool motion_enabled = true;
+        uint8_t m_en = cur->motion_enabled;
+        uint8_t m_sens = cur->motion_sensitivity;
+        uint16_t m_cool = cur->motion_cooldown_s;
+        uint8_t m_act = cur->motion_active_interval_s;
 
-        /* Handle motion_enabled boolean from frontend */
         item = cJSON_GetObjectItem(json, "motion_enabled");
-        if (item && cJSON_IsBool(item)) {
-            motion_enabled = item->valueint;
-        }
-
-        if (motion_enabled) {
-            /* If enabling, restore saved threshold (or use current if valid) */
-            uint8_t saved = config_get()->motion_saved_threshold;
-            if (saved > 0) threshold = saved;
-            else if (threshold == 0) threshold = 30; /* safety default */
-            set_motion = true;
-        } else {
-            /* If disabling, save current threshold first */
-            if (threshold > 0) {
-                config_set_motion_saved_threshold(threshold);
+        if (item && cJSON_IsNumber(item)) { m_en = item->valueint ? 1 : 0; set_motion = true; }
+        item = cJSON_GetObjectItem(json, "motion_sensitivity");
+        if (item && cJSON_IsNumber(item)) {
+            int val = item->valueint;
+            if (val < 0 || val > 100) {
+                cJSON_Delete(json);
+                return send_json_error(req, "motion_sensitivity out of range (0-100)", 400);
             }
-            threshold = 0;
+            m_sens = (uint8_t)val;
             set_motion = true;
         }
-
-        item = cJSON_GetObjectItem(json, "motion_threshold");
+        item = cJSON_GetObjectItem(json, "motion_cooldown_s");
         if (item && cJSON_IsNumber(item)) {
-            threshold = (uint8_t)item->valueint;
+            int val = item->valueint;
+            if (val < 1 || val > 300) {
+                cJSON_Delete(json);
+                return send_json_error(req, "motion_cooldown_s out of range (1-300)", 400);
+            }
+            m_cool = (uint16_t)val;
             set_motion = true;
         }
-        item = cJSON_GetObjectItem(json, "motion_cooldown");
+        item = cJSON_GetObjectItem(json, "motion_active_interval_s");
         if (item && cJSON_IsNumber(item)) {
-            cooldown = (uint8_t)item->valueint;
+            int val = item->valueint;
+            if (val < 1 || val > 30) {
+                cJSON_Delete(json);
+                return send_json_error(req, "motion_active_interval_s out of range (1-30)", 400);
+            }
+            m_act = (uint8_t)val;
             set_motion = true;
         }
         if (set_motion) {
-            config_set_motion(threshold, cooldown);
+            config_set_motion(m_en, m_sens, m_cool, m_act);
+            /* 启停即时生效（无需重启检测任务：enabled=0 时评分门槛拉满即可） */
+            motion_detect_apply_config();
         }
+    }
+
+    /* ONVIF 开关（契约核心字段，重启生效） */
+    if ((item = cJSON_GetObjectItem(json, "onvif_enable")) && cJSON_IsNumber(item)) {
+        config_set_onvif_enable(item->valueint ? 1 : 0);
     }
 
     /* Vflip (apply immediately via sensor register) */
@@ -703,13 +754,21 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
         const cam_config_t *cur = config_get();
         bool rec_changed = false;
         uint8_t rec_mode = cur->record_mode;
-        uint16_t rec_seg = cur->record_segment_sec;
+        uint16_t rec_seg = cur->segment_sec;
         uint8_t rec_drop = cur->frame_drop_enabled;
 
         item = cJSON_GetObjectItem(json, "record_mode");
         if (item && cJSON_IsNumber(item)) { rec_mode = (uint8_t)item->valueint; rec_changed = true; }
-        item = cJSON_GetObjectItem(json, "record_segment_sec");
-        if (item && cJSON_IsNumber(item)) { rec_seg = (uint16_t)item->valueint; rec_changed = true; }
+        item = cJSON_GetObjectItem(json, "segment_sec");
+        if (item && cJSON_IsNumber(item)) {
+            int val = item->valueint;
+            if (val < 5 || val > 3600) {
+                cJSON_Delete(json);
+                return send_json_error(req, "segment_sec out of range (5-3600)", 400);
+            }
+            rec_seg = (uint16_t)val;
+            rec_changed = true;
+        }
         item = cJSON_GetObjectItem(json, "frame_drop_enabled");
         if (item && cJSON_IsNumber(item)) { rec_drop = (uint8_t)item->valueint; rec_changed = true; }
 
@@ -760,14 +819,16 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
         config_set_wifi_reconnect_interval((uint16_t)item->valueint);
     }
 
-    /* ── WiFi RSSI-based roaming ── */
+    /* ── WiFi RSSI-based roaming（契约名 wifi_roam_rssi / wifi_roam_gap_s） ── */
     {
-        cJSON *rt = cJSON_GetObjectItem(json, "wifi_roam_rssi_threshold");
-        cJSON *rg = cJSON_GetObjectItem(json, "wifi_roam_rssi_gap");
-        if (rt && cJSON_IsNumber(rt)) {
-            int8_t thresh = (int8_t)rt->valueint;
-            uint8_t gap = (rg && cJSON_IsNumber(rg)) ? (uint8_t)rg->valueint : config_get()->wifi_roam_rssi_gap;
-            config_set_wifi_roam(thresh, gap);
+        cJSON *rt = cJSON_GetObjectItem(json, "wifi_roam_rssi");
+        cJSON *rg = cJSON_GetObjectItem(json, "wifi_roam_gap_s");
+        if ((rt && cJSON_IsNumber(rt)) || (rg && cJSON_IsNumber(rg))) {
+            int8_t rssi = (rt && cJSON_IsNumber(rt)) ? (int8_t)rt->valueint
+                                                     : config_get()->wifi_roam_rssi;
+            uint8_t gap = (rg && cJSON_IsNumber(rg)) ? (uint8_t)rg->valueint
+                                                     : config_get()->wifi_roam_gap_s;
+            config_set_wifi_roam(rssi, gap);
         }
     }
 
@@ -1322,21 +1383,17 @@ static esp_err_t handler_api_camera_get(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "quality_min",   CAMERA_QUALITY_MIN);
     cJSON_AddNumberToObject(data, "quality_max",   CAMERA_QUALITY_MAX);
     cJSON_AddNumberToObject(data, "cam_vflip",     (double)cfg->cam_vflip);
-    /* 契约 v1.1 §5：分辨率名 + 动态分辨率表（三层上限：sensor ∩ board ∩
-     * memory，本板 OV2640 满配 0-3；换小传感器时列表自动收缩） */
+    /* 契约 v1.3 §5：分辨率名 + 动态分辨率表（value = 家族刻度 framesize_t；
+     * 三层上限：sensor ∩ board ∩ memory，换小传感器时列表自动收缩） */
     {
-        static const char *res_names[] = {"VGA", "SVGA", "XGA", "UXGA"};
-        static const char *res_labels[] = {
-            "VGA (640x480)", "SVGA (800x600)", "XGA (1024x768)", "UXGA (1600x1200)"
-        };
         int eff_max = (int)camera_get_effective_max_res();
-        cJSON_AddStringToObject(data, "resolution",
-            cfg->cam_framesize < 4 ? res_names[cfg->cam_framesize] : "Unknown");
+        cJSON_AddStringToObject(data, "resolution", framesize_label(cfg->cam_framesize));
         cJSON *res_arr = cJSON_CreateArray();
-        for (int i = 0; i <= eff_max && i < 4; i++) {
+        for (size_t i = 0; i < sizeof(s_supported_res) / sizeof(s_supported_res[0]); i++) {
+            if (s_supported_res[i].value > eff_max) break;
             cJSON *item = cJSON_CreateObject();
-            cJSON_AddStringToObject(item, "label", res_labels[i]);
-            cJSON_AddNumberToObject(item, "value", i);
+            cJSON_AddStringToObject(item, "label", s_supported_res[i].label);
+            cJSON_AddNumberToObject(item, "value", s_supported_res[i].value);
             cJSON_AddItemToArray(res_arr, item);
         }
         cJSON_AddItemToObject(data, "supported_resolutions", res_arr);
@@ -1387,12 +1444,12 @@ static esp_err_t handler_api_camera_post(httpd_req_t *req)
     if ((item = cJSON_GetObjectItem(json, "cam_framesize")) && cJSON_IsNumber(item)) {
         int val = item->valueint;
         int eff_max = (int)camera_get_effective_max_res();
-        if (val < 0 || val > eff_max) {
+        if (!res_value_supported(val, eff_max)) {
             cJSON_Delete(json);
-            char msg[80];
+            char msg[96];
             snprintf(msg, sizeof(msg),
-                     "cam_framesize out of range (0-%d, source: %s)",
-                     eff_max, camera_res_cap_source());
+                     "cam_framesize %d unsupported (max %d %s, source: %s)",
+                     val, eff_max, framesize_label(eff_max), camera_res_cap_source());
             return send_json_error(req, msg, 400);
         }
         config_set_resolution((camera_resolution_t)val);
@@ -1417,7 +1474,7 @@ static esp_err_t handler_api_camera_post(httpd_req_t *req)
 
     if (need_apply) {
         const cam_config_t *now = config_get();
-        esp_err_t cam_ret = camera_apply_settings(now->cam_framesize, now->fps, now->cam_quality);
+        esp_err_t cam_ret = camera_apply_settings(now->cam_framesize, now->cam_fps, now->cam_quality);
         if (cam_ret != ESP_OK) {
             ESP_LOGW(TAG, "camera_apply_settings rc=%s", esp_err_to_name(cam_ret));
         }

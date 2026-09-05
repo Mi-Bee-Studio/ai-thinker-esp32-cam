@@ -6,9 +6,10 @@
 #include "esp_err.h"
 #include "sdkconfig.h"
 
-// Config version and magic
-#define CONFIG_VERSION  16
-#define CONFIG_MAGIC    0xA5B6C7D8
+/* 家族配置契约 v1.0（docs/config-contract.md）：持久化为逐键 NVS（mibee_cfg
+ * 命名空间 + schema_ver 版本键），不再使用 blob+magic。legacy blob（V16 及
+ * 更早）由 config_manager.c 的一次性迁移函数翻译。 */
+#define CONFIG_SCHEMA_VERSION 1
 
 // Default values
 #define CONFIG_DEFAULT_TIMEZONE     "CST-8"
@@ -18,13 +19,16 @@
 #define CONFIG_DEFAULT_AP_SSID      "MiBeeCam"
 #define CONFIG_DEFAULT_AP_PASS      "mibeecam2026"
 
-// Camera resolutions
+/* Camera resolutions — 家族统一刻度 = esp32-camera framesize_t（契约 v1.3 §5：
+ * VGA=10, SVGA=11, XGA=12, HD=13, SXGA=14, UXGA=15）。旧自有刻度 0-3 由
+ * config 迁移函数翻译（0→10, 1→11, 2→12, 3→15）。 */
 typedef enum {
-    CAMERA_RES_VGA  = 0,    // 640x480
-    CAMERA_RES_SVGA = 1,    // 800x600
-    CAMERA_RES_XGA  = 2,    // 1024x768
-    CAMERA_RES_UXGA = 3,    // 1600x1200
-    CAMERA_RES_MAX
+    CAMERA_RES_VGA  = 10,   // FRAMESIZE_VGA  640x480
+    CAMERA_RES_SVGA = 11,   // FRAMESIZE_SVGA 800x600
+    CAMERA_RES_XGA  = 12,   // FRAMESIZE_XGA  1024x768
+    CAMERA_RES_HD   = 13,   // FRAMESIZE_HD   1280x720（OV2640 支持，本板未入可选表）
+    CAMERA_RES_SXGA = 14,   // FRAMESIZE_SXGA 1280x1024（同上）
+    CAMERA_RES_UXGA = 15,   // FRAMESIZE_UXGA 1600x1200
 } camera_resolution_t;
 
 // WiFi states
@@ -75,23 +79,28 @@ typedef enum {
 // Boot button
 #define BOOT_BTN_GPIO   0
 
-// Configuration struct (stored in NVS)
+/* Configuration struct（内存模型；持久化为 mibee_cfg 逐键 NVS，契约 v1.0）
+ * 字段命名与 docs/config-contract.md §3 对齐；webdav 系列与 alert_webhook
+ * 系列字段已随 NAS 上传器/告警钩子的移除从本板删除（"不适用即省略"）。 */
 typedef struct {
     char wifi_ssid[33];
     char wifi_pass[65];
     char device_name[33];
-    uint8_t cam_framesize;
-    uint8_t fps;
-    uint8_t cam_quality;
+    uint8_t cam_framesize;             /* framesize_t 刻度（10-15，见上） */
+    uint8_t cam_fps;                   /* 1-30，default 15 */
+    uint8_t cam_quality;               /* 10-63（PIT-021），default 12 */
     char web_password[33];
     char timezone[33];
-    uint8_t motion_threshold;
-    uint8_t motion_cooldown;
+    /* 家族 motion 超集模型（契约 §3.2）：sensitivity 越大越灵敏；
+     * 旧 motion_threshold 迁移为 sensitivity = 100 - threshold */
+    uint8_t motion_enabled;            /* default 1 */
+    uint8_t motion_sensitivity;        /* 0-100，default 70（=旧 threshold 30） */
+    uint16_t motion_cooldown_s;        /* 1-300，两次触发最小间隔，default 10 */
+    uint8_t motion_active_interval_s;  /* 1-30，持续活动期再触发间隔，default 5 */
     uint8_t cam_vflip;
-    uint8_t motion_saved_threshold;
     uint8_t wifi_tx_power;      /* TX power in 0.25dBm units (80=20dBm) */
     uint8_t wifi_power_save;    /* 0=WIFI_PS_NONE, 1=WIFI_PS_MIN_MODEM */
-    uint8_t flash_threshold;     /* Motion detection brightness threshold */
+    uint8_t flash_threshold;     /* 板级扩展：侦测联动闪光灯阈值 */
     uint8_t timelapse_enabled;
     uint16_t timelapse_interval_s;
     uint8_t timelapse_burst_count;
@@ -101,33 +110,25 @@ typedef struct {
     uint8_t  timelapse_decay_factor;   /* interval multiplier per decay period, default 2 */
     uint16_t timelapse_decay_period_s; /* seconds of no motion before decay step, default 10 */
     uint8_t  record_mode;              /* 0=continuous, 1=timelapse, 2=dynamic timelapse */
-    uint16_t record_segment_sec;      /* segment duration in seconds (default 300) */
+    uint16_t segment_sec;              /* 录像分段秒数（default 300） */
     uint8_t  frame_drop_enabled;      /* smart frame drop (default 1=enabled) */
-    uint8_t  webdav_enabled;          /* NAS upload enabled (default 0) */
-    char     webdav_url[129];         /* WebDAV server URL */
-    char     webdav_user[33];         /* WebDAV username */
-    char     webdav_pass[65];         /* WebDAV password */
-    char     upload_base_path[65];    /* remote base path (default "/mibee-cam") */
-    uint8_t  alert_webhook_enabled;   /* webhook enabled (default 0) */
-    char     alert_webhook_url[257];  /* webhook URL (default empty) */
-    uint8_t  cleanup_low_pct;         /* start cleanup when used% > this (default 80) */
-    uint8_t  cleanup_high_pct;        /* stop cleanup when used% < this (default 70) */
-    /* V9: Dual WiFi (secondary fallback network) */
+    uint8_t  cleanup_low_pct;         /* 空闲% < low 触发清理（default 20，契约 v1.2 §11.6） */
+    uint8_t  cleanup_high_pct;        /* 清理到空闲% >= high 停止（default 30） */
+    /* Dual WiFi (secondary fallback network) */
     char     wifi_ssid_2[33];         /* secondary WiFi SSID (empty = disabled) */
     char     wifi_pass_2[65];         /* secondary WiFi password */
     uint8_t  allow_ap_fallback;       /* 1=fall back to AP mode if STA fails, 0=keep retrying */
-    /* V10: SD card write enable */
+    /* SD card */
     uint8_t  save_to_sd;              /* 1=save photos/recordings (default), 0=NVR-only no writes */
-    /* V11: SD card error logging */
     uint8_t  sd_log_enabled;          /* 1=log severe errors+WiFi anomalies to SD (default), 0=disabled */
     uint16_t wifi_reconnect_hours;   /* periodic WiFi reconnect interval (0=disabled, default 24) */
-    /* V13: Camera XCLK frequency (10/16/20 MHz, 20=default, lower=more stable for clone modules) */
+    /* Camera XCLK frequency (10/16/20 MHz, 20=default, lower=more stable for clone modules) */
     uint8_t  xclk_freq_mhz;          /* Camera master clock in MHz (default 20) */
-    /* V14: WiFi RSSI-based roaming (switch to stronger AP across SSIDs) */
-    int8_t  wifi_roam_rssi_threshold;  /* scan for better AP when RSSI below this (default -75) */
-    uint8_t wifi_roam_rssi_gap;        /* min RSSI gap (dBm) to trigger switch (default 10) */
-    uint32_t magic;
-    uint32_t version;
+    /* WiFi RSSI-based roaming (switch to stronger AP across SSIDs) */
+    int8_t  wifi_roam_rssi;          /* scan for better AP when RSSI below this (0=off, default -65) */
+    uint8_t wifi_roam_gap_s;         /* min RSSI gap (dBm) to trigger switch (5-15, default 10) */
+    /* ONVIF 开关（契约核心字段；本板默认 1=始终开启，行为不变） */
+    uint8_t onvif_enable;            /* default 1，重启生效 */
 } cam_config_t;
 
 #endif // COMMON_H

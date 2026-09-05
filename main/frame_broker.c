@@ -45,7 +45,7 @@ static const char *TAG = "frame_broker";
  * ESP32 camera has no hardware FPS register; this throttles producer captures. */
 static TickType_t broker_frame_delay(void)
 {
-    uint8_t fps = config_get()->fps;
+    uint8_t fps = config_get()->cam_fps;
     if (fps == 0) fps = BROKER_FPS;
     /* When no stream clients are watching, slow to 2fps to cut CPU/WiFi/PSRAM
      * load — motion detection only needs ~2fps. */

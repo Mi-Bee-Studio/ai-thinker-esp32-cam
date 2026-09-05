@@ -326,7 +326,7 @@ static esp_err_t handle_get_profiles(httpd_req_t *req)
         "</s:Envelope>",
         width, height,
         width, height,
-        cfg->fps);
+        cfg->cam_fps);
 
     httpd_resp_set_type(req, "application/soap+xml");
     httpd_resp_send(req, resp, len);

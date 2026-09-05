@@ -34,6 +34,14 @@ esp_err_t motion_detect_init(void);
 esp_err_t motion_detect_start(void);
 
 /**
+ * @brief Apply changed motion config (sensitivity etc.) on the next tick
+ *
+ * Marks the pipeline dirty so the next analysis cycle re-initializes with
+ * current config — no task restart needed（契约 §3.2 家族超集模型）.
+ */
+void motion_detect_apply_config(void);
+
+/**
  * @brief Stop the motion detection task
  *
  * Signals the detection task to exit and waits up to 5 seconds for it.

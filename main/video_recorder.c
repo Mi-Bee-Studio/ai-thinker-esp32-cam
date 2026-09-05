@@ -471,7 +471,7 @@ static void recording_task(void *arg)
     const cam_config_t *cfg = config_get();
     uint16_t w, h;
     resolution_dims(cfg->cam_framesize, &w, &h);
-    uint8_t fps = cfg->fps > 0 ? cfg->fps : 10;
+    uint8_t fps = cfg->cam_fps > 0 ? cfg->cam_fps : 10;
     uint8_t record_mode = cfg->record_mode;
     bool timelapse = record_mode > 0;
     uint8_t playback_fps = timelapse ? 15 : fps;
@@ -484,7 +484,7 @@ static void recording_task(void *arg)
     esp_task_wdt_add(NULL);
 
     ESP_LOGI(TAG, "Recording task started: mode=%d %ux%u @ %u fps, segment=%u s",
-             record_mode, w, h, playback_fps, cfg->record_segment_sec);
+             record_mode, w, h, playback_fps, cfg->segment_sec);
 
     while (s_state == RECORDER_RECORDING || s_state == RECORDER_PAUSED) {
         /* Feed task watchdog each iteration */
@@ -497,7 +497,7 @@ static void recording_task(void *arg)
 
         /* Re-read config in case it changed */
         cfg = config_get();
-        fps = cfg->fps > 0 ? cfg->fps : 10;
+        fps = cfg->cam_fps > 0 ? cfg->cam_fps : 10;
         record_mode = cfg->record_mode;
         timelapse = record_mode > 0;
         playback_fps = timelapse ? 15 : fps;
@@ -626,7 +626,7 @@ static void recording_task(void *arg)
 
         /* Check segment duration */
         int64_t elapsed_ms = s_seg_elapsed_ms() - s_seg.start_ms;
-        if (elapsed_ms >= (int64_t)cfg->record_segment_sec * 1000) {
+        if (elapsed_ms >= (int64_t)cfg->segment_sec * 1000) {
             /* Close current segment */
             char completed_file[128];
             strncpy(completed_file, s_current_file, sizeof(completed_file) - 1);

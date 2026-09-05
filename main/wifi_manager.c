@@ -334,7 +334,7 @@ static void wifi_watchdog_task(void *arg)
 
         /* --- V14: RSSI-based smart roaming across SSIDs --- */
         const cam_config_t *cfg = config_get();
-        if (cfg->wifi_roam_rssi_threshold == 0) continue;  /* 0 = roaming disabled */
+        if (cfg->wifi_roam_rssi == 0) continue;  /* 0 = roaming disabled */
         if (cfg->wifi_ssid[0] == '\0') continue;
 
         /* Determine the "other" network to probe */
@@ -349,7 +349,7 @@ static void wifi_watchdog_task(void *arg)
         /* Decide whether to scan:
          * - On secondary: always check for primary (preferred network)
          * - On primary: only scan when RSSI drops below threshold */
-        bool should_scan = s_using_secondary || (ap.rssi < cfg->wifi_roam_rssi_threshold);
+        bool should_scan = s_using_secondary || (ap.rssi < cfg->wifi_roam_rssi);
         if (!should_scan) continue;
 
         last_roam_scan_tick = xTaskGetTickCount();
@@ -385,9 +385,9 @@ static void wifi_watchdog_task(void *arg)
 
         int8_t gap = best_rssi - ap.rssi;
         ESP_LOGI(TAG, "Roam: '%s' RSSI=%d, current=%d, gap=%d (need>=%d)",
-                 other_ssid, best_rssi, ap.rssi, gap, cfg->wifi_roam_rssi_gap);
+                 other_ssid, best_rssi, ap.rssi, gap, cfg->wifi_roam_gap_s);
 
-        if (gap >= (int8_t)cfg->wifi_roam_rssi_gap) {
+        if (gap >= (int8_t)cfg->wifi_roam_gap_s) {
             ESP_LOGI(TAG, "Smart roaming: switching to '%s' (%d dBm > current %d, gap=%d)",
                      other_ssid, best_rssi, ap.rssi, gap);
             sd_logf(SD_LOG_WARN, "wifi", "Smart roam: %s(%d) -> %s(%d), gap=%d",
