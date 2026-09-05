@@ -9,7 +9,7 @@ ESP32-CAM firmware (mibee-cam) — OV2640 camera with MJPEG streaming, motion de
 统一契约：`docs/at-command.md`（四仓 md5 一致，地位同 api-contract）。核心集：
 `AT / AT+HELP / AT+GMR / AT+STATUS / AT+WIFI?|= / AT+IP? / AT+CAMRES?|= / AT+CAMQUAL?|= /
 AT+REBOOT / AT+RESTORE`（+能力裁剪项）。红线：**任何读指令不回显密码**；CAMQUAL 边界
-10-63（PIT-021）。本板串口 /dev/ttyUSB0（CH340，开串口即复位，PIT-003）。CAMRES/CAMQUAL 热重配；实现于 main/serial_config.c。
+10-63（PIT-021）。本板串口 /dev/ttyUSB0（CH340，开串口即复位，PIT-003）。CAMRES/CAMQUAL 热重配；实现于家族共享核心 main/at_command.c（四仓 md5 一致）+ 板级 main/at_port.c（2026-09-05 取代 serial_config.c；AT+RESET 已删除，恢复出厂走 AT+RESTORE）。**台架板注意**：本机 ttyUSB0 这块板 App 级串口 RX 疑似硬件损坏（AT 无响应、写指令无任何效果；ROM 级 esptool 正常、TX 正常、luatos 同模式正常——2026-09-06 实测，PIT-030）。
 
 ## STRUCTURE
 
@@ -29,7 +29,7 @@ AT+REBOOT / AT+RESTORE`（+能力裁剪项）。红线：**任何读指令不回
 | MJPEG streaming | `main/mjpeg_streamer.c/h` | 2-client limit, async mode |
 | Motion detection | `main/motion_detect.c/h` | Frame-diff, brightness flash trigger |
 | SD card storage | `main/storage_manager.c/h` | FAT, hot-plug monitor, photo cache warming |
-| Serial AT config | `main/serial_config.c/h` | AT+ commands for WiFi setup over UART |
+| Serial AT config | `main/at_command.c` + `main/at_port.c` | 家族 AT 核心（四仓 md5 一致）+ 板级 port，契约 v1.1（2026-09-05 取代 serial_config.c） |
 | Prometheus metrics | `main/health_monitor.c/h` | `/metrics` endpoint, 10s interval |
 | Timelapse | `main/timelapse.c/h` | Burst capture, configurable interval |
 | Partition layout | `partitions.csv` | nvs 24KB + phy_init 4KB + factory 3.5MB + otadata + spiffs 432KB |
