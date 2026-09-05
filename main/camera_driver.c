@@ -138,6 +138,35 @@ camera_resolution_t camera_get_effective_max_res(void)
     return cap;
 }
 
+/* 本板可选档（家族刻度；HD/SXGA 传感器虽支持，历史档位四档维持不变） */
+static const camera_res_opt_t s_supported_res[] = {
+    { "VGA (640x480)",    CAMERA_RES_VGA  },
+    { "SVGA (800x600)",   CAMERA_RES_SVGA },
+    { "XGA (1024x768)",   CAMERA_RES_XGA  },
+    { "UXGA (1600x1200)", CAMERA_RES_UXGA },
+};
+
+const camera_res_opt_t *camera_supported_resolutions(int *count)
+{
+    if (count) {
+        *count = (int)(sizeof(s_supported_res) / sizeof(s_supported_res[0]));
+    }
+    return s_supported_res;
+}
+
+const char *camera_res_label(int value)
+{
+    switch (value) {
+        case CAMERA_RES_VGA:  return "VGA";
+        case CAMERA_RES_SVGA: return "SVGA";
+        case CAMERA_RES_XGA:  return "XGA";
+        case CAMERA_RES_HD:   return "HD";
+        case CAMERA_RES_SXGA: return "SXGA";
+        case CAMERA_RES_UXGA: return "UXGA";
+        default:              return "UNKNOWN";
+    }
+}
+
 const char *camera_res_cap_source(void)
 {
     return s_cap_source;

@@ -43,6 +43,16 @@ camera_resolution_t camera_get_effective_max_res(void);
  */
 const char *camera_res_cap_source(void);
 
+/* 本板可选分辨率档（家族刻度 framesize_t）。单一事实源：
+ * GET /api/camera 的 supported_resolutions 与 AT 端口共用（调用方按
+ * camera_get_effective_max_res() 过滤）。 */
+typedef struct { const char *label; int value; } camera_res_opt_t;
+
+const camera_res_opt_t *camera_supported_resolutions(int *count);
+
+/* 家族刻度值 → 短名（"VGA"…"UXGA"，越界 "UNKNOWN"） */
+const char *camera_res_label(int value);
+
 /**
  * Initialize the OV2640 camera with the given parameters.
  *

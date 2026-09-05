@@ -202,18 +202,11 @@ static esp_err_t send_unauthorized(httpd_req_t *req)
 /*  GET /api/status                                                    */
 /* ------------------------------------------------------------------ */
 
-/* Family scale framesize_t → short label (Contract v1.3 §5) */
+/* Family scale framesize_t → short label (Contract v1.3 §5) — 单一事实源在
+ * camera_driver.c（camera_res_label），此处薄封装保持调用点简洁 */
 static const char *framesize_label(int val)
 {
-    switch (val) {
-        case 10: return "VGA";
-        case 11: return "SVGA";
-        case 12: return "XGA";
-        case 13: return "HD";
-        case 14: return "SXGA";
-        case 15: return "UXGA";
-        default: return "Unknown";
-    }
+    return camera_res_label(val);
 }
 
 static esp_err_t handler_api_status(httpd_req_t *req)
@@ -395,20 +388,14 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
 /*  POST /api/config                                                   */
 /* ------------------------------------------------------------------ */
 
-/* 本板可选分辨率表（家族刻度 framesize_t，契约 v1.3 §5）。
- * HD/SXGA 传感器虽支持，但历史可选档为四档，维持不变。 */
-static const struct { const char *label; int value; } s_supported_res[] = {
-    { "VGA (640x480)",    10 },
-    { "SVGA (800x600)",   11 },
-    { "XGA (1024x768)",   12 },
-    { "UXGA (1600x1200)", 15 },
-};
-
-/* POST 值合法性 = 在可选表内 且 ≤ 三层上限（与 supported_resolutions 同源） */
+/* POST 值合法性 = 在可选表内 且 ≤ 三层上限（与 supported_resolutions 同源，
+ * 表本体在 camera_driver.c 单一事实源） */
 static bool res_value_supported(int val, int eff_max)
 {
-    for (size_t i = 0; i < sizeof(s_supported_res) / sizeof(s_supported_res[0]); i++) {
-        if (s_supported_res[i].value == val) {
+    int count = 0;
+    const camera_res_opt_t *opts = camera_supported_resolutions(&count);
+    for (int i = 0; i < count; i++) {
+        if (opts[i].value == val) {
             return val <= eff_max;
         }
     }
@@ -1389,11 +1376,13 @@ static esp_err_t handler_api_camera_get(httpd_req_t *req)
         int eff_max = (int)camera_get_effective_max_res();
         cJSON_AddStringToObject(data, "resolution", framesize_label(cfg->cam_framesize));
         cJSON *res_arr = cJSON_CreateArray();
-        for (size_t i = 0; i < sizeof(s_supported_res) / sizeof(s_supported_res[0]); i++) {
-            if (s_supported_res[i].value > eff_max) break;
+        int opt_count = 0;
+        const camera_res_opt_t *opts = camera_supported_resolutions(&opt_count);
+        for (int i = 0; i < opt_count; i++) {
+            if (opts[i].value > eff_max) break;
             cJSON *item = cJSON_CreateObject();
-            cJSON_AddStringToObject(item, "label", s_supported_res[i].label);
-            cJSON_AddNumberToObject(item, "value", s_supported_res[i].value);
+            cJSON_AddStringToObject(item, "label", opts[i].label);
+            cJSON_AddNumberToObject(item, "value", opts[i].value);
             cJSON_AddItemToArray(res_arr, item);
         }
         cJSON_AddItemToObject(data, "supported_resolutions", res_arr);

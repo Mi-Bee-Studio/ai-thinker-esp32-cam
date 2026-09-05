@@ -30,7 +30,7 @@
 #include "storage_manager.h"
 #include "timelapse.h"
 #include "video_recorder.h"
-#include "serial_config.h"
+#include "at_command.h"
 #include "onvif_discovery.h"
 #include "onvif_service.h"
 #include "frame_broker.h"
@@ -303,8 +303,9 @@ void app_main(void)
      * the OTA is confirmed and won't auto-revert. */
     esp_ota_mark_app_valid_cancel_rollback();
 
-    /* Start serial AT command listener (available immediately after config) */
-    serial_config_init();
+    /* Start family AT console (core + port; available immediately after config).
+     * 契约 v1.1：共享核心 at_command.c + 板级 at_port.c（原 serial_config.c 已并入） */
+    at_command_init();
 
     /* Step 3/19: LED init */
     ret = led_init();
