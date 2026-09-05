@@ -102,12 +102,15 @@ static bool fb_budget_ok(camera_resolution_t res)
 }
 
 /** sensor 层：查 esp32-camera 组件自带能力表（单一事实源，勿手抄 PID 表）。
- *  未初始化/未知 PID → 回退板级常数（不放宽）。统一刻度下值域同 framesize_t。 */
+ *  未初始化/未知 PID → 回退板级常数（不放宽）。统一刻度下值域同 framesize_t。
+ *  判活用 esp_camera_sensor_get() 句柄而非 s_camera_initialized 旗标：
+ *  camera_init 中途（esp_camera_init 已成、旗标未置位）会调用本函数做
+ *  三层钳制，按旗标判定会错误走回退路径（seeed 同型 bug 实机教训）。 */
 static camera_resolution_t sensor_max_resolution(void)
 {
-    if (s_camera_initialized) {
-        sensor_t *s = esp_camera_sensor_get();
-        camera_sensor_info_t *info = s ? esp_camera_sensor_get_info(&s->id) : NULL;
+    sensor_t *s = esp_camera_sensor_get();
+    if (s) {
+        camera_sensor_info_t *info = esp_camera_sensor_get_info(&s->id);
         if (info && (int)info->max_size >= (int)FRAMESIZE_VGA) {
             int res = (int)info->max_size;
             if (res > (int)CAMERA_RES_UXGA) {
