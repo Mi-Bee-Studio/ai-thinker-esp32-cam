@@ -43,52 +43,103 @@ def open_port(port: str, baud: int) -> serial.Serial:
 
 
 def wait_boot(ser: serial.Serial, wait_secs: float, detect: bool) -> None:
-    """等待板子启动完成：主动检测横幅，兜底 wait_secs"""
+    """等待板子启动完成：主动检测横幅，兜底 wait_secs（块读取版）"""
     if not detect:
         time.sleep(wait_secs)
         return
-    deadline = time.time() + max(wait_secs, 1.0)
-    saw_banner = False
-    while time.time() < deadline:
-        line = ser.readline()
-        if not line:
-            continue
-        if any(k in line for k in BOOT_BANNER_KEYS):
-            saw_banner = True
-        if READY_KEY in line:
-            print("[boot] AT console ready", file=sys.stderr)
-            time.sleep(0.2)
-            return
-    if saw_banner:
-        # 横幅已出但没等到 +READY（3s 静默期）：再宽限 4s
-        deadline = time.time() + 4.0
+
+    def scan(seconds: float) -> bool:
+        """读到 +READY 返回 True；顺带记录横幅"""
+        nonlocal saw_banner
+        deadline = time.time() + seconds
         while time.time() < deadline:
-            line = ser.readline()
-            if READY_KEY in line:
-                print("[boot] AT console ready (grace)", file=sys.stderr)
-                return
+            chunk = safe_read(ser)
+            if chunk:
+                if any(k in chunk for k in BOOT_BANNER_KEYS):
+                    saw_banner = True
+                if READY_KEY in chunk:
+                    return True
+        return False
+
+    saw_banner = False
+    if scan(max(wait_secs, 1.0)):
+        print("[boot] AT console ready", file=sys.stderr)
+        time.sleep(0.2)
+        return
+    if saw_banner and scan(4.0):
+        print("[boot] AT console ready (grace)", file=sys.stderr)
+        return
     print("[boot] banner wait done (continuing)", file=sys.stderr)
+
+
+def safe_read(ser: serial.Serial, size: int = 4096) -> bytes:
+    """块读取；USB-JTAG CDC 会抛 'readiness but no data' 假异常，吞掉。
+    注意不要用 readline()——它逐字节读，在此类 CDC 上每字节都可能触发
+    假异常，一行永远凑不齐（seeed 实测）。"""
+    try:
+        return ser.read(size)
+    except (serial.SerialException, OSError):
+        time.sleep(0.05)
+        return b""
+
+
+def _split_lines(buf: bytes):
+    """把累积缓冲切成完整行，返回 (lines, remainder)"""
+    lines = buf.split(b"\n")
+    remainder = lines.pop() if lines else b""
+    return [l for l in lines], remainder
+
+
+def read_for(ser: serial.Serial, seconds: float) -> list:
+    """读满 seconds 秒，返回完整行列表（块读取 + 自行分行）"""
+    end = time.time() + seconds
+    acc = b""
+    while time.time() < end:
+        acc += safe_read(ser)
+    lines, _ = _split_lines(acc)
+    return lines
 
 
 def drain(ser: serial.Serial, quiet_secs: float = 0.5) -> list:
     """读到静默 quiet_secs 为止，返回全部行"""
     lines = []
+    remainder = b""
     last = time.time()
     while time.time() - last < quiet_secs:
-        line = ser.readline()
-        if line:
-            lines.append(line)
+        chunk = safe_read(ser)
+        if chunk:
+            remainder += chunk
+            new_lines, remainder = _split_lines(remainder)
+            lines += new_lines
             last = time.time()
     return lines
 
 
-def send_cmd(ser: serial.Serial, cmd: str, settle: float = 0.15) -> dict:
-    ser.reset_input_buffer()
+def send_cmd(ser: serial.Serial, cmd: str, settle: float = 0.15,
+             total_wait: float = 10.0) -> dict:
+    # 注意：不用 reset_input_buffer()——USB-JTAG CDC（seeed ttyACM0）实测
+    # tcflush 后读写会假死；残留旧数据靠 drain 排掉。
+    drain(ser, quiet_secs=0.15)
     ser.write((cmd + "\r\n").encode())
     ser.flush()
     time.sleep(settle)
-    lines = drain(ser)
-    text_lines = [l.decode(errors="replace").rstrip("\r\n") for l in lines]
+    # USB-JTAG CDC（seeed）应答可被共口 ESP_LOG 拖慢到秒级：
+    # 连续轮询读满 total_wait 或提前见到 OK/ERROR 行
+    deadline = time.time() + total_wait
+    acc = b""
+    text_lines = []
+    while time.time() < deadline:
+        chunk = safe_read(ser)
+        if chunk:
+            acc += chunk
+        lines, acc_pending = _split_lines(acc)
+        acc = acc_pending
+        text_lines += [l.decode(errors="replace").rstrip("\r") for l in lines]
+        if any(l == "OK" or l.startswith("ERROR") for l in text_lines[-3:]):
+            # 收到终行：再短排一次补尾行
+            text_lines += [l.decode(errors="replace").rstrip("\r")
+                           for l in drain(ser, quiet_secs=0.3)]
+            break
     # 过滤 ESP_LOG 噪声行（与控制台共口）：只保留 AT 框架行（OK/ERROR/+X:）
     at_lines = [l for l in text_lines if l == "OK" or l.startswith("ERROR") or l.startswith("+")]
     status = "ok" if any(l == "OK" for l in at_lines) else (
@@ -105,7 +156,8 @@ def main() -> int:
     ap.add_argument("--no-detect", action="store_true",
                     help="不做横幅检测，纯睡 wait-boot 秒")
     ap.add_argument("--cmds", default="",
-                    help='逗号分隔指令列表，如 "AT,AT+GMR,AT+STATUS"')
+                    help='分号分隔指令列表，如 "AT;AT+GMR;AT+STATUS"'
+                         '（注意：带逗号参数的指令请用 --script，逗号在此不安全）')
     ap.add_argument("--script", default="", help="脚本文件（每行一条指令）")
     ap.add_argument("--json", action="store_true", help="结果输出为 JSON")
     ap.add_argument("--default-suite", action="store_true",
@@ -114,7 +166,7 @@ def main() -> int:
 
     cmds = []
     if args.cmds:
-        cmds += [c.strip() for c in args.cmds.split(",") if c.strip()]
+        cmds += [c.strip() for c in args.cmds.split(";") if c.strip()]
     if args.script:
         with open(args.script, encoding="utf-8") as f:
             cmds += [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
@@ -128,6 +180,12 @@ def main() -> int:
     print(f"[open] {args.port} @ {args.baud}（CH340/CH343 板此刻已被复位——PIT-003）",
           file=sys.stderr)
     wait_boot(ser, args.wait_boot, detect=not args.no_detect)
+    # USB-JTAG CDC（seeed）实测：开 port 后立刻发首条指令可能被设备端
+    # 丢弃；先静默预读 ~3s（等效手动流程）让通道稳定。
+    print("[pre-read] settling CDC channel 3s", file=sys.stderr)
+    t0 = time.time()
+    while time.time() - t0 < 3.0:
+        safe_read(ser)
 
     results = []
     for cmd in cmds:
