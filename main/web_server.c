@@ -380,6 +380,7 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "wifi_roam_rssi", (double)cfg->wifi_roam_rssi);
     cJSON_AddNumberToObject(data, "wifi_roam_gap_s", (double)cfg->wifi_roam_gap_s);
     cJSON_AddNumberToObject(data, "onvif_enable", (double)cfg->onvif_enable);
+    cJSON_AddNumberToObject(data, "schema_version", (double)CONFIG_SCHEMA_VERSION);
 
     return send_json_ok(req, data);
 }
