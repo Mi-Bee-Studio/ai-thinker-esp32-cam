@@ -88,8 +88,8 @@ All business endpoints use the `/api/` prefix. Returns JSON envelope `{"ok":true
 
 ### 2026-09-03 晚 WiFi 三连修（"一直连不上"事故，全部已烧录验证）
 
-现场：主 AP(MiBeeAP1) 在板位 RSSI **-82dBm**（低于 DHCP 可用阈值），备用
-(MiBeeAP2) -63~-66dBm。三固件缺陷叠加把弱信号放大成"完全失联"：
+现场：主 AP（真实 SSID 脱敏，见本机根工作区文件）在板位 RSSI **-82dBm**（低于 DHCP
+可用阈值），备用 AP（SSID 脱敏）-63~-66dBm。三固件缺陷叠加把弱信号放大成"完全失联"：
 
 1. **DHCP 挂死盲区**：关联秒成但 DHCP 广播全丢 → 每 60s 被 AP 踢掉才计 1 次断开，
    熬满 10 次 ≈10 分钟才切备用。修复：关联后 12s 无 IP 主动断开计 DHCP 超时，
