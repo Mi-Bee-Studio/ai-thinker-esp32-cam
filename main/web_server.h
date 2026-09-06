@@ -38,7 +38,7 @@ httpd_handle_t web_server_get_handle(void);
 
 /**
  * @brief Check X-Password header against stored web_password
- * @note Used by OTA handler in ota_update.c
+ * @note Used by OTA handler in ota_updater.c
  * @return true if authorized (or no password set)
  */
 bool check_auth(httpd_req_t *req);

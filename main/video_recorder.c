@@ -16,7 +16,7 @@
  */
 
 #include "video_recorder.h"
-#include "frame_broker.h"
+#include "frame_broadcaster.h"
 #include "storage_manager.h"
 #include "config_manager.h"
 #include "time_sync.h"

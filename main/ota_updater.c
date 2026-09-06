@@ -1,5 +1,5 @@
 /**
- * @file ota_update.c
+ * @file ota_updater.c
  * @brief OTA firmware update via browser upload.
  *
  * Implements streaming firmware upload to the inactive OTA partition.
@@ -13,7 +13,7 @@
  * and the device reboots into the new firmware.
  */
 
-#include "ota_update.h"
+#include "ota_updater.h"
 #include "esp_log.h"
 #include "esp_http_server.h"
 #include "esp_ota_ops.h"
@@ -27,7 +27,7 @@
 #include "timelapse.h"
 #include "video_recorder.h"
 #include "mjpeg_streamer.h"
-#include "frame_broker.h"
+#include "frame_broadcaster.h"
 #include "camera_driver.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
@@ -35,7 +35,7 @@
 #include <string.h>
 #include <stdio.h>
 
-static const char *TAG = "ota_update";
+static const char *TAG = "ota_updater";
 
 /* 串口/上传两条 OTA 路径互斥（契约 v1.3：POST /api/ota URL 触发） */
 static SemaphoreHandle_t s_ota_mutex = NULL;

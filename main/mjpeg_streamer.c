@@ -2,14 +2,14 @@
  * @file mjpeg_streamer.c
  * @brief MJPEG real-time video streaming via independent TCP server on port 81.
  *
- * Captures camera frames via frame_broker and pushes them as a
+ * Captures camera frames via frame_broadcaster and pushes them as a
  * multipart/x-mixed-replace MJPEG stream to TCP clients.
  * Maximum 2 concurrent clients to limit PSRAM usage.
  * Target ~30 FPS with 8 KB chunked transfer.
  */
 
 #include "mjpeg_streamer.h"
-#include "frame_broker.h"
+#include "frame_broadcaster.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"

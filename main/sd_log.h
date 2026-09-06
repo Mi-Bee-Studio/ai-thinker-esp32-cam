@@ -1,12 +1,12 @@
-#ifndef SD_LOGGER_H
-#define SD_LOGGER_H
+#ifndef SD_LOG_H
+#define SD_LOG_H
 
 #include "esp_err.h"
 #include <stdbool.h>
 #include <stdint.h>
 
 /**
- * @file sd_logger.h
+ * @file sd_log.h
  * @brief Buffered SD card logger for severe errors and WiFi anomalies.
  *
  * Design:
@@ -49,4 +49,4 @@ void sd_logf(sd_log_level_t level, const char *tag, const char *fmt, ...)
 #endif
     ;
 
-#endif /* SD_LOGGER_H */
+#endif /* SD_LOG_H */

@@ -12,7 +12,7 @@
 #include "freertos/task.h"
 #include <string.h>
 #include "config_manager.h"
-#include "sd_logger.h"
+#include "sd_log.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 

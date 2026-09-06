@@ -25,7 +25,7 @@
 #include "freertos/task.h"
 #include "motion_detect.h"
 #include "camera_driver.h"
-#include "frame_broker.h"
+#include "frame_broadcaster.h"
 #include "config_manager.h"
 #include "storage_manager.h"
 #include "time_sync.h"

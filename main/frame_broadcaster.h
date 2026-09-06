@@ -1,5 +1,5 @@
-#ifndef FRAME_BROKER_H
-#define FRAME_BROKER_H
+#ifndef FRAME_BROADCASTER_H
+#define FRAME_BROADCASTER_H
 
 #include "esp_camera.h"
 #include "esp_err.h"
@@ -7,7 +7,7 @@
 #include <stdbool.h>
 
 /**
- * @file frame_broker.h
+ * @file frame_broadcaster.h
  * @brief Producer-consumer frame distribution for multi-consumer camera access.
  *
  * Architecture:
@@ -58,4 +58,4 @@ uint32_t frame_broker_get_frame_count(void);
 /** Consecutive capture failures (resets on success). */
 uint32_t frame_broker_get_fail_count(void);
 
-#endif /* FRAME_BROKER_H */
+#endif /* FRAME_BROADCASTER_H */

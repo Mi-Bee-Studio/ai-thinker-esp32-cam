@@ -33,8 +33,8 @@
 #include "at_command.h"
 #include "onvif_discovery.h"
 #include "onvif_service.h"
-#include "frame_broker.h"
-#include "sd_logger.h"
+#include "frame_broadcaster.h"
+#include "sd_log.h"
 
 static const char *TAG = "main";
 

@@ -1,14 +1,14 @@
 /**
- * sd_logger.c - Buffered SD card logger for severe errors and WiFi anomalies
+ * sd_log.c - Buffered SD card logger for severe errors and WiFi anomalies
  *
- * See sd_logger.h for overview.
+ * See sd_log.h for overview.
  *
  * Writer task uses ONLY safe SD operations (mkdir, fopen, fprintf, fclose).
  * Never calls stat/opendir/f_getfree — those hang on the degraded GPIO14
  * SPI bus after camera init.
  */
 
-#include "sd_logger.h"
+#include "sd_log.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -24,7 +24,7 @@
 #include <sys/stat.h>   /* mkdir */
 #include <sys/types.h>
 
-static const char *TAG = "sd_logger";
+static const char *TAG = "sd_log";
 
 #define SD_LOG_QUEUE_LEN    32
 #define SD_LOG_TEXT_MAX     160

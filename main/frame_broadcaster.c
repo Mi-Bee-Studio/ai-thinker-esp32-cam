@@ -1,7 +1,7 @@
 /**
- * frame_broker.c - Producer-consumer frame distribution
+ * frame_broadcaster.c - Producer-consumer frame distribution
  *
- * See frame_broker.h for architecture overview.
+ * See frame_broadcaster.h for architecture overview.
  *
  * The producer task is the ONLY runtime caller of camera_capture().
  * It allocates a new refcounted frame in PSRAM and memcpy's the camera
@@ -16,7 +16,7 @@
  * mutex-protected memcpy design.
  */
 
-#include "frame_broker.h"
+#include "frame_broadcaster.h"
 #include "camera_driver.h"
 #include "mjpeg_streamer.h"
 #include "config_manager.h"
@@ -25,10 +25,10 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "sd_logger.h"
+#include "sd_log.h"
 #include <string.h>
 
-static const char *TAG = "frame_broker";
+static const char *TAG = "frame_broadcaster";
 
 #define BROKER_FPS             15
 #define BROKER_FRAME_DELAY     pdMS_TO_TICKS(1000 / BROKER_FPS)

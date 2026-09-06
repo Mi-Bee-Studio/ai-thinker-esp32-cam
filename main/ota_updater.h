@@ -6,8 +6,8 @@
  * Uses A/B partition scheme with bootloader rollback support.
  */
 
-#ifndef OTA_UPDATE_H
-#define OTA_UPDATE_H
+#ifndef OTA_UPDATER_H
+#define OTA_UPDATER_H
 
 #include "esp_err.h"
 #include "esp_http_server.h"
@@ -52,4 +52,4 @@ esp_err_t handler_api_spiffs_upload(httpd_req_t *req);
  */
 esp_err_t handler_api_ota_url(httpd_req_t *req);
 
-#endif /* OTA_UPDATE_H */
+#endif /* OTA_UPDATER_H */

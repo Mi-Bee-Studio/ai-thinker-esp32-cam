@@ -60,7 +60,7 @@ const char *camera_res_label(int value);
  * Uses PSRAM for frame buffers with dual-buffer streaming.
  *
  * @param resolution   Desired resolution (CAMERA_RES_VGA, etc.)
- * @param fps          Desired frame rate (controls frame_broker capture cadence)
+ * @param fps          Desired frame rate (controls frame_broadcaster capture cadence)
  * @param jpeg_quality JPEG quality 10-63 (CAMERA_QUALITY_MIN..MAX), lower = better
  * @return ESP_OK on success, error code on failure
  */

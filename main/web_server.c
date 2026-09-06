@@ -48,10 +48,10 @@
 
 #include "video_recorder.h"
 #include "onvif_service.h"
-#include "frame_broker.h"
+#include "frame_broadcaster.h"
 #include "esp_wifi.h"
-#include "sd_logger.h"
-#include "ota_update.h"
+#include "sd_log.h"
+#include "ota_updater.h"
 
 #include <string.h>
 #include <stdio.h>
