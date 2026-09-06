@@ -404,13 +404,34 @@ static void close_segment(void)
     put_u32(idx1_hdr + 4, idx1_data_size);
     fwrite(idx1_hdr, 1, 8, s_seg.fp);
 
-    for (int i = 0; i < s_seg.idx.count; i++) {
-        uint8_t entry[16];
-        memcpy(entry, "00dc", 4);                              /* dwChunkId          */
-        put_u32(entry + 4,  AVIIF_KEYFRAME);                   /* dwFlags            */
-        put_u32(entry + 8,  s_seg.idx.entries[i].offset + 4);  /* dwOffset (from movi)*/
-        put_u32(entry + 12, s_seg.idx.entries[i].size);         /* dwSize             */
-        fwrite(entry, 1, 16, s_seg.fp);
+    /* Batch idx1 entries through one PSRAM buffer: 512 entries (8KB) per
+     * fwrite instead of a 16-byte fwrite per frame — a 5-min segment carries
+     * 2500+ entries and per-entry writes dominated the segment-rotation
+     * stall (measured 11.2s→0.93s on the seeed sibling with the same fix). */
+    {
+        const size_t k_chunk_entries = 512;
+        uint8_t *chunk = heap_caps_malloc(k_chunk_entries * 16, MALLOC_CAP_SPIRAM);
+        size_t n = 0;
+        for (int i = 0; i < s_seg.idx.count; i++) {
+            uint8_t entry[16];
+            memcpy(entry, "00dc", 4);                              /* dwChunkId          */
+            put_u32(entry + 4,  AVIIF_KEYFRAME);                   /* dwFlags            */
+            put_u32(entry + 8,  s_seg.idx.entries[i].offset + 4);  /* dwOffset (from movi)*/
+            put_u32(entry + 12, s_seg.idx.entries[i].size);         /* dwSize             */
+            if (chunk) {
+                memcpy(chunk + n * 16, entry, 16);
+                if (++n == k_chunk_entries) {
+                    fwrite(chunk, 1, n * 16, s_seg.fp);
+                    n = 0;
+                }
+            } else {
+                fwrite(entry, 1, 16, s_seg.fp);   /* PSRAM exhausted: per-entry fallback */
+            }
+        }
+        if (chunk) {
+            if (n > 0) fwrite(chunk, 1, n * 16, s_seg.fp);
+            free(chunk);
+        }
     }
 
     /* Patch RIFF size: file_size - 8 */
@@ -636,8 +657,19 @@ static void recording_task(void *arg)
             close_segment();
             segment_open = false;
 
-            /* Safety net: remove any zero-byte files left by close_segment() failures */
-            cleanup_orphan_zero_byte_files();
+            /* Safety net: remove zero-byte files left by close_segment()
+             * failures. Full recursive scan — throttled to at most once per
+             * hour; it used to run at EVERY rotation (5 min) and dominated
+             * the segment-rotation stall (seeed measurement: 11.2s→0.93s). */
+            {
+                static int64_t s_last_orphan_scan_us = 0;
+                int64_t now_us = esp_timer_get_time();
+                if (s_last_orphan_scan_us == 0 ||
+                    now_us - s_last_orphan_scan_us > 3600LL * 1000000) {
+                    cleanup_orphan_zero_byte_files();
+                    s_last_orphan_scan_us = now_us;
+                }
+            }
 
             /* Notify via callback */
             if (s_segment_cb && completed_size > 0) {

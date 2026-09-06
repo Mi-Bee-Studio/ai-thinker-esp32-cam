@@ -898,6 +898,19 @@ uint32_t storage_get_free_space(void)
 {
     if (!s_mounted) return 0;
 
+    /* 60s TTL cache: the health monitor polls this every 10s and f_getfree
+     * is a slow SD transaction on the GPIO14-shared SPI bus — one documented
+     * to hang after camera init (AGENTS GOTCHAS; the old hotplug task was
+     * killed by exactly that). Serving from cache cuts the hang exposure on
+     * this path from six times a minute to one. */
+    static int64_t s_last_free_query_us = 0;
+    static uint32_t s_cached_free_mb = 0;
+    int64_t now_us = esp_timer_get_time();
+
+    if (s_last_free_query_us != 0 && (now_us - s_last_free_query_us) < 60 * 1000000) {
+        return s_cached_free_mb;
+    }
+
     xSemaphoreTake(s_mutex, portMAX_DELAY);
 
     DWORD free_clusters = 0;
@@ -905,14 +918,17 @@ uint32_t storage_get_free_space(void)
     FRESULT res = f_getfree("0:", &free_clusters, &fs);
     if (res != FR_OK || !fs) {
         xSemaphoreGive(s_mutex);
-        return 0;
+        return s_cached_free_mb;   /* transient error: serve stale, not 0 */
     }
 
     uint64_t cluster_size = (uint64_t)fs->ssize * fs->csize;
     uint64_t free_bytes = (uint64_t)free_clusters * cluster_size;
 
     xSemaphoreGive(s_mutex);
-    return (uint32_t)(free_bytes / (1024 * 1024));
+
+    s_cached_free_mb = (uint32_t)(free_bytes / (1024 * 1024));
+    s_last_free_query_us = now_us;
+    return s_cached_free_mb;
 }
 
 uint32_t storage_get_photo_count(void)
