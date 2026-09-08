@@ -437,3 +437,23 @@ For panic/backtrace analysis: the ELF at `build/mibee_cam.elf` + `xtensa-esp32-e
    `s_lm_inited && frame_no≥30`。
 3. 验收浸泡（终版固件）：10min 仅 1 次触发（用户真实运动），探针周期零诱发，
    LED 照度阶跃×3 零误触，VGA/SVGA 双几何冷启动干净。
+
+## 2026-09-06：ESPectre CSI 运动感知（家族推广，本板=仅感知可用 ⚠️）
+
+`components/espectre/` + `main/csi_motion.*`。**启动位次关键**：必须放在
+`mjpeg_stream_server_start(81)` **之后**（延迟 STA 连接回调里）——CSI 运行时
+早期启动会把 lwIP 池打爆，:81 监听 socket ENOBUFS(errno 105) 推流全灭（实测）。
+门开 +82.8KB（1.5MB 槽余 ~247KB）。初代 ESP32 CSI 硬件路径成立（自动选
+**LLTF20** 档，S3 板为 HT20），校准 OK(thr=0.56)、无崩溃——但**内部 RAM 是
+天花板**：初代无外置任务栈、WiFi 缓冲不可迁 PSRAM，CSI 吃 ~100KB 内部堆，
+free internal 只剩 ~5KB → MJPEG 客户端任务(4KB 栈)创建失败，推流不可用。
+感知✓ 推流✗。本板 Web OTA 在 -70dBm 弱链路对 TCP 长流不可用（刷前即如此，
+与 CSI 无关），交付走 USB。详见 PITFALLS PIT-034。
+
+**2026-09-08 政策反转（摄像头优先，PIT-038 补遗二）**：本板回退 CSI-off
+生产固件（sdkconfig `CONFIG_MIBEE_CSI_MOTION=n` 重建，Web OTA 翻 ota_0；
+PIT-037 修复后弱链 OTA 实测两轮全通，断链 56 竞态=镜像已写完抢先重启）：
+`csi_motion` 位消失、capture 0.5-0.8s、堆 3.9MB、:81 恢复服务。同日锤击
+护栏升级 v2（4 项每-IP 退避表，同 IP 接入 <5s → 503 封顶 300s，正常观众
+~7s SPA 自愈重连不受影响）。CSI 试验结论定稿：初代板感知+推流互斥，
+生产形态=CSI 关。

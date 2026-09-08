@@ -11,6 +11,7 @@
 #include "mjpeg_streamer.h"
 #include "frame_broadcaster.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -20,6 +21,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <lwip/sockets.h>
+#include <lwip/inet.h>
 #include <lwip/netdb.h>
 #include <netinet/tcp.h>
 
@@ -288,6 +290,70 @@ static void mjpeg_listen_task(void *arg)
         struct timeval snd_to = { .tv_sec = 10, .tv_usec = 0 };
         setsockopt(client_sock, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof(snd_to));
 
+        /* 对端溯源（PIT-038）：重连风暴/锤击定位，accept 即记 IP */
+        {
+            char cip[INET_ADDRSTRLEN] = "?";
+            inet_ntop(AF_INET, &client_addr.sin_addr, cip, sizeof(cip));
+            ESP_LOGI(TAG, "Stream accept from %s (internal=%u)",
+                     cip,
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        }
+
+        /* 防锤击护栏（PIT-038；2026-09-08 多 peer 化）：同 IP 两次接入间隔
+         * <5s（NVR 类查看端 1-2s 重连风暴签名）→ 503 + 指数退避（10s 起
+         * 步翻倍、封顶 5 分钟）；正常观众（SPA 被踢后 ~7s 自愈重连）不受
+         * 影响。旧单 IP 追踪会被"锤子+观众交替接入"互洗（新 IP 接入即重置
+         * 追踪对象，锤子借观众穿透踢线），故改 4 项每 IP 独立退避表（环
+         * 替换）。拒绝静默计数（防日志风暴）。 */
+        {
+            enum { HAMMER_SLOTS = 4, HAMMER_MIN_GAP_MS = 5000 };
+            static struct {
+                struct in_addr peer;
+                TickType_t last_accept;   /* 上次放行时刻 */
+                TickType_t until;         /* 退避截止 */
+                uint32_t backoff_ms;
+                uint32_t rejected;
+            } s_hammer[HAMMER_SLOTS];
+            static int s_hammer_next;
+            TickType_t now = xTaskGetTickCount();
+            int h = -1;
+            for (int i = 0; i < HAMMER_SLOTS; i++) {
+                if (s_hammer[i].peer.s_addr == client_addr.sin_addr.s_addr) {
+                    h = i;
+                    break;
+                }
+            }
+            if (h >= 0 && ((int32_t)(now - s_hammer[h].until) < 0 ||
+                           (int32_t)(now - s_hammer[h].last_accept) <
+                               pdMS_TO_TICKS(HAMMER_MIN_GAP_MS))) {
+                s_hammer[h].until = now + pdMS_TO_TICKS(s_hammer[h].backoff_ms);
+                s_hammer[h].backoff_ms = s_hammer[h].backoff_ms < 300000
+                                             ? s_hammer[h].backoff_ms * 2 : 300000;
+                if (++s_hammer[h].rejected % 50 == 1) {
+                    char ipstr[INET_ADDRSTRLEN];
+                    inet_ntop(AF_INET, &client_addr.sin_addr, ipstr, sizeof(ipstr));
+                    ESP_LOGI(TAG, "Hammer guard: rejected %u from %s (backoff %us)",
+                             (unsigned)s_hammer[h].rejected, ipstr,
+                             s_hammer[h].backoff_ms / 1000);
+                }
+                const char *busy =
+                    "HTTP/1.1 503 Service Unavailable\r\n"
+                    "Content-Length: 23\r\n\r\nRetry after cooldown\r\n";
+                send(client_sock, busy, strlen(busy), 0);
+                close(client_sock);
+                continue;
+            }
+            if (h < 0) {
+                h = s_hammer_next;
+                s_hammer_next = (s_hammer_next + 1) % HAMMER_SLOTS;
+                s_hammer[h].rejected = 0;
+                s_hammer[h].until = 0;
+            }
+            s_hammer[h].peer = client_addr.sin_addr;
+            s_hammer[h].last_accept = now;
+            s_hammer[h].backoff_ms = 10000;
+        }
+
         /* 单槽位：已有连接（含滞留僵尸）一律让位给新连接（用户刚打开的页面） */
         bool slot_ready = false;
         xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -337,6 +403,9 @@ static void mjpeg_listen_task(void *arg)
     }
 
     ESP_LOGI(TAG, "Listen task exiting");
+    /* 自清全局句柄：stop() 轮询此标志判断任务已退，避免对已死任务
+     * vTaskDelete 悬垂句柄（2026-09-07 OTA quiesce 必崩实锤）。 */
+    s_listen_task = NULL;
     vTaskDelete(NULL);
 }
 
@@ -421,16 +490,19 @@ void mjpeg_streamer_stop(void)
 {
     /* Stop the listen task */
     s_running = false;
-    
+
     /* Close listen socket to unblock accept() */
     if (s_listen_sock >= 0) {
         close(s_listen_sock);
         s_listen_sock = -1;
     }
-    
-    /* Give time for tasks to exit */
-    vTaskDelay(pdMS_TO_TICKS(200));
-    
+
+    /* 轮询等待任务自退（退出前自清 s_listen_task），最多 1s；仅当任务
+     * 真正卡死（句柄仍非 NULL = TCB 仍有效）才强制删除——盲删可能已
+     * 自退任务的悬垂句柄是 LoadProhibited 崩溃源（2026-09-07）。 */
+    for (int i = 0; i < 100 && s_listen_task != NULL; i++) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
     if (s_listen_task != NULL) {
         vTaskDelete(s_listen_task);
         s_listen_task = NULL;

@@ -95,3 +95,21 @@ CONFIG_LWIP_TCP_MSL=15000
 # OTA firmware update (A/B partitions + bootloader rollback)
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 CONFIG_APP_ROLLBACK_ENABLE=y
+
+# 2026-09-06 实测（PIT-034）：SPIRAM_TRY_ALLOCATE_WIFI_LWIP 是 S3 专属配方，
+# 初代 ESP32 上开启反致全系统任务创建失败（csi/onvif/motion 任务皆挂、
+# httpd 探针走向自愈重启）——本板禁止开启。
+# CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP is not set
+
+# ESPectre CSI 运动感知（2026-09-06 家族推广，PIT-034）：栅格 pps 是链路预算，
+# 四仓统一 10（拥塞/弱链路下 admitted 才能过 70% 槽占用下限）。
+CONFIG_ESPECTRE_CSI_TARGET_PPS=10
+
+# PIT-038 Anti-stranding lwIP TCP tuning (tight-heap board): aborted transfer's dead
+# connection would pin the entire TCP_SND_BUF in the retransmission black hole (measured: one
+# mid-transfer death strands >10KB → heap drops to min 200B → send:113 storm).
+# 4×MSS send buffer cap + halved retransmission count, dead connections are torn down within ~1 minute,
+# throughput is sufficient for gzipped UI (17KB).
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=5760
+CONFIG_LWIP_TCP_MAXRTX=6
+CONFIG_LWIP_TCP_SYNMAXRTX=6

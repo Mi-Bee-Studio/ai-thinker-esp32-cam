@@ -1320,7 +1320,7 @@ static esp_err_t handler_api_capabilities(httpd_req_t *req)
 
     cJSON *data = cJSON_CreateObject();
     /* 契约 v1.0：12 个布尔能力位 + api_version/wifi_scan（见 docs/api-contract.md） */
-    cJSON_AddStringToObject(data, "api_version", "1.3");
+    cJSON_AddStringToObject(data, "api_version", "1.5");
     cJSON_AddBoolToObject(data, "wifi_scan", true);
     /* ai-thinker capabilities matrix */
     cJSON_AddBoolToObject(data, "ai", false);
@@ -1336,6 +1336,11 @@ static esp_err_t handler_api_capabilities(httpd_req_t *req)
     cJSON_AddBoolToObject(data, "websocket", false);
     cJSON_AddBoolToObject(data, "mdns", false);
 
+
+#if CONFIG_MIBEE_CSI_MOTION
+    /* 契约 v1.4：WiFi CSI 运动感知（编译期门控，恒定；true ⇒ /ws csi_status 心跳） */
+    cJSON_AddBoolToObject(data, "csi_motion", true);
+#endif
     return send_json_ok(req, data);
 }
 
@@ -1733,7 +1738,23 @@ static esp_err_t handler_static(httpd_req_t *req)
         return ESP_OK;  /* response already sent — ESP_FAIL would confuse httpd */
     }
 
-    FILE *f = fopen(filepath, "r");
+    /* gzip 协商（PIT-038）：客户端支持且 SPIFFS 有 <path>.gz 时优先发送
+     * （tools/compress_ui.py 产物，~4x 缩身）。紧堆板（本板内部 RAM /
+     * luatos 无 PSRAM）开 CSI 后裸发大资产会在 0-4KB 处卡死——lwIP TX
+     * pbuf 撑不住。Content-Type 仍按原始路径判定。 */
+    char gzpath[576];
+    snprintf(gzpath, sizeof(gzpath), "%s.gz", filepath);
+    FILE *f = NULL;
+    char ae[64] = {0};
+    if (httpd_req_get_hdr_value_str(req, "Accept-Encoding", ae, sizeof(ae)) == ESP_OK &&
+        strstr(ae, "gzip") != NULL &&
+        (f = fopen(gzpath, "r")) != NULL) {
+        httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+        httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
+    }
+    if (!f) {
+        f = fopen(filepath, "r");
+    }
     if (!f) {
         httpd_resp_send_404(req);
         return ESP_OK;  /* response already sent — ESP_FAIL would confuse httpd */
@@ -1913,6 +1934,9 @@ esp_err_t web_server_start(uint16_t port)
     config.server_port = port;
     config.max_uri_handlers = 40;  /* 27 API + 2 wildcard + 2 ONVIF + headroom */
     config.stack_size = 8192;
+    /* PIT-038：默认 7（含 3 内部保留=客户端仅 4 槽），浏览器首屏 6 并发 +
+     * WS + 健康自探测超限 → app.js/i18n.js 随机夭折 → SPA 静态壳死页 */
+    config.max_open_sockets = 10;
     config.recv_wait_timeout = 10;    /* longer tolerance for slow WiFi */
     config.send_wait_timeout = 5;     /* free stalled connections faster (keepalive is primary) */
     config.lru_purge_enable = true;   /* clean up stale connections */

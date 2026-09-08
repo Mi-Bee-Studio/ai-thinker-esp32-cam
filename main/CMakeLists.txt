@@ -26,6 +26,7 @@ idf_component_register(
         "lm_motion.c"
         "lm_jpeg.c"
         "lm_dark_probe.c"
+        "csi_motion.cpp"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi
@@ -51,4 +52,5 @@ idf_component_register(
         app_update
         log
         tjpgd
+        espectre
     )

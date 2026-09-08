@@ -21,6 +21,7 @@
 #include "config_manager.h"
 #include "status_led.h"
 #include "wifi_manager.h"
+#include "csi_motion.h"
 #include "camera_driver.h"
 #include "health_monitor.h"
 #include "mjpeg_streamer.h"
@@ -105,7 +106,8 @@ static void sta_services_task(void *arg)
     }
 
 
-    /* Start MJPEG streamer (once) */
+    /* Start MJPEG streamer (once) — init 只建互斥锁；真正的 :81 监听在
+     * WiFi 连上后的 mjpeg_stream_server_start（PIT-038 处按 CSI 门控拦截）。 */
     if (!s_mjpeg_started) {
         esp_err_t ret = mjpeg_streamer_init();
         if (ret == ESP_OK) {
@@ -155,8 +157,21 @@ static void sta_services_task(void *arg)
     }
 
     /* Start MJPEG streamer on port 81 (independent TCP server) */
+#if CONFIG_MIBEE_CSI_MOTION
+    /* PIT-038：CSI 感知模式不起 :81（内部 RAM 天花板下流本就不可用，起端口
+     * 只会招致 NVR 类查看端重连风暴）。注意拦的是 server_start（真起监听）；
+     * init()（建互斥锁）保留不动——get_client_count 等仍引用。 */
+    ESP_LOGW(TAG, "MJPEG stream server disabled (CSI sensing mode, PIT-038)");
+#else
     mjpeg_stream_server_start(81);
     ESP_LOGI(TAG, "MJPEG streamer started on port 81");
+#endif
+
+    /* ESPectre CSI motion sensing (optional) — started AFTER the :81 listen
+     * socket: the sensing runtime + traffic generator add lwIP sockets, and
+     * an earlier start starved the pool (listen socket ENOBUFS errno 105,
+     * 2026-09-06). ESPectre handles late join itself. */
+    csi_motion_init();
 
     /* Start ONVIF WS-Discovery (once) — after web server so SOAP handlers are registered.
      * 契约核心字段 onvif_enable（本板默认 1；关闭时不启动发现，SOAP 处理器
@@ -421,6 +436,7 @@ void app_main(void)
             }
         }
 
+        /* init 只建互斥锁（PIT-038：真 :81 启动在下方 AP 路径按门控拦截） */
         ret = mjpeg_streamer_init();
         if (ret == ESP_OK) {
             s_mjpeg_started = true;
@@ -433,8 +449,13 @@ void app_main(void)
         }
 
     /* Start MJPEG streamer on port 81 (independent TCP server) */
+#if CONFIG_MIBEE_CSI_MOTION
+    /* PIT-038：同 STA 路径——CSI 感知模式不起 :81（拦真启动，init 保留） */
+    ESP_LOGW(TAG, "MJPEG stream server disabled (CSI sensing mode, PIT-038)");
+#else
     mjpeg_stream_server_start(81);
     ESP_LOGI(TAG, "MJPEG streamer started on port 81 (AP mode)");
+#endif
 
         /* Initialize timelapse (AP mode) */
         if (!s_timelapse_started) {
