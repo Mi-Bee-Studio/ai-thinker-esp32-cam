@@ -497,3 +497,31 @@ PIT-037 修复后弱链 OTA 实测两轮全通，断链 56 竞态=镜像已写�
 - ⚠️ 待决：defaults 里 `CONFIG_MIBEE_CSI_MOTION=y` 系 PIT-039 调试期遗留——按
   2026-09-08 摄像头优先政策本板生产应为 CSI-off；2026-09-09 OTA 部署的镜像带着
   CSI-on（实测标定 OK、推流并存正常）。是否回退由用户拍板。
+
+## CSI 替代 ΣΔ 运动拍照（2026-09-09 转正，PIT-040）
+
+上方"⚠️ 待决"已由用户拍板解决：**CSI-on 转正为本板生产形态**，ESPectre 运动判决
+替代 ΣΔ 像素管线作为拍照触发（`sdkconfig.defaults` 的 `CONFIG_MIBEE_CSI_MOTION=y`
+不再是遗留，是设计）。架构（`motion_detect.c` 的 CSI 分支）：
+
+- **触发**：250ms 轮询 `csi_motion_get_status()` 快照（csi_motion.cpp 移植 seeed
+  portMUX 快照；状态转移回调也落快照，否则 <1s 的 MOTION 片段会被 ~1Hz 周期
+  更新漏采）。ΣΔ 逐帧解码 + ~60KB **内部**工作缓冲退役——这是 CSI/:81 互斥门
+  （PIT-038）解除的资源前提；流/CSI/拍照三线并存。
+- **暗场三级判定**（`scene_dark_decision`）：探针缓存 <120s 直用 → 录制中单帧
+  自动曝光 luma 兜底（不上 AEC 锁，不污染录制流）→ 按需锁定曝光探针（NVR
+  常驻观看饿死周期探针时仍能拿正确判决，代价 ~2 帧观看流曝光异常）。
+- **闪光预热红线**："丢弃 N 帧再抓"必须以**发布序号**为界
+  （`frame_broker_current_gen` + `frame_broker_get_copy_after(gen0+3)`）——
+  `get_copy` 恒返回当前帧，按次丢弃丢的是同一帧（PIT-040 主坑，修复前后
+  成片 13.5KB vs 36.9-48.3KB）。`frame_broker_boost(ms)` 拍照窗口空闲 2→5fps。
+- **保存后画廊可见**：GPIO14 使运行期 opendir 不可靠 → 保存进 pending 数组
+  （portMUX），`storage_get_photo_list_json` 并入缓存。照片**内容**运行期读不出
+  （fread 200+0B）是既有硬件局限，验证成片看列表里的字节数。
+- **ESPectre 自适应阈值语义**：死寂环境 thr 可自适应降到 ~0.03（微扰即触发），
+  活动环境 ~0.4-0.75——评估"灵敏度"时先看 `/api/status` 的 `csi.thr`。
+
+**验证（2026-09-09）**：手动闪光对照 41-46KB；自然事件 09:52/10:16/10:48 =
+44.4/48.3/40.6KB 全打亮；6h soak 见 `soak/csi_photo/`（含两轮历史
+`csi_photo_round1_buggy_warmup` / `csi_photo_round2_warmup_fix`）。门关形态
+（家族回退路径）fullclean 编译通过（0x130340）。
