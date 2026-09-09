@@ -54,6 +54,7 @@
 #include "esp_wifi.h"
 #include "sd_log.h"
 #include "ota_updater.h"
+#include "csi_motion.h"   /* 契约 v1.7：CSI 调参面（本板 CSI-off stub；/api/csi/calibrate 恒 404） */
 
 #include <string.h>
 #include <stdio.h>
@@ -401,6 +402,13 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "wifi_roam_rssi", (double)cfg->wifi_roam_rssi);
     cJSON_AddNumberToObject(data, "wifi_roam_gap_s", (double)cfg->wifi_roam_gap_s);
     cJSON_AddNumberToObject(data, "onvif_enable", (double)cfg->onvif_enable);
+    /* CSI 感知调参键族（契约 v1.7 §3.2；本板 CSI-off 生产形态，存储无害） */
+    cJSON_AddBoolToObject(data, "csi_enabled", cfg->csi_enabled != 0);
+    cJSON_AddNumberToObject(data, "csi_threshold", (double)cfg->csi_threshold);
+    cJSON_AddNumberToObject(data, "csi_on_hits", (double)cfg->csi_on_hits);
+    cJSON_AddNumberToObject(data, "csi_off_hits", (double)cfg->csi_off_hits);
+    cJSON_AddNumberToObject(data, "csi_profile", (double)cfg->csi_profile);
+    cJSON_AddBoolToObject(data, "csi_auto_heal", cfg->csi_auto_heal != 0);
     cJSON_AddNumberToObject(data, "schema_version", (double)CONFIG_SCHEMA_VERSION);
 
     return send_json_ok(req, data);
@@ -646,6 +654,72 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
     /* ONVIF 开关（契约核心字段，重启生效） */
     if ((item = cJSON_GetObjectItem(json, "onvif_enable")) && cJSON_IsNumber(item)) {
         config_set_onvif_enable(item->valueint ? 1 : 0);
+    }
+
+    /* CSI 调参键族（契约 v1.7 §3.2；本板 CSI-off 生产形态，接受存储但运行时
+     * 无效果——csi_motion stub 为空实现/NOT_SUPPORTED，写路径幂等无害） */
+    {
+        const cam_config_t *cur = config_get();
+        const float prev_csi_threshold = cur->csi_threshold;
+        bool csi_changed = false;
+        uint8_t c_en = cur->csi_enabled;
+        float c_thr = cur->csi_threshold;
+        uint8_t c_on = cur->csi_on_hits;
+        uint8_t c_off = cur->csi_off_hits;
+        uint8_t c_prof = cur->csi_profile;
+        uint8_t c_heal = cur->csi_auto_heal;
+
+        if ((item = cJSON_GetObjectItem(json, "csi_enabled"))) {
+            c_en = item->valueint ? 1 : 0;
+            csi_changed = true;
+        }
+        if ((item = cJSON_GetObjectItem(json, "csi_threshold"))) {
+            double val = item->valuedouble;
+            if (val != 0.0 && (val < 0.05 || val > 1.0)) {
+                cJSON_Delete(json);
+                return send_json_error(req, "Invalid csi_threshold (must be 0=auto or 0.05-1.0)", 400);
+            }
+            c_thr = (float)val;
+            csi_changed = true;
+        }
+        if (cJSON_GetObjectItem(json, "csi_on_hits") ||
+            cJSON_GetObjectItem(json, "csi_off_hits")) {
+            cJSON *on_item = cJSON_GetObjectItem(json, "csi_on_hits");
+            cJSON *off_item = cJSON_GetObjectItem(json, "csi_off_hits");
+            int on = (on_item && cJSON_IsNumber(on_item)) ? on_item->valueint : cur->csi_on_hits;
+            int off = (off_item && cJSON_IsNumber(off_item)) ? off_item->valueint : cur->csi_off_hits;
+            if (on < 1 || on > 20 || off < 1 || off > 20) {
+                cJSON_Delete(json);
+                return send_json_error(req, "Invalid csi hits (must be 1-20)", 400);
+            }
+            c_on = (uint8_t)on;
+            c_off = (uint8_t)off;
+            csi_changed = true;
+        }
+        if ((item = cJSON_GetObjectItem(json, "csi_profile"))) {
+            int val = item->valueint;
+            if (val < 0 || val > 1) {
+                cJSON_Delete(json);
+                return send_json_error(req, "Invalid csi_profile (must be 0=lightweight 1=high-accuracy)", 400);
+            }
+            c_prof = (uint8_t)val;
+            csi_changed = true;
+        }
+        if ((item = cJSON_GetObjectItem(json, "csi_auto_heal"))) {
+            c_heal = item->valueint ? 1 : 0;
+        }
+
+        if (csi_changed) {
+            esp_err_t csi_ret = config_set_csi(c_en, c_thr, c_on, c_off, c_prof, c_heal);
+            if (csi_ret == ESP_OK) {
+                /* 显式从手动锁定改回 0=恢复自动语义（重校准 + 重新启用
+                 * settle）；apply_config 幂等，CSI-off stub 为空实现 */
+                if (c_thr == 0.0f && prev_csi_threshold > 0.0f) {
+                    csi_motion_set_threshold(0.0f);
+                }
+                csi_motion_apply_config();
+            }
+        }
     }
 
     /* Vflip (apply immediately via sensor register) */
@@ -896,6 +970,33 @@ static esp_err_t handler_api_reboot(httpd_req_t *req)
     vTaskDelay(pdMS_TO_TICKS(1000));
     esp_restart();
     return ESP_OK;
+}
+
+/* ------------------------------------------------------------------ */
+/*  POST /api/csi/calibrate                                            */
+/* ------------------------------------------------------------------ */
+
+/** @brief 触发 CSI 立即重校准（契约 v1.7；write auth）。本板 CSI-off 生产
+ *  形态：csi_motion_recalibrate() stub 恒返 ESP_ERR_NOT_SUPPORTED → 404。
+ *  背景执行，进度见串口日志。 */
+static esp_err_t handler_api_csi_calibrate(httpd_req_t *req)
+{
+    esp_err_t auth_ret = require_auth(req, "/api/csi/calibrate");
+    if (auth_ret != ESP_OK) {
+        return auth_ret;
+    }
+
+    esp_err_t ret = csi_motion_recalibrate();
+    if (ret == ESP_ERR_NOT_SUPPORTED) {
+        return send_json_error(req, "CSI sensing not built", HTTPD_404_NOT_FOUND);
+    }
+    if (ret != ESP_OK) {
+        return send_json_error(req, "CSI runtime not ready", 503);
+    }
+
+    cJSON *data = cJSON_CreateObject();
+    cJSON_AddStringToObject(data, "message", "CSI recalibration started");
+    return send_json_ok(req, data);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1342,7 +1443,7 @@ static esp_err_t handler_api_capabilities(httpd_req_t *req)
 
     cJSON *data = cJSON_CreateObject();
     /* 契约 v1.0：12 个布尔能力位 + api_version/wifi_scan（见 docs/api-contract.md） */
-    cJSON_AddStringToObject(data, "api_version", "1.5");
+    cJSON_AddStringToObject(data, "api_version", "1.7");
     cJSON_AddBoolToObject(data, "wifi_scan", true);
     /* ai-thinker capabilities matrix */
     cJSON_AddBoolToObject(data, "ai", false);
@@ -1876,6 +1977,7 @@ static const uri_entry_t s_uris[] = {
     { "/api/config",   HTTP_POST,   handler_api_config_post  },
     { "/api/reset",    HTTP_POST,   handler_api_reset        },
     { "/api/reboot",   HTTP_POST,   handler_api_reboot       },
+    { "/api/csi/calibrate", HTTP_POST, handler_api_csi_calibrate },  /* 契约 v1.7 */
     { "/api/capture",  HTTP_GET,    handler_capture          },
     { "/metrics",      HTTP_GET,    handler_metrics          },
     { "/api/files",    HTTP_GET,    handler_api_files        },
