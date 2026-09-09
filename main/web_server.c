@@ -42,6 +42,8 @@
 #include "motion_detect.h"
 #include "flash_led.h"
 #include "time_sync.h"
+#include "lwip/sockets.h"   /* log_404_peer: getpeername/inet_ntop */
+#include "lwip/inet.h"
 #include "timelapse.h"
 #include "esp_spiffs.h"
 #include "esp_heap_caps.h"   /* free_psram：本板有 4MB PSRAM（2026-09-04 API 对齐三姐妹板） */
@@ -71,6 +73,25 @@ static httpd_handle_t s_server = NULL;
 static esp_err_t send_json_error(httpd_req_t *req, const char *msg, int http_code);
 static esp_err_t send_unauthorized(httpd_req_t *req);
 static char *read_body(httpd_req_t *req, size_t max_len);
+
+/* 404 必带来源（issue #8 / MiBeeNvr#723 收尾）：:80 上 2.1s 间隔的 404
+ * 轮询突发此前只记 404 不记 URI/来源 IP，无法指认是 NVR、浏览器还是
+ * 设备侧页面轮询。现在每个 404 都记 方法+URI+peer IP。 */
+static void log_404_peer(httpd_req_t *req)
+{
+    char ipstr[INET_ADDRSTRLEN] = "?";
+    int fd = httpd_req_to_sockfd(req);
+    if (fd >= 0) {
+        struct sockaddr_in peer;
+        socklen_t plen = sizeof(peer);
+        if (getpeername(fd, (struct sockaddr *)&peer, &plen) == 0) {
+            inet_ntop(AF_INET, &peer.sin_addr, ipstr, sizeof(ipstr));
+        }
+    }
+    ESP_LOGW(TAG, "404: %s %s from %s",
+             http_method_str(req->method), req->uri, ipstr);
+}
+
 /* ------------------------------------------------------------------ */
 /*  JSON / HTTP helpers                                                */
 /* ------------------------------------------------------------------ */
@@ -1208,6 +1229,7 @@ static esp_err_t handler_api_download(httpd_req_t *req)
 
     FILE *f = fopen(filepath, "rb");
     if (!f) {
+        log_404_peer(req);
         return send_json_error(req, "file not found", 404);
     }
 
@@ -1734,6 +1756,7 @@ static esp_err_t handler_static(httpd_req_t *req)
 
     /* Security: reject path traversal */
     if (strstr(filepath, "..") != NULL) {
+        log_404_peer(req);
         httpd_resp_send_404(req);
         return ESP_OK;  /* response already sent — ESP_FAIL would confuse httpd */
     }
@@ -1756,6 +1779,7 @@ static esp_err_t handler_static(httpd_req_t *req)
         f = fopen(filepath, "r");
     }
     if (!f) {
+        log_404_peer(req);
         httpd_resp_send_404(req);
         return ESP_OK;  /* response already sent — ESP_FAIL would confuse httpd */
     }
