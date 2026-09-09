@@ -6,7 +6,6 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_BOOT_INIT=y
 CONFIG_SPIRAM_USE_MALLOC=y
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
 
 # Camera - PSRAM DMA disabled for ESP32 (not S2/S3)
 # DMA-capable PSRAM allocation fails on original ESP32
@@ -113,3 +112,24 @@ CONFIG_ESPECTRE_CSI_TARGET_PPS=10
 CONFIG_LWIP_TCP_SND_BUF_DEFAULT=5760
 CONFIG_LWIP_TCP_MAXRTX=6
 CONFIG_LWIP_TCP_SYNMAXRTX=6
+
+# 2026-09-08 晚（PIT-039）：AMPDU TX/RX 关闭（n16r8 同款配方）。
+# 弱链路（-69dBm HT20）上 AMPDU 聚合帧反复重传成黑洞：小请求（ping/
+# api/status）能过，任何 >~6KB 的批量流（app.js/推流帧）填满一个发送
+# 窗口（5760B）后零进展——搁浅点反复恰好停在 6072B=8×MSS。关 AMPDU
+# 后逐帧 ACK，大流量可推进（n16r8 2026-09-04 复测维持 =n 的依据）。
+CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=n
+CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=n
+
+# 2026-09-08 晚（PIT-039）：16384→3072。内部 RAM 贴地（~27KB 且碎片化）
+# 是流任务/运动任务/httpd 任务创建失败的总根因；≤16KB 的 malloc 全部
+# 挤内部堆是主要压力源。>3KB 的冷缓冲（文件读/cJSON/ONVIF XML）让去
+# PSRAM——此级别分配非热路径，缓存访问的代价可接受。
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=3072
+
+# 2026-09-09：CSI 触发模式上线（替代 ΣΔ 像素运动触发，用户决策）。
+# ESPectre RF 域判定免疫黑暗/AEC 扰动/闪光灯自触发；ΣΔ 逐帧解码与其
+# ~60KB 内部工作缓冲退役，ESPectre ~22KB 内部成本净掉有余（PIT-038 的
+# CSI/:81 互斥门同步解除）。运动拍照链在 motion_detect.c 的 CSI 分支：
+# 250ms 快照轮询 → 三级暗场判定（缓存/录制兜底/按需探针）→ 闪光灯。
+CONFIG_MIBEE_CSI_MOTION=y

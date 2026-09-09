@@ -457,3 +457,32 @@ PIT-037 修复后弱链 OTA 实测两轮全通，断链 56 竞态=镜像已写�
 护栏升级 v2（4 项每-IP 退避表，同 IP 接入 <5s → 503 封顶 300s，正常观众
 ~7s SPA 自愈重连不受影响）。CSI 试验结论定稿：初代板感知+推流互斥，
 生产形态=CSI 关。
+
+## 2026-09-08 深夜："web+NVR 双失效"四层根因修复（PIT-039，已上板验证）
+
+用户报 web 与 NVR 全不可用。四层叠加根因 + 两个坑中坑，全部修复并 USB 上板
+（当时 httpd 挂死、OTA 通道不可用；flash 后须 `esptool --no-stub run`）：
+
+1. **AMPDU TX/RX 关闭**（sdkconfig.defaults 落档，n16r8 配方）：弱链 -69dBm 上
+   聚合帧重传黑洞——>6KB 批量流填满一个 TCP_SND_BUF(5760) 后零进展（搁浅点
+   反复 6072B=8×MSS），小请求照常。这是"小 JSON 秒回、app.js 搁浅 20-30s、
+   推流 0 帧"的公共根因。
+2. **护栏续期语义修正**（mjpeg_streamer.c，luatos 源码已同步待烧）：退避窗口内
+   只有**新的 <5s 违规**才续期+翻倍；在窗但守规矩的重连（NVR 15s 梯子）被拒不
+   续期，窗口自然过期即重新入内。旧逻辑把 NVR 永久锁死（单日拒 2 万+）。
+3. **内部 RAM 纪律**：流 worker/listen 持久化 + `xTaskCreateStatic`（listen 经
+   长度 1 队列递 fd，零运行期任务创建；stop 不再删互斥锁/队列/worker）；
+   motion 任务静态栈；motion 30KB ΣΔ 网格 `.bss`→PSRAM；`SPIRAM_MALLOC_ALWAYSINTERNAL`
+   16384→3072；httpd 启动 5×2s 重试。**红线：`config.stack_size` 不得低于 8192**
+   ——handler_static 栈上局部 ~5.3KB，6144 实测溢出（静态文件 0B/6.77s RST +
+   连环重启）。修后 internal 开机 59KB（CSI-off 树历史最好）。
+4. **漫游扫描退避**（wifi_manager.c）：连续无益扫描 ×4 递增退避至 900s；
+   链路较上次扫描恶化 ≥6dB 或真漫游即重置。
+5. **CSI-off stub 补全**（csi_motion.cpp）：`#else` 补 `csi_motion_get_status`
+   ——此前门关链接必炸（当晨构建靠 build/ 陈旧 sdkconfig.h 糊过）。改 sdkconfig
+   门控后必须全量重链验证。
+6. 顺带修掉 listen 任务 stray `xSemaphoreGive`（无配对 Take，可致互斥锁失效）。
+
+**验证基线（23:47 固件）**：app.js gz 0.23-0.33s / capture 0.27s / 探针 4.2fps
+@76KB/s（≈09-04 基线）/ soak cycle98 5.06fps / NVR 持续占流 / 无自愈重启。
+交付链：构建 g1714199-dirty（工作树含未提交改动，与 21:47 Retry-After 批同批）。

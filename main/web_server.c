@@ -40,6 +40,7 @@
 #include "mjpeg_streamer.h"
 #include "health_monitor.h"
 #include "motion_detect.h"
+#include "csi_motion.h"  /* 契约 v1.6：/api/status 的 csi 快照字段（本板 CSI-off 恒缺省） */
 #include "flash_led.h"
 #include "time_sync.h"
 #include "timelapse.h"
@@ -52,6 +53,8 @@
 #include "esp_wifi.h"
 #include "sd_log.h"
 #include "ota_updater.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -324,6 +327,20 @@ static esp_err_t handler_api_status(httpd_req_t *req)
 
     /* Flash LED */
     cJSON_AddBoolToObject(data, "flash_on", flash_led_is_on());
+
+    /* CSI 实时快照（契约 v1.6，与 /ws csi_status 心跳同形）。本板为 CSI-off
+     * 生产形态（PIT-038 补遗二），stub 恒 false → 字段缺省；源码保持四仓
+     * 对齐，未来重开 CSI 无需改此处 */
+    csi_motion_status_t csi;
+    if (csi_motion_get_status(&csi)) {
+        cJSON *csi_obj = cJSON_CreateObject();
+        if (csi_obj) {
+            cJSON_AddStringToObject(csi_obj, "state", csi.state);
+            cJSON_AddNumberToObject(csi_obj, "score", (double)csi.score);
+            cJSON_AddNumberToObject(csi_obj, "thr", (double)csi.thr);
+            cJSON_AddItemToObject(data, "csi", csi_obj);
+        }
+    }
 
     return send_json_ok(req, data);
 }
@@ -1320,7 +1337,7 @@ static esp_err_t handler_api_capabilities(httpd_req_t *req)
 
     cJSON *data = cJSON_CreateObject();
     /* 契约 v1.0：12 个布尔能力位 + api_version/wifi_scan（见 docs/api-contract.md） */
-    cJSON_AddStringToObject(data, "api_version", "1.5");
+    cJSON_AddStringToObject(data, "api_version", "1.6");
     cJSON_AddBoolToObject(data, "wifi_scan", true);
     /* ai-thinker capabilities matrix */
     cJSON_AddBoolToObject(data, "ai", false);
@@ -1933,6 +1950,9 @@ esp_err_t web_server_start(uint16_t port)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = port;
     config.max_uri_handlers = 40;  /* 27 API + 2 wildcard + 2 ONVIF + headroom */
+    /* 必须 ≥8KB：handler_static 栈上局部 ~5.3KB（buf[4096]+filepath[560]+gzpath[576]），
+     * 6142 实测栈溢出 → 静态文件全 RST + 连环重启（PIT-039）。创建失败的
+     * 竞态由 motion 网格 PSRAM 化（-30KB .bss）+ 下方重试循环兜底。 */
     config.stack_size = 8192;
     /* PIT-038：默认 7（含 3 内部保留=客户端仅 4 槽），浏览器首屏 6 并发 +
      * WS + 健康自探测超限 → app.js/i18n.js 随机夭折 → SPA 静态壳死页 */
@@ -1945,7 +1965,17 @@ esp_err_t web_server_start(uint16_t port)
     /* No core pinning: httpd default (tskNO_AFFINITY) lets the scheduler */
     /* place it on either core, avoiding starvation when stream blocks. */
 
-    esp_err_t ret = httpd_start(&s_server, &config);
+    /* 启动重试（PIT-039）：内部堆碎片化下 httpd 任务栈的连续块分配是
+     * 开机竞态——恰逢相机预热/动态缓冲峰值时失败；数秒后堆回落即成功。
+     * 5 次 × 2s，全败才放弃（届时健康自愈会重启整机再试）。 */
+    esp_err_t ret = ESP_FAIL;
+    for (int attempt = 1; attempt <= 5; attempt++) {
+        ret = httpd_start(&s_server, &config);
+        if (ret == ESP_OK) break;
+        ESP_LOGE(TAG, "httpd_start attempt %d/5 failed: %s",
+                 attempt, esp_err_to_name(ret));
+        if (attempt < 5) vTaskDelay(pdMS_TO_TICKS(2000));
+    }
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start web server on port %d: %s",
                  port, esp_err_to_name(ret));

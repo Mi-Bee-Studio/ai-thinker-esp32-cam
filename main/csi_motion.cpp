@@ -55,8 +55,32 @@ namespace {
 
 espectre::RuntimeFrontendController s_controller;
 
-/* Pilot listener: log-only. Keep callbacks bounded and non-blocking
- * (SDK threading contract) — real actions (webhook/event_bus) come later. */
+/* 契约 v1.6：最新快照。写者 = ESPectre pump 任务（on_motion_state_changed
+ * 与 on_periodic_update 同线程，单写者成立）；读者 = httpd 任务
+ * （/api/status 的 csi 字段）与 motion 任务（CSI 触发模式 250ms 轮询），
+ * portMUX 拷贝，临界区仅 3 字段。状态转移回调里也落快照：只靠 ~1Hz 的
+ * 周期更新会让 <1s 的 MOTION 片段漏采（MOTION_ON_HITS=4 @250ms 判定的
+ * 最短驻留恰与其同量级）。 */
+static portMUX_TYPE s_snap_mux = portMUX_INITIALIZER_UNLOCKED;
+static bool s_snap_valid = false;
+static csi_motion_status_t s_snap;
+
+static void snapshot_update(const espectre::RuntimeSnapshot &s)
+{
+    const char *st = s.ready_to_publish
+                         ? (s.motion_state == espectre::MotionState::MOTION ? "MOTION" : "IDLE")
+                         : "warming";
+    portENTER_CRITICAL(&s_snap_mux);
+    s_snap_valid = true;
+    strlcpy(s_snap.state, st, sizeof(s_snap.state));
+    s_snap.score = s.movement_metric;
+    s_snap.thr = s.threshold;
+    portEXIT_CRITICAL(&s_snap_mux);
+}
+
+/* Listener: keep callbacks bounded and non-blocking (SDK threading
+ * contract) — the photo chain lives in motion_detect's own task and picks
+ * the verdict up via the snapshot poll. */
 class CamCsiListener : public espectre::IRuntimeListener {
 public:
     void on_motion_state_changed(const espectre::RuntimeSnapshot &s) override {
@@ -65,6 +89,7 @@ public:
                  s.motion_state == espectre::MotionState::MOTION ? "MOTION" : "IDLE",
                  s.movement_metric, s.threshold,
                  (int)s.link_rssi_dbm, (unsigned)s.link_channel);
+        snapshot_update(s);
     }
 
     void on_calibration_started(const espectre::RuntimeSnapshot &s) override {
@@ -79,6 +104,7 @@ public:
 
     void on_periodic_update(const espectre::RuntimeSnapshot &s,
                             uint32_t packets_received) override {
+        snapshot_update(s);
         const espectre::RuntimeDiagnosticsSample *d = s_controller.diagnostics_sample();
         if (d != nullptr) {
             ESP_LOGI(TAG,
@@ -148,11 +174,34 @@ esp_err_t csi_motion_init(void)
     return ESP_OK;
 }
 
+/* 契约 v1.6：/api/status "csi" 字段 + motion 任务 CSI 触发轮询的读侧 */
+bool csi_motion_get_status(csi_motion_status_t *out)
+{
+    if (out == nullptr) return false;
+    bool valid;
+    portENTER_CRITICAL(&s_snap_mux);
+    valid = s_snap_valid;
+    if (valid) {
+        *out = s_snap;
+    }
+    portEXIT_CRITICAL(&s_snap_mux);
+    return valid;
+}
+
 #else /* !CONFIG_MIBEE_CSI_MOTION */
 
 esp_err_t csi_motion_init(void)
 {
     return ESP_OK;
+}
+
+/* CSI-off 生产形态 stub（PIT-038 补遗二）：web_server.c 无条件调用此函数
+ * 取实时快照，stub 恒 false → /api/status 的 csi 字段缺省。此前 stub 漏写
+ * 此函数，门关时链接必炸（PIT-039 记录）。 */
+bool csi_motion_get_status(csi_motion_status_t *out)
+{
+    (void)out;
+    return false;
 }
 
 #endif /* CONFIG_MIBEE_CSI_MOTION */
