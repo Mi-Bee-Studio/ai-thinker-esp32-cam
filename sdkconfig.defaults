@@ -70,9 +70,9 @@ CONFIG_ESP_TIMER_TASK_STACK_SIZE=6144
 # TCP/lwIP tuning for marginal WiFi (high packet loss, high jitter)
 # Smaller TX buffer + window to conserve scarce internal RAM. The default 23040
 # exhausts internal RAM when the MJPEG stream fills pbufs that drain slowly over
-# ~4 KB/s WiFi. 6080 = 8 × 760 MSS; WiFi bandwidth (not buffer size) is the
-# bottleneck, so throughput is unchanged while saving ~17 KB per connection.
-CONFIG_LWIP_TCP_SND_BUF_DEFAULT=6080
+# ~4 KB/s WiFi. WiFi bandwidth (not buffer size) is the bottleneck.
+# (SND_BUF 曾在此设 6080=8×MSS；PIT-039 防搁浅后由下方 5760=4×MSS 取代，
+#  2026-09-09 清理重复键——后置行生效，避免静默歧义。)
 CONFIG_LWIP_TCP_WND_DEFAULT=6080
 # Faster retransmission: initial RTO 300ms (default 1500ms is 5x too slow)
 CONFIG_LWIP_TCP_RTO_TIME=300

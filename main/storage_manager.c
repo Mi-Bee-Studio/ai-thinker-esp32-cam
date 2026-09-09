@@ -57,6 +57,18 @@ static uint32_t s_cached_total_mb = 0;  /* Cached SD total capacity, set on moun
 /* Photo list cache — avoids traversing slow SPI SD on every request */
 static char *s_list_cache = NULL;
 static size_t s_list_cache_len = 0;
+/* GPIO14 局限（AGENTS）：相机运行期 opendir/fread 不可靠 → 保存照片后无法
+ * 用目录重建列表缓存（旧行为是整缓存丢弃，画廊自此空到重启）。改为
+ * save → pending 数组（portMUX 保护，save 侧不碰 s_mutex，见下方注释），
+ * storage_get_photo_list_json 持 s_mutex 时并入缓存——新照片立即可见，
+ * 文件大小一并带出（暗场闪光成片的验证也依赖这个大小）。 */
+typedef struct {
+    char name[56];   /* 相对 PHOTOS_BASE_PATH："YYYY-MM/filename.jpg" */
+    long size;
+} pending_photo_t;
+static pending_photo_t s_pending_photos[16];
+static volatile int s_pending_photo_count = 0;
+static portMUX_TYPE s_pending_mux = portMUX_INITIALIZER_UNLOCKED;
 static int64_t s_list_cache_time = 0;
 #define LIST_CACHE_TTL_MS  300000 /* 5 minute cache TTL (was 30s — slow SPI SD)*/
 
@@ -642,12 +654,27 @@ esp_err_t storage_save_photo(camera_fb_t *fb, const char *filename)
 
     ESP_LOGI(TAG, "Saved photo: %s (%zu bytes)", filepath, fb->len);
 
-    if (s_list_cache) {
-        free(s_list_cache);
-        s_list_cache = NULL;
-        s_list_cache_len = 0;
-        s_list_cache_time = 0;
+    /* 旧行为：丢弃整个列表缓存 → 画廊空到重启且运行期无法重建。新行为见
+     * s_pending_photos 声明处注释。满 16 条移位覆盖最旧（保存频率受
+     * cooldown 门控，正常远达不到）。 */
+    taskENTER_CRITICAL(&s_pending_mux);
+    const int cap = (int)(sizeof(s_pending_photos) / sizeof(s_pending_photos[0]));
+    int idx;
+    if (s_pending_photo_count < cap) {
+        idx = s_pending_photo_count++;
+    } else {
+        memmove(&s_pending_photos[0], &s_pending_photos[1],
+                (cap - 1) * sizeof(pending_photo_t));
+        idx = cap - 1;
     }
+    const char *rel = dirpath + strlen(PHOTOS_BASE_PATH);
+    while (*rel == '/') rel++;
+    /* 精度上限与实际字段匹配（rel="YYYY-MM"/"unknown"≤7；文件名≤40），
+     * 编译器可证不截断——-Werror=format-truncation */
+    snprintf(s_pending_photos[idx].name, sizeof(s_pending_photos[idx].name),
+             "%.7s/%.40s", rel, filename);
+    s_pending_photos[idx].size = (long)fb->len;
+    taskEXIT_CRITICAL(&s_pending_mux);
 
     return ESP_OK;
 }
@@ -1251,6 +1278,43 @@ cJSON *storage_get_photo_list_json(void)
                 line = newline + 1;
             } else {
                 break;
+            }
+        }
+    }
+
+    /* 并入保存后 pending 的新照片：进 JSON 数组 + 追加进缓存行（下次
+     * 请求直接命中缓存）。锁序恒为 s_mutex → s_pending_mux，无倒置。 */
+    taskENTER_CRITICAL(&s_pending_mux);
+    int n_pending = s_pending_photo_count;
+    pending_photo_t local_pending[16];
+    if (n_pending > 0) {
+        if (n_pending > 16) n_pending = 16;
+        memcpy(local_pending, (const void *)s_pending_photos,
+               n_pending * sizeof(pending_photo_t));
+        s_pending_photo_count = 0;
+    }
+    taskEXIT_CRITICAL(&s_pending_mux);
+
+    for (int i = 0; i < n_pending; i++) {
+        cJSON *obj = cJSON_CreateObject();
+        if (obj) {
+            cJSON_AddStringToObject(obj, "name", local_pending[i].name);
+            cJSON_AddNumberToObject(obj, "size", (double)local_pending[i].size);
+            cJSON_AddStringToObject(obj, "type", "photo");
+            cJSON_AddItemToArray(arr, obj);
+        }
+        if (s_list_cache) {
+            char line[80];
+            int ln = snprintf(line, sizeof(line), "%s\t%ld\n",
+                              local_pending[i].name, local_pending[i].size);
+            if (ln > 0) {
+                char *grown = realloc(s_list_cache, s_list_cache_len + ln + 1);
+                if (grown) {
+                    memcpy(grown + s_list_cache_len, line, ln);
+                    s_list_cache_len += ln;
+                    grown[s_list_cache_len] = '\0';
+                    s_list_cache = grown;
+                }
             }
         }
     }
