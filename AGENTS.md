@@ -486,3 +486,14 @@ PIT-037 修复后弱链 OTA 实测两轮全通，断链 56 竞态=镜像已写�
 **验证基线（23:47 固件）**：app.js gz 0.23-0.33s / capture 0.27s / 探针 4.2fps
 @76KB/s（≈09-04 基线）/ soak cycle98 5.06fps / NVR 持续占流 / 无自愈重启。
 交付链：构建 g1714199-dirty（工作树含未提交改动，与 21:47 Retry-After 批同批）。
+
+
+## Dual WiFi 补齐（2026-09-09，契约 AT v1.2）
+
+- 本板此前已有：DHCP 盲区切网（12s×2）、连败切换、NVS last_net 记忆、V14 智能漫游。
+- 本次补齐：**开机 RSSI 择优**（STA_START 首次快扫，≥8dB 规则，仅开机一次，
+  后续切换不重复扫）+ **AT+WIFI2**（本板首个板级扩展；语义=保存+重启，n16r8 同款）。
+- sdkconfig.defaults 清理了重复的 LWIP_TCP_SND_BUF_DEFAULT（PIT-039 的 5760 为准）。
+- ⚠️ 待决：defaults 里 `CONFIG_MIBEE_CSI_MOTION=y` 系 PIT-039 调试期遗留——按
+  2026-09-08 摄像头优先政策本板生产应为 CSI-off；2026-09-09 OTA 部署的镜像带着
+  CSI-on（实测标定 OK、推流并存正常）。是否回退由用户拍板。
