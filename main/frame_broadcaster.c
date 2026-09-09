@@ -41,6 +41,21 @@ static const char *TAG = "frame_broadcaster";
 #define BROKER_TASK_CORE       tskNO_AFFINITY
 #define DMA_STALL_WARN_THRESH  30  /* log warning after this many consecutive fails */
 
+/* Photo-chain burst window (frame_broker_boost): monotonic-ms deadline,
+ * 32-bit so reads/writes are atomic on LX6 (single writer in practice;
+ * wrap-safe via signed diff — windows are seconds). 0 = never boosted. */
+static volatile uint32_t s_boost_deadline_ms = 0;
+
+void frame_broker_boost(uint32_t ms)
+{
+    s_boost_deadline_ms = (uint32_t)(esp_timer_get_time() / 1000) + ms;
+}
+
+static bool broker_boost_active(void)
+{
+    return (int32_t)(s_boost_deadline_ms - (uint32_t)(esp_timer_get_time() / 1000)) > 0;
+}
+
 /* Compute capture cadence from config fps (falls back to BROKER_FPS).
  * ESP32 camera has no hardware FPS register; this throttles producer captures. */
 static TickType_t broker_frame_delay(void)
@@ -48,9 +63,11 @@ static TickType_t broker_frame_delay(void)
     uint8_t fps = config_get()->cam_fps;
     if (fps == 0) fps = BROKER_FPS;
     /* When no stream clients are watching, slow to 2fps to cut CPU/WiFi/PSRAM
-     * load — motion detection only needs ~2fps. */
+     * load — motion detection only needs ~2fps. Exception: an active photo
+     * burst (darkness probe settle / flash warm-up / capture) lifts idle to
+     * the 5fps stream cap so each chain stage completes in <1s instead of 2s. */
     if (mjpeg_streamer_get_client_count() == 0) {
-        fps = 2;
+        fps = broker_boost_active() ? 5 : 2;
     } else {
         /* Cap streaming FPS to 5 — ESP32 WiFi can't handle 15fps stream + httpd
          * traffic simultaneously. 5fps gives ~75KB/s stream, leaving room for web UI. */
@@ -70,6 +87,7 @@ typedef struct {
     size_t       len;
     pixformat_t  format;
     uint32_t     timestamp;    /* esp_timer seconds at capture */
+    uint32_t     gen;          /* publication generation (see current_gen) */
     volatile uint32_t refcount;
 } broker_frame_t;
 
@@ -89,6 +107,9 @@ static TaskHandle_t      s_producer_task = NULL;
 static volatile bool     s_running = false;
 static volatile uint32_t s_frame_count = 0;
 static volatile uint32_t s_fail_count  = 0;
+/* Publication generation: bumped by the producer (single writer) before each
+ * publish; 32-bit aligned reads are atomic on LX6. */
+static volatile uint32_t s_pub_gen = 0;
 
 /* Release a reference. If refcount drops to 0, free the frame.
  * The decrement is under s_lock (nanoseconds); the actual free happens
@@ -169,6 +190,7 @@ static void producer_task(void *arg)
         nf->len       = fb->len;
         nf->format    = fb->format;
         nf->timestamp = (uint32_t)(esp_timer_get_time() / 1000000);
+        nf->gen       = ++s_pub_gen;
         nf->refcount  = 1;  /* publisher's reference (held via s_current) */
 
         /* ---- Publish: brief critical section (pointer swap only) ---- */
@@ -347,6 +369,77 @@ void frame_broker_free(camera_fb_t *fb)
         heap_caps_free(fb->buf);
     }
     free(fb);
+}
+
+uint32_t frame_broker_current_gen(void)
+{
+    /* volatile peek — same pattern as the first-frame wait in get_copy */
+    broker_frame_t *cur = s_current;
+    return cur ? cur->gen : 0;
+}
+
+esp_err_t frame_broker_get_copy_after(uint32_t gen_floor, camera_fb_t **fb_out,
+                                      uint32_t timeout_ms)
+{
+    if (fb_out == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *fb_out = NULL;
+
+    if (!s_running) {
+        return ESP_FAIL;
+    }
+
+    /* Wait for a frame published after gen_floor (volatile peeks, cheap).
+     * Data-dependent read after the atomic pointer peek is safe on the
+     * in-order LX6 — the frame is fully constructed before the swap. */
+    uint32_t waited = 0;
+    while (s_current == NULL || s_current->gen <= gen_floor) {
+        if (!s_running) return ESP_FAIL;
+        if (waited >= timeout_ms) return ESP_ERR_TIMEOUT;
+        vTaskDelay(pdMS_TO_TICKS(20));
+        waited += 20;
+    }
+
+    /* From here identical to frame_broker_get_copy(): acquire + copy out */
+    broker_frame_t *ref = NULL;
+    while (ref == NULL) {
+        taskENTER_CRITICAL(&s_lock);
+        ref = s_current;
+        if (ref != NULL) {
+            if (ref->gen <= gen_floor) {
+                ref = NULL;   /* stop raced a newer publish — retry */
+            } else {
+                ref->refcount++;
+            }
+        }
+        taskEXIT_CRITICAL(&s_lock);
+
+        if (ref != NULL) break;
+        if (!s_running) return ESP_FAIL;
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+
+    camera_fb_t *fb = (camera_fb_t *)calloc(1, sizeof(camera_fb_t));
+    if (fb == NULL) {
+        frame_release(ref);
+        return ESP_ERR_NO_MEM;
+    }
+
+    fb->buf = (uint8_t *)heap_caps_malloc(ref->len, MALLOC_CAP_SPIRAM);
+    if (fb->buf == NULL) {
+        free(fb);
+        frame_release(ref);
+        return ESP_ERR_NO_MEM;
+    }
+
+    memcpy(fb->buf, ref->buf, ref->len);
+    fb->len    = ref->len;
+    fb->format = ref->format;
+    frame_release(ref);
+
+    *fb_out = fb;
+    return ESP_OK;
 }
 
 uint32_t frame_broker_get_frame_count(void)

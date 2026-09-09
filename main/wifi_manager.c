@@ -342,9 +342,19 @@ static void wifi_watchdog_task(void *arg)
         const char *other_pass = s_using_secondary ? cfg->wifi_pass : cfg->wifi_pass_2;
         if (!other_ssid || other_ssid[0] == '\0') continue;
 
-        /* Throttle roam scans to every 60s */
+        /* 扫描退避（PIT-039）：全信道扫描 = 每 60s 离信道 ~3s，直译成在途
+         * TCP 的重传黑洞（httpd 大资产 / 推流批量搁浅的共犯）。对端信号
+         * 恒定且劣（gap 永不达标）时扫描纯亏——连续 3 次无收益即指数退避
+         * （60s→4min→15min 封顶）；当前链路较上次扫描恶化 ≥6dB 或实际
+         * 发生漫游则重置。 */
+        static uint8_t  s_roam_miss_streak = 0;
+        static uint32_t s_roam_period_ms = 60000;
+        static int8_t   s_roam_last_rssi = 0;
+
         TickType_t roam_elapsed_ms = (xTaskGetTickCount() - last_roam_scan_tick) * portTICK_PERIOD_MS;
-        if (roam_elapsed_ms < 60000) continue;
+        bool link_degraded = (s_roam_miss_streak > 0 &&
+                              ap.rssi < s_roam_last_rssi - 6);
+        if (roam_elapsed_ms < s_roam_period_ms && !link_degraded) continue;
 
         /* Decide whether to scan:
          * - On secondary: always check for primary (preferred network)
@@ -353,6 +363,7 @@ static void wifi_watchdog_task(void *arg)
         if (!should_scan) continue;
 
         last_roam_scan_tick = xTaskGetTickCount();
+        s_roam_last_rssi = ap.rssi;
 
         /* Scan for the other SSID */
         ESP_LOGI(TAG, "Roam scan: probing '%s' (on %s, RSSI=%d)",
@@ -371,7 +382,18 @@ static void wifi_watchdog_task(void *arg)
 
         uint16_t ap_num = 0;
         esp_wifi_scan_get_ap_num(&ap_num);
-        if (ap_num == 0) continue;
+        if (ap_num == 0) {
+            /* 对端完全不可见 = 无收益，同样计入退避 */
+            if (++s_roam_miss_streak >= 3 &&
+                s_roam_period_ms < 900000) {
+                s_roam_period_ms = s_roam_period_ms * 4;
+                if (s_roam_period_ms > 900000) s_roam_period_ms = 900000;
+                ESP_LOGI(TAG, "Roam scan unprofitable x%u — backing off to %us",
+                         (unsigned)s_roam_miss_streak,
+                         (unsigned)(s_roam_period_ms / 1000));
+            }
+            continue;
+        }
 
         wifi_ap_record_t *aps = calloc(ap_num, sizeof(wifi_ap_record_t));
         if (!aps) continue;
@@ -398,6 +420,18 @@ static void wifi_watchdog_task(void *arg)
             s_sta_retry_count = 0;
             wifi_start_sta(other_ssid, other_pass);
             last_reconnect_tick = xTaskGetTickCount();
+            s_roam_miss_streak = 0;
+            s_roam_period_ms = 60000;
+        } else {
+            /* 扫描无收益（对端没看到 / gap 不达标）→ 计入退避 */
+            if (++s_roam_miss_streak >= 3 &&
+                s_roam_period_ms < 900000) {
+                s_roam_period_ms = s_roam_period_ms * 4;
+                if (s_roam_period_ms > 900000) s_roam_period_ms = 900000;
+                ESP_LOGI(TAG, "Roam scan unprofitable x%u — backing off to %us",
+                         (unsigned)s_roam_miss_streak,
+                         (unsigned)(s_roam_period_ms / 1000));
+            }
         }
     }
 }
