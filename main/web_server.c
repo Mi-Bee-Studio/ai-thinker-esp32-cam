@@ -54,7 +54,8 @@
 #include "esp_wifi.h"
 #include "sd_log.h"
 #include "ota_updater.h"
-#include "csi_motion.h"   /* 契约 v1.7：CSI 调参面（本板 CSI-off stub；/api/csi/calibrate 恒 404） */
+#include "csi_motion.h"   /* 契约 v1.7：CSI 调参面 + status csi 快照 */
+#include "wifi_channel_health.h"  /* 契约 v1.7 ①b：信道健康快照 */
 
 #include <string.h>
 #include <stdio.h>
@@ -244,6 +245,44 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     const esp_app_desc_t *app_desc = esp_app_get_description();
     cJSON_AddStringToObject(data, "firmware_version",
         (app_desc && app_desc->version[0]) ? app_desc->version : "unknown");
+
+    /* CSI 实时快照（契约 v1.6/v1.7；本板 CSI 门开生产形态——此前缺失，
+     * 2026-09-10 补齐与 seeed/n16r8 同款字段集；门关时恒缺省） */
+    csi_motion_status_t csi_st;
+    if (csi_motion_get_status(&csi_st)) {
+        cJSON *csi_obj = cJSON_CreateObject();
+        if (csi_obj) {
+            cJSON_AddStringToObject(csi_obj, "state", csi_st.state);
+            cJSON_AddNumberToObject(csi_obj, "score", (double)csi_st.score);
+            cJSON_AddNumberToObject(csi_obj, "thr", (double)csi_st.thr);
+            cJSON_AddNumberToObject(csi_obj, "profile", (double)csi_st.profile);
+            cJSON_AddBoolToObject(csi_obj, "thr_locked", csi_st.thr_locked);
+            cJSON_AddBoolToObject(csi_obj, "calibrating", csi_st.calibrating);
+            cJSON_AddNumberToObject(csi_obj, "flip_rate", (double)csi_st.flip_rate);
+            cJSON_AddNumberToObject(csi_obj, "tx_pps", (double)csi_st.tx_pps);
+            cJSON_AddNumberToObject(csi_obj, "cb_pps", (double)csi_st.cb_pps);
+            cJSON_AddNumberToObject(csi_obj, "adm_pps", (double)csi_st.adm_pps);
+            cJSON_AddItemToObject(data, "csi", csi_obj);
+        }
+    }
+    /* 契约 v1.7 ①b：Wi-Fi 信道健康快照（CSI 无关，全家族字段一致） */
+    wifi_chan_health_t ch;
+    if (wifi_channel_health_get(&ch)) {
+        cJSON *ch_obj = cJSON_CreateObject();
+        if (ch_obj) {
+            cJSON_AddNumberToObject(ch_obj, "rssi_avg", (double)ch.rssi_avg);
+            cJSON_AddNumberToObject(ch_obj, "rssi_min", (double)ch.rssi_min);
+            cJSON_AddNumberToObject(ch_obj, "channel", (double)ch.channel);
+            cJSON_AddNumberToObject(ch_obj, "disconnects_1h", (double)ch.disconnects_1h);
+            cJSON_AddNumberToObject(ch_obj, "scan_ts", (double)ch.scan_ts);
+            cJSON_AddNumberToObject(ch_obj, "bss_on_chan", (double)ch.bss_on_chan);
+            cJSON_AddNumberToObject(ch_obj, "bss_total", (double)ch.bss_total);
+            cJSON_AddNumberToObject(ch_obj, "busy_score", (double)ch.busy_score);
+            cJSON_AddNumberToObject(ch_obj, "csi_adm_pps", (double)ch.csi_adm_pps);
+            cJSON_AddNumberToObject(ch_obj, "csi_cb_ratio", (double)ch.csi_cb_ratio);
+            cJSON_AddItemToObject(data, "chan_health", ch_obj);
+        }
+    }
 
     /* Camera — 契约 v1.0: 传感器字段名统一为 camera */
     cJSON_AddBoolToObject(data, "camera_ok", camera_is_initialized());

@@ -22,6 +22,7 @@
 #include "status_led.h"
 #include "wifi_manager.h"
 #include "csi_motion.h"
+#include "wifi_channel_health.h"
 #include "camera_driver.h"
 #include "health_monitor.h"
 #include "mjpeg_streamer.h"
@@ -172,6 +173,7 @@ static void sta_services_task(void *arg)
      * an earlier start starved the pool (listen socket ENOBUFS errno 105,
      * 2026-09-06). ESPectre handles late join itself. */
     csi_motion_init();
+    wifi_channel_health_init();   /* 契约 v1.7 ①b：信道健康感知（CSI 无关，四仓共享） */
 
     /* Start ONVIF WS-Discovery (once) — after web server so SOAP handlers are registered.
      * 契约核心字段 onvif_enable（本板默认 1；关闭时不启动发现，SOAP 处理器
