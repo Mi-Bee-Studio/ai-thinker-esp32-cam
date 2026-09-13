@@ -5,6 +5,7 @@
  * 的成熟路径）。生效语义（契约 §6）：分辨率/画质热重配；WiFi 保存+重启。
  */
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <strings.h>
 #include <stdlib.h>
@@ -478,6 +479,30 @@ const char *at_port_alias(const char *name)
 
 /* ── 板级扩展指令（契约 §5） ────────────────────────────────────── */
 
+static void ext_ok(void)
+{
+    at_port_write("OK\r\n");
+}
+
+static void ext_err(const char *why)
+{
+    char buf[80];
+    snprintf(buf, sizeof(buf), "ERROR: %s\r\n", why ? why : "unknown");
+    at_port_write(buf);
+}
+
+static void ext_data(const char *name, const char *fmt, ...)
+{
+    char body[96];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(body, sizeof(body), fmt, ap);
+    va_end(ap);
+    char line[128];
+    snprintf(line, sizeof(line), "+%s: %s\r\n", name, body);
+    at_port_write(line);
+}
+
 /* AT+CHHEALTH?（信道健康快照）/ =SCAN（手动拥塞 scan）——契约 v1.3 ①b（全家族） */
 static esp_err_t ext_chhealth(const char *cmd)
 {
@@ -512,8 +537,58 @@ static esp_err_t ext_chhealth(const char *cmd)
     return ESP_ERR_NOT_SUPPORTED;
 }
 
+/* AT+WIFI2 — 备用网络凭据（契约 §5/v1.2；查询脱敏红线 §3）。解析约定
+ * 同 AT+WIFI=（首个逗号前 ssid，其后整体 pass、可含逗号）；空 ssid 清除。
+ * ai-thinker 生效语义（§6，n16r8 同款）：保存+重启——凭据只在启动时
+ * 读入开机择优/故障转移路径。 */
+static esp_err_t ext_wifi2(const char *cmd)
+{
+    const char *eq = strchr(cmd, '=');
+    if (!eq) {
+        const cam_config_t *cfg = config_get();
+        ext_data("WIFI2", "ssid:%s", cfg->wifi_ssid_2[0] ? cfg->wifi_ssid_2 : "(none)");
+        ext_data("WIFI2", "pass:%s", cfg->wifi_pass_2[0] ? "****" : "(unset)");
+        ext_data("WIFI2", "net:%s", wifi_using_secondary() ? "secondary" : "primary");
+        ext_ok();
+        return ESP_OK;
+    }
+
+    char buf[100];
+    strlcpy(buf, eq + 1, sizeof(buf));
+    char *comma = strchr(buf, ',');
+    if (!comma) {
+        ext_err("usage: AT+WIFI2=ssid,pass (empty ssid clears)");
+        return ESP_OK;
+    }
+    *comma = '\0';
+    const char *ssid = buf;
+    const char *pass = comma + 1;
+
+    esp_err_t ret;
+    if (!ssid[0]) {
+        /* 空 ssid = 清除备用网络（契约 §5：`ssid,` 空串清除） */
+        ret = config_set_wifi_secondary("", "");
+    } else {
+        if (strlen(ssid) > 32 || !pass[0] || strlen(pass) > 64) {
+            ext_err("invalid ssid/pass (ssid<=32, pass 1-64)");
+            return ESP_OK;
+        }
+        ret = config_set_wifi_secondary(ssid, pass);
+    }
+    if (ret != ESP_OK) {
+        ext_err("save failed");
+        return ESP_OK;
+    }
+    ext_data("WIFI2", "backup network saved");
+    at_port_write("+REBOOTING: backup credentials apply at boot\r\n");
+    vTaskDelay(pdMS_TO_TICKS(500));
+    esp_restart();
+    return ESP_OK;   /* unreachable */
+}
+
 static const at_ext_cmd_t s_ext_cmds[] = {
     { "CHHEALTH", "CHHEALTH? | CHHEALTH=SCAN (channel health)", ext_chhealth },
+    { "WIFI2", "WIFI2? | WIFI2=ssid,pass (empty ssid clears)", ext_wifi2 },
 };
 
 const at_ext_cmd_t *at_port_ext_cmds(int *count)

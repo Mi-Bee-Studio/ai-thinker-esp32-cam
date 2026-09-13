@@ -71,9 +71,10 @@ namespace {
 
 espectre::RuntimeFrontendController s_controller;
 
-/* 契约 v1.6/v1.7：最新快照。写者 = pump 任务（on_periodic_update ~1Hz +
- * 自愈动作）与外部 setter（httpd 上下文，set_enabled 即时改 state），统一
- * portMUX；读侧（/api/status）临界区仅结构拷贝，永不阻塞感知回调。 */
+/* 契约 v1.6/v1.7：最新快照。写者 = pump 任务（on_motion_state_changed
+ * 状态转移 + on_periodic_update ~1Hz + 自愈动作）与外部 setter（httpd
+ * 上下文，set_enabled 即时改 state），统一 portMUX；读侧（/api/status）
+ * 临界区仅结构拷贝，永不阻塞感知回调。 */
 static portMUX_TYPE s_snap_mux = portMUX_INITIALIZER_UNLOCKED;
 static bool s_snap_valid = false;
 static csi_motion_status_t s_snap;
@@ -195,7 +196,17 @@ public:
                  s.motion_state == espectre::MotionState::MOTION ? "MOTION" : "IDLE",
                  s.movement_metric, s.threshold,
                  (int)s.link_rssi_dbm, (unsigned)s.link_channel);
-        /* 本板无 WS/ONVIF 事件面：状态转移仅日志（SPA 经 /api/status 轮询感知） */
+        /* PIT-040：状态转移即落快照（state/score/thr）——只靠 ~1Hz 周期更新
+         * 会漏采 <1s 的 MOTION 片段（photo 链 250ms 轮询取判决靠它）。本板
+         * 无 WS/ONVIF 事件面，快照即唯一的事件出口；写者仍是 pump 任务
+         * （本回调与 on_periodic_update 同线程），单写者成立。 */
+        portENTER_CRITICAL(&s_snap_mux);
+        strlcpy(s_snap.state,
+                s.motion_state == espectre::MotionState::MOTION ? "MOTION" : "IDLE",
+                sizeof(s_snap.state));
+        s_snap.score = s.movement_metric;
+        s_snap.thr = s.threshold;
+        portEXIT_CRITICAL(&s_snap_mux);
     }
 
     void on_calibration_started(const espectre::RuntimeSnapshot &s) override {

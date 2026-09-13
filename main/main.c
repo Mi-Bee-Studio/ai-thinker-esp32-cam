@@ -157,16 +157,12 @@ static void sta_services_task(void *arg)
         }
     }
 
-    /* Start MJPEG streamer on port 81 (independent TCP server) */
-#if CONFIG_MIBEE_CSI_MOTION
-    /* PIT-038：CSI 感知模式不起 :81（内部 RAM 天花板下流本就不可用，起端口
-     * 只会招致 NVR 类查看端重连风暴）。注意拦的是 server_start（真起监听）；
-     * init()（建互斥锁）保留不动——get_client_count 等仍引用。 */
-    ESP_LOGW(TAG, "MJPEG stream server disabled (CSI sensing mode, PIT-038)");
-#else
+    /* Start MJPEG streamer on port 81 (independent TCP server).
+     * 2026-09-09：PIT-038 的 CSI/:81 互斥门解除——CSI 触发模式退役了 ΣΔ
+     * 像素管线（~60KB 内部工作缓冲 + 逐帧解码），ESPectre ~22KB 内部成本
+     * 净掉有余，流/CSI/拍照链三线并存（6h soak 验证见 PITFALLS）。 */
     mjpeg_stream_server_start(81);
     ESP_LOGI(TAG, "MJPEG streamer started on port 81");
-#endif
 
     /* ESPectre CSI motion sensing (optional) — started AFTER the :81 listen
      * socket: the sensing runtime + traffic generator add lwIP sockets, and
@@ -450,14 +446,10 @@ void app_main(void)
             ESP_LOGI(TAG, "Web server started (AP mode)");
         }
 
-    /* Start MJPEG streamer on port 81 (independent TCP server) */
-#if CONFIG_MIBEE_CSI_MOTION
-    /* PIT-038：同 STA 路径——CSI 感知模式不起 :81（拦真启动，init 保留） */
-    ESP_LOGW(TAG, "MJPEG stream server disabled (CSI sensing mode, PIT-038)");
-#else
+    /* Start MJPEG streamer on port 81 (independent TCP server) — 同 STA
+     * 路径，2026-09-09 解除 CSI 互斥门（见上方注记） */
     mjpeg_stream_server_start(81);
     ESP_LOGI(TAG, "MJPEG streamer started on port 81 (AP mode)");
-#endif
 
         /* Initialize timelapse (AP mode) */
         if (!s_timelapse_started) {

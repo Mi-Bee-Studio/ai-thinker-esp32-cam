@@ -457,3 +457,71 @@ PIT-037 修复后弱链 OTA 实测两轮全通，断链 56 竞态=镜像已写�
 护栏升级 v2（4 项每-IP 退避表，同 IP 接入 <5s → 503 封顶 300s，正常观众
 ~7s SPA 自愈重连不受影响）。CSI 试验结论定稿：初代板感知+推流互斥，
 生产形态=CSI 关。
+
+## 2026-09-08 深夜："web+NVR 双失效"四层根因修复（PIT-039，已上板验证）
+
+用户报 web 与 NVR 全不可用。四层叠加根因 + 两个坑中坑，全部修复并 USB 上板
+（当时 httpd 挂死、OTA 通道不可用；flash 后须 `esptool --no-stub run`）：
+
+1. **AMPDU TX/RX 关闭**（sdkconfig.defaults 落档，n16r8 配方）：弱链 -69dBm 上
+   聚合帧重传黑洞——>6KB 批量流填满一个 TCP_SND_BUF(5760) 后零进展（搁浅点
+   反复 6072B=8×MSS），小请求照常。这是"小 JSON 秒回、app.js 搁浅 20-30s、
+   推流 0 帧"的公共根因。
+2. **护栏续期语义修正**（mjpeg_streamer.c，luatos 源码已同步待烧）：退避窗口内
+   只有**新的 <5s 违规**才续期+翻倍；在窗但守规矩的重连（NVR 15s 梯子）被拒不
+   续期，窗口自然过期即重新入内。旧逻辑把 NVR 永久锁死（单日拒 2 万+）。
+3. **内部 RAM 纪律**：流 worker/listen 持久化 + `xTaskCreateStatic`（listen 经
+   长度 1 队列递 fd，零运行期任务创建；stop 不再删互斥锁/队列/worker）；
+   motion 任务静态栈；motion 30KB ΣΔ 网格 `.bss`→PSRAM；`SPIRAM_MALLOC_ALWAYSINTERNAL`
+   16384→3072；httpd 启动 5×2s 重试。**红线：`config.stack_size` 不得低于 8192**
+   ——handler_static 栈上局部 ~5.3KB，6144 实测溢出（静态文件 0B/6.77s RST +
+   连环重启）。修后 internal 开机 59KB（CSI-off 树历史最好）。
+4. **漫游扫描退避**（wifi_manager.c）：连续无益扫描 ×4 递增退避至 900s；
+   链路较上次扫描恶化 ≥6dB 或真漫游即重置。
+5. **CSI-off stub 补全**（csi_motion.cpp）：`#else` 补 `csi_motion_get_status`
+   ——此前门关链接必炸（当晨构建靠 build/ 陈旧 sdkconfig.h 糊过）。改 sdkconfig
+   门控后必须全量重链验证。
+6. 顺带修掉 listen 任务 stray `xSemaphoreGive`（无配对 Take，可致互斥锁失效）。
+
+**验证基线（23:47 固件）**：app.js gz 0.23-0.33s / capture 0.27s / 探针 4.2fps
+@76KB/s（≈09-04 基线）/ soak cycle98 5.06fps / NVR 持续占流 / 无自愈重启。
+交付链：构建 g1714199-dirty（工作树含未提交改动，与 21:47 Retry-After 批同批）。
+
+
+## Dual WiFi 补齐（2026-09-09，契约 AT v1.2）
+
+- 本板此前已有：DHCP 盲区切网（12s×2）、连败切换、NVS last_net 记忆、V14 智能漫游。
+- 本次补齐：**开机 RSSI 择优**（STA_START 首次快扫，≥8dB 规则，仅开机一次，
+  后续切换不重复扫）+ **AT+WIFI2**（本板首个板级扩展；语义=保存+重启，n16r8 同款）。
+- sdkconfig.defaults 清理了重复的 LWIP_TCP_SND_BUF_DEFAULT（PIT-039 的 5760 为准）。
+- ⚠️ 待决：defaults 里 `CONFIG_MIBEE_CSI_MOTION=y` 系 PIT-039 调试期遗留——按
+  2026-09-08 摄像头优先政策本板生产应为 CSI-off；2026-09-09 OTA 部署的镜像带着
+  CSI-on（实测标定 OK、推流并存正常）。是否回退由用户拍板。
+
+## CSI 替代 ΣΔ 运动拍照（2026-09-09 转正，PIT-040）
+
+上方"⚠️ 待决"已由用户拍板解决：**CSI-on 转正为本板生产形态**，ESPectre 运动判决
+替代 ΣΔ 像素管线作为拍照触发（`sdkconfig.defaults` 的 `CONFIG_MIBEE_CSI_MOTION=y`
+不再是遗留，是设计）。架构（`motion_detect.c` 的 CSI 分支）：
+
+- **触发**：250ms 轮询 `csi_motion_get_status()` 快照（csi_motion.cpp 移植 seeed
+  portMUX 快照；状态转移回调也落快照，否则 <1s 的 MOTION 片段会被 ~1Hz 周期
+  更新漏采）。ΣΔ 逐帧解码 + ~60KB **内部**工作缓冲退役——这是 CSI/:81 互斥门
+  （PIT-038）解除的资源前提；流/CSI/拍照三线并存。
+- **暗场三级判定**（`scene_dark_decision`）：探针缓存 <120s 直用 → 录制中单帧
+  自动曝光 luma 兜底（不上 AEC 锁，不污染录制流）→ 按需锁定曝光探针（NVR
+  常驻观看饿死周期探针时仍能拿正确判决，代价 ~2 帧观看流曝光异常）。
+- **闪光预热红线**："丢弃 N 帧再抓"必须以**发布序号**为界
+  （`frame_broker_current_gen` + `frame_broker_get_copy_after(gen0+3)`）——
+  `get_copy` 恒返回当前帧，按次丢弃丢的是同一帧（PIT-040 主坑，修复前后
+  成片 13.5KB vs 36.9-48.3KB）。`frame_broker_boost(ms)` 拍照窗口空闲 2→5fps。
+- **保存后画廊可见**：GPIO14 使运行期 opendir 不可靠 → 保存进 pending 数组
+  （portMUX），`storage_get_photo_list_json` 并入缓存。照片**内容**运行期读不出
+  （fread 200+0B）是既有硬件局限，验证成片看列表里的字节数。
+- **ESPectre 自适应阈值语义**：死寂环境 thr 可自适应降到 ~0.03（微扰即触发），
+  活动环境 ~0.4-0.75——评估"灵敏度"时先看 `/api/status` 的 `csi.thr`。
+
+**验证（2026-09-09）**：手动闪光对照 41-46KB；自然事件 09:52/10:16/10:48 =
+44.4/48.3/40.6KB 全打亮；6h soak 见 `soak/csi_photo/`（含两轮历史
+`csi_photo_round1_buggy_warmup` / `csi_photo_round2_warmup_fix`）。门关形态
+（家族回退路径）fullclean 编译通过（0x130340）。
