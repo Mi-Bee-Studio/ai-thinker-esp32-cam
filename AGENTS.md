@@ -525,3 +525,35 @@ PIT-037 修复后弱链 OTA 实测两轮全通，断链 56 竞态=镜像已写�
 44.4/48.3/40.6KB 全打亮；6h soak 见 `soak/csi_photo/`（含两轮历史
 `csi_photo_round1_buggy_warmup` / `csi_photo_round2_warmup_fix`）。门关形态
 （家族回退路径）fullclean 编译通过（0x130340）。
+
+## 2026-09-13 两线合一部署（merge/net-opt-v1.7，分支 `merge/net-opt-v1.7`）
+
+**背景**：`feat/dual-wifi-port`（RSSI 择优 + AT+WIFI2 + PIT-040 拍照链）与
+`feat/csi-tuning-v1.7`（CSI v1.7 调参/自愈 + chan-health ①b）自 1714199 分叉，
+板上只跑了前者的基底（84cca94-dirty）。本日合并两线（8fe2cee）+ 修 CMake gz
+断链（f3b8f8a）后 Web OTA 全量部署（ota_1）。
+
+- **合并要点**：契约文档/SPA 取家族态（==n16r8/luatos）；at_port.c 双扩展并存
+  （CHHEALTH+WIFI2）；csi_motion.cpp 以 v1.7 为基**回填 PIT-040 状态转移快照**
+  （v1.7 线曾退化为仅日志——<1s MOTION 片段会被 1Hz 轮询漏采）；web_server.c
+  删掉自动合并残留的重复 v1.6 csi 块（同 key 双发射）。
+- **上板验证**：boot pick 实测生效（`boot pick: 'MickeyBeeGT' -82dBm vs
+  'MickeyBeeGT3000' -77dBm → secondary`，开机 5.9s 连上）；`chan_health` 上线
+  （ch7 busy_score 61、2 BSS、rssi_avg -81）；csi v1.7 全字段 + `api_version
+  1.7`；gz 协商生效且解压 md5 == 家族明文。
+- **新坑（f3b8f8a）**：PIT-043 的压缩步骤在**干净检出**上静默失效——custom
+  command OUTPUT 没进 spiffs DEPENDS，GLOB 扫不到不存在的 .gz，压缩永不跑、
+  镜像只含明文（CI 同样中招）。修复=5 个 gz 显式进 DEPENDS。
+- **环境剧变（重要）**：本工作机已从 Arch 换成 **Debian 13（notebook-asus）**。
+  旧 `~/.espressif` eim 工具链不存在 → ESP-IDF v6.0.1 重装于
+  `~/espressif/esp-idf-v6.0.1`（官方 release zip，`dl.espressif.com/
+  github_assets` → CN CDN，多路 Range 并行 ~3MB/s；工具包 URL 见
+  tools.json，同样走该前缀）。激活 = `source
+  ~/espressif/esp-idf-v6.0.1/export.sh`（**不再是** eim activate 脚本）。
+  串口权限=dialout 组（已加）；CH340 开口即复位在 Debian 复现（bootlog.py
+  实测 rst:0x1）。**push 仍被挡**：本机 SSH 公钥未注册到 GitHub（用户侧动作）。
+- **基线数据**（部署前后对比探针在 `~/Projects/esp-cam/probe/ai-netopt-20260913/`）：
+  板位双网皆弱（GT3000 -73~-80 漂移 / 主网 -80~-82）；/api/status RTT 60 样本
+  avg ~1.9s max 6s；:81 流活但弱窗吞吐 ~2KB/s（一帧 SVGA 都传不完）——**物理层
+  （板位/PCB 天线）仍是网络体验的决定性瓶颈**，固件侧（AMPDU 关+择优+护栏+
+  信道健康）已尽力。挪位或焊 IPEX 外接天线才是根治。
