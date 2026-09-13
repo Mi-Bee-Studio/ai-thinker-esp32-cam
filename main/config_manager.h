@@ -8,6 +8,12 @@
 /* Forward declaration - avoids pulling cJSON.h into every includer */
 typedef struct cJSON cJSON;
 
+/* C++ 链接守卫（csi_motion.cpp 等 C++ 单元引用 config_get 等接口，
+ * 与 seeed 版 config_manager.h 同型） */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * @brief Initialize config manager - loads from NVS or applies defaults
  * @return ESP_OK on success
@@ -119,6 +125,19 @@ esp_err_t config_set_flash_threshold(uint8_t threshold);
  */
 esp_err_t config_set_onvif_enable(uint8_t enable);
 
+/**
+ * @brief Set CSI sensing tuning family (契约 v1.7 §3.2), save immediately.
+ * 本板 CSI-off 生产形态：接受存储，运行时热应用由调用方经
+ * csi_motion_apply_config() 负责（stub 为空实现）。
+ * @param enabled 1=sensing on
+ * @param threshold 0.0=auto; 0.05-1.0=manual lock (PIT-041)
+ * @param on_hits/off_hits debounce hit counts 1-20
+ * @param profile 0=Lightweight 1=High-Accuracy
+ * @param auto_heal 1=self-heal loop on
+ */
+esp_err_t config_set_csi(uint8_t enabled, float threshold, uint8_t on_hits,
+                         uint8_t off_hits, uint8_t profile, uint8_t auto_heal);
+
 esp_err_t config_set_timelapse(uint8_t enabled, uint16_t interval_s, uint8_t burst_count);
 esp_err_t config_set_timelapse_dynamic(uint8_t mode, uint16_t min_interval, uint16_t max_interval, uint8_t decay_factor, uint16_t decay_period);
 
@@ -189,5 +208,9 @@ cJSON *config_get_json(void);
  * @return const pointer to stored password (valid until next save)
  */
 const char *config_get_web_password(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // CONFIG_MANAGER_H
