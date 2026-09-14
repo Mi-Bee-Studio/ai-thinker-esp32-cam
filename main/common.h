@@ -101,6 +101,7 @@ typedef struct {
     uint8_t wifi_tx_power;      /* TX power in 0.25dBm units (80=20dBm) */
     uint8_t wifi_power_save;    /* 0=WIFI_PS_NONE, 1=WIFI_PS_MIN_MODEM */
     uint8_t flash_threshold;     /* 板级扩展：侦测联动闪光灯阈值 */
+    uint8_t flash_viewers;       /* 板级扩展：有观看者（流/拍照）自动开闪光灯，默认 0=关 */
     uint8_t timelapse_enabled;
     uint16_t timelapse_interval_s;
     uint8_t timelapse_burst_count;

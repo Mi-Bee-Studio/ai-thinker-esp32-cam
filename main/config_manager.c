@@ -72,6 +72,7 @@ static void apply_defaults(cam_config_t *cfg)
     cfg->wifi_tx_power = 80;   /* 20dBm max */
     cfg->wifi_power_save = 0;  /* disabled for streaming */
     cfg->flash_threshold = 40;
+    cfg->flash_viewers = 0;    /* 板级扩展：观看者驱动闪光灯，默认关 */
     cfg->timelapse_enabled = 0;
     cfg->timelapse_interval_s = 30;
     cfg->timelapse_burst_count = 3;
@@ -282,6 +283,7 @@ KEY_ASSERT("motion_act_s");
 KEY_ASSERT("wifi_tx_pwr");
 KEY_ASSERT("wifi_ps");
 KEY_ASSERT("flash_thr");
+KEY_ASSERT("flash_viewers");
 KEY_ASSERT("tl_en");
 KEY_ASSERT("tl_int_s");
 KEY_ASSERT("tl_burst");
@@ -377,6 +379,7 @@ static void load_keys_from_nvs(nvs_handle_t h, cam_config_t *cfg)
     rd_u8(h, "wifi_tx_pwr",   &cfg->wifi_tx_power);
     rd_u8(h, "wifi_ps",       &cfg->wifi_power_save);
     rd_u8(h, "flash_thr",     &cfg->flash_threshold);
+    rd_u8(h, "flash_viewers", &cfg->flash_viewers);
     rd_u8(h, "tl_en",         &cfg->timelapse_enabled);
     rd_u16(h, "tl_int_s",     &cfg->timelapse_interval_s);
     rd_u8(h, "tl_burst",      &cfg->timelapse_burst_count);
@@ -426,6 +429,7 @@ static void write_keys_to_nvs(nvs_handle_t h, const cam_config_t *cfg)
     wr_u8(h, "wifi_tx_pwr",  cfg->wifi_tx_power);
     wr_u8(h, "wifi_ps",      cfg->wifi_power_save);
     wr_u8(h, "flash_thr",    cfg->flash_threshold);
+    wr_u8(h, "flash_viewers", cfg->flash_viewers);
     wr_u8(h, "tl_en",        cfg->timelapse_enabled);
     wr_u16(h, "tl_int_s",    cfg->timelapse_interval_s);
     wr_u8(h, "tl_burst",     cfg->timelapse_burst_count);
@@ -822,6 +826,15 @@ esp_err_t config_set_flash_threshold(uint8_t threshold)
     return set_and_save();
 }
 
+esp_err_t config_set_flash_viewers(uint8_t enable)
+{
+    config_lock();
+    s_config.flash_viewers = enable ? 1 : 0;
+    config_unlock();
+    ESP_LOGI(TAG, "flash viewers set to %u", s_config.flash_viewers);
+    return set_and_save();
+}
+
 esp_err_t config_set_onvif_enable(uint8_t enable)
 {
     config_lock();
@@ -1113,6 +1126,7 @@ cJSON *config_get_json(void)
     cJSON_AddNumberToObject(root, "wifi_tx_power", (double)cfg->wifi_tx_power);
     cJSON_AddNumberToObject(root, "wifi_power_save", (double)cfg->wifi_power_save);
     cJSON_AddNumberToObject(root, "flash_threshold", (double)cfg->flash_threshold);
+    cJSON_AddNumberToObject(root, "flash_viewers", (double)cfg->flash_viewers);
     cJSON_AddNumberToObject(root, "timelapse_enabled", (double)cfg->timelapse_enabled);
     cJSON_AddNumberToObject(root, "timelapse_interval_s", (double)cfg->timelapse_interval_s);
     cJSON_AddNumberToObject(root, "timelapse_burst_count", (double)cfg->timelapse_burst_count);

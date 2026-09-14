@@ -42,6 +42,7 @@
 #include "motion_detect.h"
 #include "csi_motion.h"  /* 契约 v1.6：/api/status 的 csi 快照字段（本板 CSI-off 恒缺省） */
 #include "flash_led.h"
+#include "flash_viewers.h"   /* 板级扩展：观看者驱动闪光灯 */
 #include "time_sync.h"
 #include "lwip/sockets.h"   /* log_404_peer: getpeername/inet_ntop */
 #include "lwip/inet.h"
@@ -364,6 +365,16 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "stream_clients", (double)mjpeg_streamer_get_client_count());
     cJSON_AddNumberToObject(data, "stream_clients_max", 1);
 
+    /* Viewer-driven flash LED watcher (板级扩展 flash_viewers) */
+    {
+        cJSON *fv = cJSON_CreateObject();
+        if (fv) {
+            cJSON_AddNumberToObject(fv, "enabled", (double)config_get()->flash_viewers);
+            cJSON_AddNumberToObject(fv, "active", (double)flash_viewers_active());
+            cJSON_AddItemToObject(data, "flash_viewers", fv);
+        }
+    }
+
     /* Brightness — method 2 = locked-exposure probe, 1 = auto-exposure luma */
     cJSON_AddNumberToObject(data, "brightness_pct", (double)m->brightness_pct);
     cJSON_AddStringToObject(data, "brightness_method",
@@ -419,6 +430,7 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "wifi_tx_power", (double)cfg->wifi_tx_power);
     cJSON_AddNumberToObject(data, "wifi_power_save", (double)cfg->wifi_power_save);
     cJSON_AddNumberToObject(data, "flash_threshold", (double)cfg->flash_threshold);
+    cJSON_AddNumberToObject(data, "flash_viewers", (double)cfg->flash_viewers);
     cJSON_AddNumberToObject(data, "timelapse_enabled", (double)cfg->timelapse_enabled);
     cJSON_AddNumberToObject(data, "timelapse_interval_s", (double)cfg->timelapse_interval_s);
     cJSON_AddNumberToObject(data, "timelapse_burst_count", (double)cfg->timelapse_burst_count);
@@ -785,6 +797,15 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
     if (item && cJSON_IsNumber(item)) {
         config_set_flash_threshold((uint8_t)item->valueint);
     }
+
+    /* Viewer-driven flash LED switch (板级扩展, 0/1) */
+    item = cJSON_GetObjectItem(json, "flash_viewers");
+    if (item && cJSON_IsNumber(item)) {
+        if (item->valueint != 0 && item->valueint != 1) {
+            return send_json_error(req, "flash_viewers must be 0 or 1", 400);
+        }
+        config_set_flash_viewers((uint8_t)item->valueint);
+    }
     {
         bool timelapse_changed = false;
         uint8_t tl_enabled = config_get()->timelapse_enabled;
@@ -1048,6 +1069,7 @@ static esp_err_t handler_api_csi_calibrate(httpd_req_t *req)
 static esp_err_t handler_capture(httpd_req_t *req)
 {
     set_cors_headers(req);
+    flash_viewers_notify_capture();  /* 板级扩展：拍照期间保持闪光灯判定在场 */
     camera_fb_t *fb = NULL;
     /* Non-blocking peek: broker's s_current always holds the last published
      * frame, so this returns instantly. timeout=0 avoids blocking the
@@ -1934,6 +1956,13 @@ static esp_err_t handler_static(httpd_req_t *req)
      * field names/values the new firmware rejects (e.g. cleanup 400). */
     if (strstr(filepath, ".html")) {
         httpd_resp_set_hdr(req, "Cache-Control", "no-cache, must-revalidate");
+    } else {
+        /* 弱链缓存（PIT-051 收尾，2026-09-13）：js/css/svg 无版本号文件名，
+         * 显式 5 分钟浏览器缓存——成功加载一次后，重开页面只需重传
+         * index.html(5.9KB gz)+API，坏窗可开率大幅提高。代价：OTA 刷
+         * SPIFFS 后浏览器最多带 5 分钟旧资产（入口 HTML 恒 no-cache，新
+         * 页面引用同名文件最多首访陈旧一次；加载器 ?retry= 亦绕缓存）。 */
+        httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=300");
     }
 
     char buf[4096];

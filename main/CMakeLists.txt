@@ -4,6 +4,7 @@ idf_component_register(
         "camera_driver.c"
         "config_manager.c"
         "flash_led.c"
+        "flash_viewers.c"
         "health_monitor.c"
         "mjpeg_streamer.c"
         "motion_detect.c"

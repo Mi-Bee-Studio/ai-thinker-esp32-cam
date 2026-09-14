@@ -121,6 +121,12 @@ esp_err_t config_set_wifi_power(uint8_t tx_power, uint8_t power_save);
 esp_err_t config_set_flash_threshold(uint8_t threshold);
 
 /**
+ * @brief Set viewer-driven flash LED switch (板级扩展, 0=off default, 1=on),
+ *        save immediately; watcher picks it up on next 1s tick
+ */
+esp_err_t config_set_flash_viewers(uint8_t enable);
+
+/**
  * @brief Set ONVIF enable (契约核心字段，重启生效), save immediately
  */
 esp_err_t config_set_onvif_enable(uint8_t enable);

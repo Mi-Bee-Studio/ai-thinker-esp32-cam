@@ -37,6 +37,7 @@
 #include "onvif_service.h"
 #include "frame_broadcaster.h"
 #include "sd_log.h"
+#include "flash_viewers.h"
 
 static const char *TAG = "main";
 
@@ -195,6 +196,9 @@ static void sta_services_task(void *arg)
             ESP_LOGI(TAG, "Motion detection disabled in config (motion_enabled=0)");
         }
     }
+
+    /* Viewer-driven flash LED watcher (板级扩展 flash_viewers，默认关) */
+    flash_viewers_start();
 
     /* Initialize timelapse */
     if (!s_timelapse_started) {
