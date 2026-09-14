@@ -11,6 +11,7 @@
 #include "mjpeg_streamer.h"
 #include "frame_broadcaster.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -40,8 +41,21 @@ static const char *TAG = "mjpeg_streamer";
 #define CHUNK_SIZE          8192
 #define LISTEN_BACKLOG      2
 #define CLIENT_TASK_STACK   4096
-#define SEND_TIMEOUT_MS     15000
+/* 3000（原 15000）：弱链上单次阻塞 send 每多挂 1s，满载 TX 队列就多
+ * 窒息 1s（wifi:mem fail → 连 :80 的 httpd 都发不出体数据，PIT-051）。
+ * 3s 足够覆盖正常 RTT 抖动，超时即断该客户端释放队列。 */
+#define SEND_TIMEOUT_MS     3000
 #define CLIENT_RECV_TIMEOUT 5
+
+/* 拥塞感知限速（PIT-051）：帧发送耗时是链路健康的直接度量——发得慢就
+ * 丢帧降速，把 :81 的 TX 需求压到链路可承受的水平，给 Web/API 让出空口；
+ * 连续快帧自动解除。观看端代价只是帧率下降，画质无损。 */
+#define FRAME_SLOW_US       (1000 * 1000)  /* 单帧 >1s → 轻度限速 */
+#define FRAME_VSLOW_US      (3000 * 1000)  /* 单帧 >3s → 重度限速 */
+#define CONGEST_PACE_MS     2000           /* 轻度：1 帧 / 2s */
+#define CONGEST_PACE_MAX_MS 5000           /* 重度：1 帧 / 5s 封顶 */
+#define FRAME_FAST_US       (300 * 1000)   /* 单帧 <300ms */
+#define FAST_STREAK_TO_CLEAR 3             /* 连续 3 个快帧解除限速 */
 
 /* ---------- Module state ---------- */
 
@@ -195,6 +209,11 @@ ESP_LOGI(TAG, "Stream client started (total %d)", get_client_count());
     char part_hdr[192];
     int capture_fails = 0;
 
+    /* 拥塞限速状态（PIT-051） */
+    int congest_pace_ms = 0;          /* 0 = 不限速 */
+    int fast_streak = 0;
+    int64_t last_frame_done_us = 0;
+
     while (1) {
         /* Dead-client probe: non-blocking recv detects TCP FIN/RST immediately.
          * On a healthy one-way MJPEG stream, recv returns -1/EAGAIN (no data from
@@ -205,6 +224,13 @@ ESP_LOGI(TAG, "Stream client started (total %d)", get_client_count());
         if (pr == 0 || (pr < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
             ESP_LOGW(TAG, "Client disconnected (probe rv=%d errno=%d)", pr, errno);
             break;
+        }
+
+        /* 限速窗内不取帧不发送——空口让给 :80/Web；100ms 粒度轮询到期 */
+        if (congest_pace_ms > 0 &&
+            (esp_timer_get_time() - last_frame_done_us) < (int64_t)congest_pace_ms * 1000) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
         }
 
         /* Capture frame with retry */
@@ -231,6 +257,8 @@ ESP_LOGI(TAG, "Stream client started (total %d)", get_client_count());
         /* Build multipart part header */
         int hdrlen = snprintf(part_hdr, sizeof(part_hdr),
             STREAM_BOUNDARY, fb->len);
+
+        int64_t frame_t0_us = esp_timer_get_time();
 
         /* Send part header */
         if (send(client_sock, part_hdr, hdrlen, 0) != hdrlen) {
@@ -261,6 +289,29 @@ ESP_LOGI(TAG, "Stream client started (total %d)", get_client_count());
         /* Trailing CRLF */
         if (send(client_sock, "\r\n", 2, 0) != 2) {
             break;
+        }
+
+        /* 帧耗时分级：慢→限速丢帧，连续快→自动解除 */
+        int64_t frame_ms = (esp_timer_get_time() - frame_t0_us) / 1000;
+        last_frame_done_us = esp_timer_get_time();
+        int prev_pace = congest_pace_ms;
+        if (frame_ms * 1000 > FRAME_VSLOW_US) {
+            congest_pace_ms = CONGEST_PACE_MAX_MS;
+            fast_streak = 0;
+        } else if (frame_ms * 1000 > FRAME_SLOW_US) {
+            if (congest_pace_ms < CONGEST_PACE_MS) congest_pace_ms = CONGEST_PACE_MS;
+            fast_streak = 0;
+        } else if (frame_ms * 1000 < FRAME_FAST_US) {
+            if (++fast_streak >= FAST_STREAK_TO_CLEAR) {
+                congest_pace_ms = 0;
+                fast_streak = 0;
+            }
+        } else {
+            fast_streak = 0;
+        }
+        if (congest_pace_ms != prev_pace) {
+            ESP_LOGW(TAG, "TX congestion pace -> %d ms/frame (last frame %lld ms)",
+                     congest_pace_ms, (long long)frame_ms);
         }
 
         /* Frame-rate throttle — ~33 fps max */
@@ -310,9 +361,9 @@ static void mjpeg_listen_task(void *arg)
             continue;
         }
 
-        /* 发送超时兜底（2026-09-04 家族同步）：TCP 零窗口客户端的 send()
-         * 会长期阻塞占住任务；10s 超时让其走断开清理。 */
-        struct timeval snd_to = { .tv_sec = 10, .tv_usec = 0 };
+        /* 发送超时兜底（2026-09-04 家族同步，2026-09-13 收紧随 SEND_TIMEOUT_MS）：
+         * TCP 零窗口客户端的 send() 会阻塞占住任务；超时让其走断开清理。 */
+        struct timeval snd_to = { .tv_sec = SEND_TIMEOUT_MS / 1000, .tv_usec = 0 };
         setsockopt(client_sock, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof(snd_to));
 
         /* 对端溯源（PIT-038）：重连风暴/锤击定位，accept 即记 IP */
