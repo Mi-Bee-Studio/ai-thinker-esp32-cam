@@ -557,3 +557,77 @@ PIT-037 修复后弱链 OTA 实测两轮全通，断链 56 竞态=镜像已写�
   avg ~1.9s max 6s；:81 流活但弱窗吞吐 ~2KB/s（一帧 SVGA 都传不完）——**物理层
   （板位/PCB 天线）仍是网络体验的决定性瓶颈**，固件侧（AMPDU 关+择优+护栏+
   信道健康）已尽力。挪位或焊 IPEX 外接天线才是根治。
+
+## 2026-09-13 晚："Web 打不开"诊断 + 推流 TX 窒息修复（PIT-051，USB 已上板）
+
+用户报 .139 Web 无法打开。串口+网络侧联合定位，结论两层（详见 PITFALLS PIT-051）：
+
+1. **物理层尺寸崩塌（根治需用户动作）**：分级 ping 实测送达率 64B=50%、
+   600B=17%、1400B=0%——大帧在该板位（-75dBm/ch7 busy63%）几乎必丢，
+   TCP 数据段凑不齐 → "头部能到、体数据全灭"。链路分钟级波动，好窗可
+   完整拉 6.6KB 资产（~11s），坏窗 60s 0B。设备固件全程健康：零重启/
+   零 EMFILE、UI 资产 md5 与仓库一致、AMPDU-off 等配方在运行镜像确认齐全。
+2. **推流 TX 窒息放大器（已修，`333069d` 工作树）**：NVR(.30) 每 15-20s
+   重连 :81，发不出的 SVGA 帧按 SNDTIMEO 15s×7chunk 拽住满载 TX 队列 →
+   `wifi:mem fail`（开机 2min09s 首现）→ 全设备 TX 窒息（TrafficGen ping
+   ENOMEM 83 次/25min、httpd send:11/113 风暴）。修复=推流拥塞限速
+   （帧 >1s→1帧/2s、>3s→1帧/5s 封顶、3 连快帧自动解除）+ SNDTIMEO 15s→3s。
+   上板实证：限速按设计介入、mem fail 0 次、TrafficGen 失败 2 次。
+   mjpeg_streamer.c 不在家族 md5 锁内（board-local），他仓同类可参照移植。
+- **诊断手法沉淀**：Web"打不开"先跑 `ping -s 16/200/600/1000/1400` 分级
+  送达率——斜率陡=物理层；再 grep 串口 `wifi:mem fail`/`TrafficGen.*errno=12`
+  判 TX 池耗尽。curl 判据："200+0B"（头到体丢）≠"000"（连接都不通）。
+- **好窗复测（21:15，最终验证 ALL_PASS）**：`good_window_watch.sh`（probe 3/3
+  触发抓四资产）守 28 分钟后命中：`/` 6544B/1.01s、`/style.css` 6677B/1.35s、
+  `/app.js` 19402B/4.22s、`/i18n.js` 7409B/6.94s——**新固件下 UI 在链路好窗
+  完全可用**；坏窗仍打不开=纯物理层（见整改菜单）。
+- **第二轮（21:45-22:08 用户复报）**：`web_server.c` 静态资产加
+  `Cache-Control: public, max-age=300`（HTML 恒 no-cache；代价=OTA 刷 SPIFFS
+  后浏览器最多带 5 分钟旧资产，加载器 ?retry= 可绕）——首载成功后重开页面
+  只需 index.html+API。严格采样 12 轮：idx 1/12、app 0/12，链路 21:45 起
+  持续深坏（200B 送达 50%→0%，RSSI 恒 -76=干扰加重非信号）。环境级坍塌
+  固件无可作为，整改菜单见 probe 存档。
+- 采集器常驻 ttyUSB0（probe/ai-netopt-20260913/overnight_*.log），留观。
+
+## 2026-09-14 flash_viewers 板级扩展：观看者驱动闪光灯（已上板 + 已开启）
+
+用户需求：有人看流/拍照时自动开闪光灯，无人自动关，默认关。实现（全部板本地，
+`mjpeg_streamer.c`/`web_server.c` 均不在家族 md5 锁内，契约文档未动——板级
+扩展先行的家族先例：AT+WIFI2 当初亦如此）：
+
+- **新模块 `flash_viewers.c/h`**：1Hz 静态栈任务（PIT-039 红线）。观看者=
+  `mjpeg_streamer_get_client_count()>0`（覆盖实时预览/NVR 采集）或最近 3s
+  内有 `/api/capture` 拍照（`flash_viewers_notify_capture()` 钩子）。在场→
+  LED 亮；最后一位离开后 **20s grace** 再灭（吸收 NVR 15-20s 重连 churn，
+  防频闪）。
+- **仲裁语义**：开启且在场时 watcher 每拍把 LED 拉回亮（幂等收敛，motion
+  闪光脉冲/手动熄灭后最迟 1s 恢复）——**此语义下手动 /api/led 关灯仅在无
+  观看者时可靠**；关闭开关时 watcher 一次性释放 LED 并完全退出干预。
+- **配置键**：`flash_viewers`（u8 0/1，NVS 逐键，缺省 0=关，默认关已验证）。
+  API：`POST /api/config {"flash_viewers":0|1}`（0/1 校验）+ GET /api/config
+  回显 + `/api/status` 新增 `flash_viewers:{enabled,active}`（板级附加字段，
+  契约未收录）。注意：`GET /api/config` 的 JSON 在 web_server.c 自拼
+  （config_manager 的导出函数只服务 AT/备份）——**加配置字段两处都要加**。
+- **上板验证**（16:18-16:21）：开机 61s NVR 拉流 → `viewer present — LED
+  on`；关开关 3s 内 LED 释放（on:false）；重开 3s 内恢复亮。当前开关=开
+  （用户要求的生产态）。GPIO4 LEDC 与 motion auto-flash/timelapse 共存。
+- 坑（复犯三次）：`pkill/pgrep -f <含脚本的字符串>` 会匹配包装 bash 自己的
+  命令行导致自杀——用字符类断匹配（`pgrep -f 'overnight_lo[g]'`）或按 PID。
+
+### 前端配套（同日，四仓 SPA 已同步）
+
+- **UI 开关**：Light 页新增 `row-flash-viewers`（toggle），沿用家族"键在位
+  才显示"先例——`GET /api/config` 返回 `flash_viewers` 键的板才显示（本板），
+  其他板（n16r8 已实测 config 无此键）天然隐藏，无需能力位。改动三件：
+  index.html（行模板）/app.js（loadConfig 回读 + `saveFlashViewers()` +
+  initToggle 绑定）/i18n.js（en+zh 标签与悬停提示）。
+- **四仓已同步 md5**（ai/n16r8/luatos/seeed 的 web_ui 五文件逐字节一致），
+  `family_check.sh` 中 SPA 部分通过。**注意 family_check 当前仍报分歧：
+  `docs/api-contract.md`+`docs/config-contract.md` 与 seeed 不一致——seeed
+  的 watermark(#11)/day-night 两提交已推进契约文档，其余三仓未跟上，属
+  遗留状态非本次引入，待家族契约同步时统一。**
+- **SPIFFS 已刷**（USB 0x312000，OTA 不可用仍因弱链）；PIT-017 验证：
+  设备 `/app.js`、`/i18n.js` md5 == 仓文件，`/index.html` 含开关标记；
+  NVS 的 flash_viewers=1 跨刷机保留。浏览器后端本会话不可用（无
+  IAB/CDP），UI 行为按 curl 等效验收（md5+标记+逻辑三处 grep），用户
+  下次打开 Web 即可在 Light 页看到"有人观看时亮灯"开关（中英文随语言）。
