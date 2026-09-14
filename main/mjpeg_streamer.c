@@ -11,9 +11,11 @@
 #include "mjpeg_streamer.h"
 #include "frame_broadcaster.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 #include <string.h>
 #include <stdio.h>
@@ -39,8 +41,21 @@ static const char *TAG = "mjpeg_streamer";
 #define CHUNK_SIZE          8192
 #define LISTEN_BACKLOG      2
 #define CLIENT_TASK_STACK   4096
-#define SEND_TIMEOUT_MS     15000
+/* 3000（原 15000）：弱链上单次阻塞 send 每多挂 1s，满载 TX 队列就多
+ * 窒息 1s（wifi:mem fail → 连 :80 的 httpd 都发不出体数据，PIT-051）。
+ * 3s 足够覆盖正常 RTT 抖动，超时即断该客户端释放队列。 */
+#define SEND_TIMEOUT_MS     3000
 #define CLIENT_RECV_TIMEOUT 5
+
+/* 拥塞感知限速（PIT-051）：帧发送耗时是链路健康的直接度量——发得慢就
+ * 丢帧降速，把 :81 的 TX 需求压到链路可承受的水平，给 Web/API 让出空口；
+ * 连续快帧自动解除。观看端代价只是帧率下降，画质无损。 */
+#define FRAME_SLOW_US       (1000 * 1000)  /* 单帧 >1s → 轻度限速 */
+#define FRAME_VSLOW_US      (3000 * 1000)  /* 单帧 >3s → 重度限速 */
+#define CONGEST_PACE_MS     2000           /* 轻度：1 帧 / 2s */
+#define CONGEST_PACE_MAX_MS 5000           /* 重度：1 帧 / 5s 封顶 */
+#define FRAME_FAST_US       (300 * 1000)   /* 单帧 <300ms */
+#define FAST_STREAK_TO_CLEAR 3             /* 连续 3 个快帧解除限速 */
 
 /* ---------- Module state ---------- */
 
@@ -57,6 +72,18 @@ static mjpeg_client_slot_t s_clients[MAX_STREAM_CLIENTS];
 static TaskHandle_t s_listen_task = NULL;
 static int s_listen_sock = -1;
 static volatile bool s_running = false;
+
+/* ---- 持久 worker 任务（PIT-039）：不再每连接 xTaskCreate ----
+ * 初代 ESP32 内部 RAM 贴地（MALLOC_CAP_INTERNAL 常态 ~27KB 且高度碎片化），
+ * 4KB 栈的客户端任务创建 ~50% 失败（实测 9 连败）——流"起来了又没有起来"。
+ * 改为一个静态分配（xTaskCreateStatic，.bss 栈/TCB）的常驻 worker，
+ * listen 任务经长度 1 的队列把 fd 递给它。零运行期任务创建。 */
+static StaticTask_t   s_worker_tcb;
+static StackType_t    s_worker_stack[CLIENT_TASK_STACK / sizeof(StackType_t)];
+static TaskHandle_t   s_worker_task = NULL;      /* 首次 start 创建，永不删除 */
+static QueueHandle_t  s_fd_queue = NULL;         /* 长度 1：int fd；-1 = 毒丸 */
+static StaticTask_t   s_listen_tcb;
+static StackType_t    s_listen_stack[CLIENT_TASK_STACK / sizeof(StackType_t)];
 
 /* ---------- Forward declarations ---------- */
 
@@ -76,11 +103,26 @@ static int get_client_count(void)
     return count;
 }
 
-/* ---------- Client task — serves one MJPEG stream connection ---------- */
+/* ---------- Client worker — persistent task, serves one fd per queue pickup ---------- */
 
 static void mjpeg_client_task(void *arg)
 {
-    int client_sock = (int)(intptr_t)arg;
+    (void)arg;
+    /* 常驻 worker：从队列取 fd → 服务到断开 → 回队列等待。任务与栈为
+     * 静态分配，永不删除（stop 只投毒丸/踢 fd，worker 清理后回队列）。 */
+    for (;;) {
+        int client_sock = -1;
+        if (xQueueReceive(s_fd_queue, &client_sock, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+        if (client_sock < 0) {
+            continue;   /* 毒丸（stop 时唤醒用）：无 fd 可服务，回队列等待 */
+        }
+
+        /* 占槽计数（listen 侧不再改计数；所有退出路径配对 --） */
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_client_count++;
+        xSemaphoreGive(s_mutex);
 
     /* Set send timeout so a stuck client does not hang the task */
     struct timeval tv = { .tv_sec = SEND_TIMEOUT_MS / 1000,
@@ -112,8 +154,7 @@ static void mjpeg_client_task(void *arg)
         xSemaphoreTake(s_mutex, portMAX_DELAY);
         s_client_count--;
         xSemaphoreGive(s_mutex);
-        vTaskDelete(NULL);
-        return;
+        continue;
     }
     req_buf[req_len] = '\0';
 
@@ -128,8 +169,7 @@ static void mjpeg_client_task(void *arg)
         xSemaphoreTake(s_mutex, portMAX_DELAY);
         s_client_count--;
         xSemaphoreGive(s_mutex);
-        vTaskDelete(NULL);
-        return;
+        continue;
     }
 
     /* Send HTTP 200 + multipart/x-mixed-replace headers */
@@ -149,8 +189,7 @@ static void mjpeg_client_task(void *arg)
         xSemaphoreTake(s_mutex, portMAX_DELAY);
         s_client_count--;
         xSemaphoreGive(s_mutex);
-        vTaskDelete(NULL);
-        return;
+        continue;
     }
 
     /* 登记注册表（LRU 依据）— 必须在请求校验通过之后 */
@@ -170,6 +209,11 @@ ESP_LOGI(TAG, "Stream client started (total %d)", get_client_count());
     char part_hdr[192];
     int capture_fails = 0;
 
+    /* 拥塞限速状态（PIT-051） */
+    int congest_pace_ms = 0;          /* 0 = 不限速 */
+    int fast_streak = 0;
+    int64_t last_frame_done_us = 0;
+
     while (1) {
         /* Dead-client probe: non-blocking recv detects TCP FIN/RST immediately.
          * On a healthy one-way MJPEG stream, recv returns -1/EAGAIN (no data from
@@ -180,6 +224,13 @@ ESP_LOGI(TAG, "Stream client started (total %d)", get_client_count());
         if (pr == 0 || (pr < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
             ESP_LOGW(TAG, "Client disconnected (probe rv=%d errno=%d)", pr, errno);
             break;
+        }
+
+        /* 限速窗内不取帧不发送——空口让给 :80/Web；100ms 粒度轮询到期 */
+        if (congest_pace_ms > 0 &&
+            (esp_timer_get_time() - last_frame_done_us) < (int64_t)congest_pace_ms * 1000) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
         }
 
         /* Capture frame with retry */
@@ -206,6 +257,8 @@ ESP_LOGI(TAG, "Stream client started (total %d)", get_client_count());
         /* Build multipart part header */
         int hdrlen = snprintf(part_hdr, sizeof(part_hdr),
             STREAM_BOUNDARY, fb->len);
+
+        int64_t frame_t0_us = esp_timer_get_time();
 
         /* Send part header */
         if (send(client_sock, part_hdr, hdrlen, 0) != hdrlen) {
@@ -238,6 +291,29 @@ ESP_LOGI(TAG, "Stream client started (total %d)", get_client_count());
             break;
         }
 
+        /* 帧耗时分级：慢→限速丢帧，连续快→自动解除 */
+        int64_t frame_ms = (esp_timer_get_time() - frame_t0_us) / 1000;
+        last_frame_done_us = esp_timer_get_time();
+        int prev_pace = congest_pace_ms;
+        if (frame_ms * 1000 > FRAME_VSLOW_US) {
+            congest_pace_ms = CONGEST_PACE_MAX_MS;
+            fast_streak = 0;
+        } else if (frame_ms * 1000 > FRAME_SLOW_US) {
+            if (congest_pace_ms < CONGEST_PACE_MS) congest_pace_ms = CONGEST_PACE_MS;
+            fast_streak = 0;
+        } else if (frame_ms * 1000 < FRAME_FAST_US) {
+            if (++fast_streak >= FAST_STREAK_TO_CLEAR) {
+                congest_pace_ms = 0;
+                fast_streak = 0;
+            }
+        } else {
+            fast_streak = 0;
+        }
+        if (congest_pace_ms != prev_pace) {
+            ESP_LOGW(TAG, "TX congestion pace -> %d ms/frame (last frame %lld ms)",
+                     congest_pace_ms, (long long)frame_ms);
+        }
+
         /* Frame-rate throttle — ~33 fps max */
         vTaskDelay(pdMS_TO_TICKS(30));
     }
@@ -259,7 +335,7 @@ ESP_LOGI(TAG, "Stream client started (total %d)", get_client_count());
     xSemaphoreGive(s_mutex);
 
     ESP_LOGI(TAG, "Stream client disconnected (total %d)", get_client_count());
-    vTaskDelete(NULL);
+    }   /* for(;;) — 回队列等下一个连接 */
 }
 
 /* ---------- Listen task — accepts connections, spawns client tasks ---------- */
@@ -285,9 +361,9 @@ static void mjpeg_listen_task(void *arg)
             continue;
         }
 
-        /* 发送超时兜底（2026-09-04 家族同步）：TCP 零窗口客户端的 send()
-         * 会长期阻塞占住任务；10s 超时让其走断开清理。 */
-        struct timeval snd_to = { .tv_sec = 10, .tv_usec = 0 };
+        /* 发送超时兜底（2026-09-04 家族同步，2026-09-13 收紧随 SEND_TIMEOUT_MS）：
+         * TCP 零窗口客户端的 send() 会阻塞占住任务；超时让其走断开清理。 */
+        struct timeval snd_to = { .tv_sec = SEND_TIMEOUT_MS / 1000, .tv_usec = 0 };
         setsockopt(client_sock, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof(snd_to));
 
         /* 对端溯源（PIT-038）：重连风暴/锤击定位，accept 即记 IP */
@@ -299,18 +375,18 @@ static void mjpeg_listen_task(void *arg)
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
         }
 
-        /* 防锤击护栏（PIT-038；2026-09-08 多 peer 化）：同 IP 两次接入间隔
-         * <5s（NVR 类查看端 1-2s 重连风暴签名）→ 503 + 指数退避（10s 起
-         * 步翻倍、封顶 5 分钟）；正常观众（SPA 被踢后 ~7s 自愈重连）不受
-         * 影响。旧单 IP 追踪会被"锤子+观众交替接入"互洗（新 IP 接入即重置
-         * 追踪对象，锤子借观众穿透踢线），故改 4 项每 IP 独立退避表（环
-         * 替换）。拒绝静默计数（防日志风暴）。 */
+        /* 防锤击护栏（PIT-038 v2；PIT-039 修锁死）：同 IP 两次接入间隔 <5s
+         * 才算"新违规"。退避窗口内守规矩的重连（≥5s 间隔，如 NVR 的 15s
+         * 梯子）会被拒但**不续期**——窗口自然过期后即可重新入内。旧逻辑
+         * 窗口内任何再撞都续期+翻倍封顶 300s，重连间隔短于 300s 的合法
+         * 客户端（NVR 15s）被永久锁死（实测单日拒绝计数 20901 仍爬升）。
+         * 真锤子（1-2s 风暴）每次再撞都是新违规 → 持续续期维持封禁。 */
         {
             enum { HAMMER_SLOTS = 4, HAMMER_MIN_GAP_MS = 5000 };
             static struct {
                 struct in_addr peer;
-                TickType_t last_accept;   /* 上次放行时刻 */
-                TickType_t until;         /* 退避截止 */
+                TickType_t last_seen;    /* 上次任意接入（放行或拒绝）时刻 */
+                TickType_t until;        /* 退避截止 */
                 uint32_t backoff_ms;
                 uint32_t rejected;
             } s_hammer[HAMMER_SLOTS];
@@ -323,12 +399,17 @@ static void mjpeg_listen_task(void *arg)
                     break;
                 }
             }
-            if (h >= 0 && ((int32_t)(now - s_hammer[h].until) < 0 ||
-                           (int32_t)(now - s_hammer[h].last_accept) <
-                               pdMS_TO_TICKS(HAMMER_MIN_GAP_MS))) {
-                s_hammer[h].until = now + pdMS_TO_TICKS(s_hammer[h].backoff_ms);
-                s_hammer[h].backoff_ms = s_hammer[h].backoff_ms < 300000
-                                             ? s_hammer[h].backoff_ms * 2 : 300000;
+            bool in_window = (h >= 0 && (int32_t)(now - s_hammer[h].until) < 0);
+            bool violation = (h >= 0 && (int32_t)(now - s_hammer[h].last_seen) <
+                                            pdMS_TO_TICKS(HAMMER_MIN_GAP_MS));
+            if (in_window || violation) {
+                if (violation) {
+                    /* 只有新违规才续期+翻倍；守规矩客户端等窗口自然过期 */
+                    s_hammer[h].until = now + pdMS_TO_TICKS(s_hammer[h].backoff_ms);
+                    s_hammer[h].backoff_ms = s_hammer[h].backoff_ms < 300000
+                                                 ? s_hammer[h].backoff_ms * 2 : 300000;
+                }
+                s_hammer[h].last_seen = now;
                 if (++s_hammer[h].rejected % 50 == 1) {
                     char ipstr[INET_ADDRSTRLEN];
                     inet_ntop(AF_INET, &client_addr.sin_addr, ipstr, sizeof(ipstr));
@@ -336,10 +417,22 @@ static void mjpeg_listen_task(void *arg)
                              (unsigned)s_hammer[h].rejected, ipstr,
                              s_hammer[h].backoff_ms / 1000);
                 }
-                const char *busy =
+                /* 503 带 Retry-After（剩余冷却秒数）：客户端遵守即可等过
+                 * 窗口自然重新入内（2026-09-08 晚 MiBeeNvr#711 对账）。 */
+                uint32_t retry_s = 1;
+                if ((int32_t)(s_hammer[h].until - now) > 0) {
+                    retry_s = ((uint32_t)(s_hammer[h].until - now)) /
+                              pdMS_TO_TICKS(1000) + 1;
+                }
+                char busy[128];
+                int bl = snprintf(busy, sizeof(busy),
                     "HTTP/1.1 503 Service Unavailable\r\n"
-                    "Content-Length: 23\r\n\r\nRetry after cooldown\r\n";
-                send(client_sock, busy, strlen(busy), 0);
+                    "Retry-After: %u\r\n"
+                    "Content-Length: 22\r\n\r\nRetry after cooldown\r\n",
+                    (unsigned)retry_s);
+                if (bl > 0) {
+                    send(client_sock, busy, bl, 0);
+                }
                 close(client_sock);
                 continue;
             }
@@ -350,11 +443,13 @@ static void mjpeg_listen_task(void *arg)
                 s_hammer[h].until = 0;
             }
             s_hammer[h].peer = client_addr.sin_addr;
-            s_hammer[h].last_accept = now;
+            s_hammer[h].last_seen = now;
             s_hammer[h].backoff_ms = 10000;
         }
 
-        /* 单槽位：已有连接（含滞留僵尸）一律让位给新连接（用户刚打开的页面） */
+        /* 单槽位：已有连接（含滞留僵尸）一律让位给新连接（用户刚打开的页面）。
+         * 踢除 = shutdown 旧 fd，worker 的 send/recv 立刻报错走清理；等
+         * 注册表清空后把新 fd 递进队列（PIT-039：不再每连接建任务）。 */
         bool slot_ready = false;
         xSemaphoreTake(s_mutex, portMAX_DELAY);
         if (s_client_count < MAX_STREAM_CLIENTS) {
@@ -380,25 +475,11 @@ static void mjpeg_listen_task(void *arg)
             continue;
         }
 
-        s_client_count++;
-        xSemaphoreGive(s_mutex);
-
-        /* Spawn a dedicated client task (Core 1, priority 2) */
-        BaseType_t created = xTaskCreatePinnedToCore(
-            mjpeg_client_task,
-            "mjpeg_cli",
-            CLIENT_TASK_STACK,
-            (void *)(intptr_t)client_sock,
-            2,
-            NULL,
-            1);
-
-        if (created != pdPASS) {
-            ESP_LOGE(TAG, "Failed to create client task");
+        /* 计数由 worker 在登记时维护；这里只递 fd（队列长度 1，槽位已空
+         * 必然成功——100ms 超时兜底防极端竞态） */
+        if (xQueueSend(s_fd_queue, &client_sock, pdMS_TO_TICKS(100)) != pdTRUE) {
+            ESP_LOGW(TAG, "fd queue full — dropping connection");
             close(client_sock);
-            xSemaphoreTake(s_mutex, portMAX_DELAY);
-            s_client_count--;
-            xSemaphoreGive(s_mutex);
         }
     }
 
@@ -459,17 +540,39 @@ esp_err_t mjpeg_stream_server_start(uint16_t port)
 
     s_running = true;
 
-    /* Spawn listen task on Core 1 */
-    BaseType_t created = xTaskCreatePinnedToCore(
-        mjpeg_listen_task,
-        "mjpeg_listen",
-        CLIENT_TASK_STACK,
-        NULL,
-        3,      /* slightly higher than client tasks */
-        &s_listen_task,
-        1);     /* Core 1 */
+    /* fd 队列 + 常驻 worker（静态栈，首次创建后跨 stop/start 复用） */
+    if (s_fd_queue == NULL) {
+        s_fd_queue = xQueueCreate(1, sizeof(int));
+    }
+    if (s_fd_queue == NULL) {
+        ESP_LOGE(TAG, "Failed to create fd queue");
+        close(s_listen_sock);
+        s_listen_sock = -1;
+        s_running = false;
+        return ESP_FAIL;
+    }
+    if (s_worker_task == NULL) {
+        s_worker_task = xTaskCreateStaticPinnedToCore(
+            mjpeg_client_task, "mjpeg_cli",
+            CLIENT_TASK_STACK / sizeof(StackType_t), NULL,
+            2, s_worker_stack, &s_worker_tcb, 1);
+        if (s_worker_task == NULL) {
+            ESP_LOGE(TAG, "Failed to create client worker task");
+            close(s_listen_sock);
+            s_listen_sock = -1;
+            s_running = false;
+            return ESP_FAIL;
+        }
+    }
 
-    if (created != pdPASS) {
+    /* Listen task（静态栈——本板运行期堆碎片化下动态创建不可靠，PIT-039） */
+    s_listen_task = xTaskCreateStaticPinnedToCore(
+        mjpeg_listen_task, "mjpeg_listen",
+        CLIENT_TASK_STACK / sizeof(StackType_t), NULL,
+        3,      /* slightly higher than client worker */
+        s_listen_stack, &s_listen_tcb, 1);     /* Core 1 */
+
+    if (s_listen_task == NULL) {
         ESP_LOGE(TAG, "Failed to create listen task");
         close(s_listen_sock);
         s_listen_sock = -1;
@@ -499,7 +602,8 @@ void mjpeg_streamer_stop(void)
 
     /* 轮询等待任务自退（退出前自清 s_listen_task），最多 1s；仅当任务
      * 真正卡死（句柄仍非 NULL = TCB 仍有效）才强制删除——盲删可能已
-     * 自退任务的悬垂句柄是 LoadProhibited 崩溃源（2026-09-07）。 */
+     * 自退任务的悬垂句柄是 LoadProhibited 崩溃源（2026-09-07）。
+     * 静态任务删除安全：IDLE 清理跳过静态内存，.bss 下次 start 复用。 */
     for (int i = 0; i < 100 && s_listen_task != NULL; i++) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -507,13 +611,28 @@ void mjpeg_streamer_stop(void)
         vTaskDelete(s_listen_task);
         s_listen_task = NULL;
     }
-    
-    s_client_count = 0;
-    
-    if (s_mutex != NULL) {
-        vSemaphoreDelete(s_mutex);
-        s_mutex = NULL;
+
+    /* 常驻 worker 不删除：踢掉在服务连接，投毒丸清空队列，等它回空闲。
+     * （最长阻塞点 = SO_SNDTIMEO 15s；等不到也无碍——worker 不持有
+     * 相机/注册表之外的任何共享状态，清理路径自会走完。） */
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (s_clients[0].fd != 0) {
+        shutdown(s_clients[0].fd, SHUT_RDWR);
     }
-    
+    s_client_count = 0;
+    xSemaphoreGive(s_mutex);
+
+    int poison = -1;
+    if (s_fd_queue != NULL) {
+        xQueueSend(s_fd_queue, &poison, 0);
+        int stale;
+        while (xQueueReceive(s_fd_queue, &stale, 0) == pdTRUE && stale >= 0) {
+            close(stale);   /* 排掉 stop 前夜挤进队列的 fd */
+        }
+    }
+
+    /* 互斥锁与队列**不删**（worker 常驻复用）：旧实现 stop 删锁时若有
+     * 客户端还在清理路径上，xSemaphoreTake 已删句柄 = 崩溃窗口。 */
+
     ESP_LOGI(TAG, "MJPEG streamer stopped, clients reset");
 }

@@ -457,3 +457,177 @@ PIT-037 修复后弱链 OTA 实测两轮全通，断链 56 竞态=镜像已写�
 护栏升级 v2（4 项每-IP 退避表，同 IP 接入 <5s → 503 封顶 300s，正常观众
 ~7s SPA 自愈重连不受影响）。CSI 试验结论定稿：初代板感知+推流互斥，
 生产形态=CSI 关。
+
+## 2026-09-08 深夜："web+NVR 双失效"四层根因修复（PIT-039，已上板验证）
+
+用户报 web 与 NVR 全不可用。四层叠加根因 + 两个坑中坑，全部修复并 USB 上板
+（当时 httpd 挂死、OTA 通道不可用；flash 后须 `esptool --no-stub run`）：
+
+1. **AMPDU TX/RX 关闭**（sdkconfig.defaults 落档，n16r8 配方）：弱链 -69dBm 上
+   聚合帧重传黑洞——>6KB 批量流填满一个 TCP_SND_BUF(5760) 后零进展（搁浅点
+   反复 6072B=8×MSS），小请求照常。这是"小 JSON 秒回、app.js 搁浅 20-30s、
+   推流 0 帧"的公共根因。
+2. **护栏续期语义修正**（mjpeg_streamer.c，luatos 源码已同步待烧）：退避窗口内
+   只有**新的 <5s 违规**才续期+翻倍；在窗但守规矩的重连（NVR 15s 梯子）被拒不
+   续期，窗口自然过期即重新入内。旧逻辑把 NVR 永久锁死（单日拒 2 万+）。
+3. **内部 RAM 纪律**：流 worker/listen 持久化 + `xTaskCreateStatic`（listen 经
+   长度 1 队列递 fd，零运行期任务创建；stop 不再删互斥锁/队列/worker）；
+   motion 任务静态栈；motion 30KB ΣΔ 网格 `.bss`→PSRAM；`SPIRAM_MALLOC_ALWAYSINTERNAL`
+   16384→3072；httpd 启动 5×2s 重试。**红线：`config.stack_size` 不得低于 8192**
+   ——handler_static 栈上局部 ~5.3KB，6144 实测溢出（静态文件 0B/6.77s RST +
+   连环重启）。修后 internal 开机 59KB（CSI-off 树历史最好）。
+4. **漫游扫描退避**（wifi_manager.c）：连续无益扫描 ×4 递增退避至 900s；
+   链路较上次扫描恶化 ≥6dB 或真漫游即重置。
+5. **CSI-off stub 补全**（csi_motion.cpp）：`#else` 补 `csi_motion_get_status`
+   ——此前门关链接必炸（当晨构建靠 build/ 陈旧 sdkconfig.h 糊过）。改 sdkconfig
+   门控后必须全量重链验证。
+6. 顺带修掉 listen 任务 stray `xSemaphoreGive`（无配对 Take，可致互斥锁失效）。
+
+**验证基线（23:47 固件）**：app.js gz 0.23-0.33s / capture 0.27s / 探针 4.2fps
+@76KB/s（≈09-04 基线）/ soak cycle98 5.06fps / NVR 持续占流 / 无自愈重启。
+交付链：构建 g1714199-dirty（工作树含未提交改动，与 21:47 Retry-After 批同批）。
+
+
+## Dual WiFi 补齐（2026-09-09，契约 AT v1.2）
+
+- 本板此前已有：DHCP 盲区切网（12s×2）、连败切换、NVS last_net 记忆、V14 智能漫游。
+- 本次补齐：**开机 RSSI 择优**（STA_START 首次快扫，≥8dB 规则，仅开机一次，
+  后续切换不重复扫）+ **AT+WIFI2**（本板首个板级扩展；语义=保存+重启，n16r8 同款）。
+- sdkconfig.defaults 清理了重复的 LWIP_TCP_SND_BUF_DEFAULT（PIT-039 的 5760 为准）。
+- ⚠️ 待决：defaults 里 `CONFIG_MIBEE_CSI_MOTION=y` 系 PIT-039 调试期遗留——按
+  2026-09-08 摄像头优先政策本板生产应为 CSI-off；2026-09-09 OTA 部署的镜像带着
+  CSI-on（实测标定 OK、推流并存正常）。是否回退由用户拍板。
+
+## CSI 替代 ΣΔ 运动拍照（2026-09-09 转正，PIT-040）
+
+上方"⚠️ 待决"已由用户拍板解决：**CSI-on 转正为本板生产形态**，ESPectre 运动判决
+替代 ΣΔ 像素管线作为拍照触发（`sdkconfig.defaults` 的 `CONFIG_MIBEE_CSI_MOTION=y`
+不再是遗留，是设计）。架构（`motion_detect.c` 的 CSI 分支）：
+
+- **触发**：250ms 轮询 `csi_motion_get_status()` 快照（csi_motion.cpp 移植 seeed
+  portMUX 快照；状态转移回调也落快照，否则 <1s 的 MOTION 片段会被 ~1Hz 周期
+  更新漏采）。ΣΔ 逐帧解码 + ~60KB **内部**工作缓冲退役——这是 CSI/:81 互斥门
+  （PIT-038）解除的资源前提；流/CSI/拍照三线并存。
+- **暗场三级判定**（`scene_dark_decision`）：探针缓存 <120s 直用 → 录制中单帧
+  自动曝光 luma 兜底（不上 AEC 锁，不污染录制流）→ 按需锁定曝光探针（NVR
+  常驻观看饿死周期探针时仍能拿正确判决，代价 ~2 帧观看流曝光异常）。
+- **闪光预热红线**："丢弃 N 帧再抓"必须以**发布序号**为界
+  （`frame_broker_current_gen` + `frame_broker_get_copy_after(gen0+3)`）——
+  `get_copy` 恒返回当前帧，按次丢弃丢的是同一帧（PIT-040 主坑，修复前后
+  成片 13.5KB vs 36.9-48.3KB）。`frame_broker_boost(ms)` 拍照窗口空闲 2→5fps。
+- **保存后画廊可见**：GPIO14 使运行期 opendir 不可靠 → 保存进 pending 数组
+  （portMUX），`storage_get_photo_list_json` 并入缓存。照片**内容**运行期读不出
+  （fread 200+0B）是既有硬件局限，验证成片看列表里的字节数。
+- **ESPectre 自适应阈值语义**：死寂环境 thr 可自适应降到 ~0.03（微扰即触发），
+  活动环境 ~0.4-0.75——评估"灵敏度"时先看 `/api/status` 的 `csi.thr`。
+
+**验证（2026-09-09）**：手动闪光对照 41-46KB；自然事件 09:52/10:16/10:48 =
+44.4/48.3/40.6KB 全打亮；6h soak 见 `soak/csi_photo/`（含两轮历史
+`csi_photo_round1_buggy_warmup` / `csi_photo_round2_warmup_fix`）。门关形态
+（家族回退路径）fullclean 编译通过（0x130340）。
+
+## 2026-09-13 两线合一部署（merge/net-opt-v1.7，分支 `merge/net-opt-v1.7`）
+
+**背景**：`feat/dual-wifi-port`（RSSI 择优 + AT+WIFI2 + PIT-040 拍照链）与
+`feat/csi-tuning-v1.7`（CSI v1.7 调参/自愈 + chan-health ①b）自 1714199 分叉，
+板上只跑了前者的基底（84cca94-dirty）。本日合并两线（8fe2cee）+ 修 CMake gz
+断链（f3b8f8a）后 Web OTA 全量部署（ota_1）。
+
+- **合并要点**：契约文档/SPA 取家族态（==n16r8/luatos）；at_port.c 双扩展并存
+  （CHHEALTH+WIFI2）；csi_motion.cpp 以 v1.7 为基**回填 PIT-040 状态转移快照**
+  （v1.7 线曾退化为仅日志——<1s MOTION 片段会被 1Hz 轮询漏采）；web_server.c
+  删掉自动合并残留的重复 v1.6 csi 块（同 key 双发射）。
+- **上板验证**：boot pick 实测生效（`boot pick: 'MickeyBeeGT' -82dBm vs
+  'MickeyBeeGT3000' -77dBm → secondary`，开机 5.9s 连上）；`chan_health` 上线
+  （ch7 busy_score 61、2 BSS、rssi_avg -81）；csi v1.7 全字段 + `api_version
+  1.7`；gz 协商生效且解压 md5 == 家族明文。
+- **新坑（f3b8f8a）**：PIT-043 的压缩步骤在**干净检出**上静默失效——custom
+  command OUTPUT 没进 spiffs DEPENDS，GLOB 扫不到不存在的 .gz，压缩永不跑、
+  镜像只含明文（CI 同样中招）。修复=5 个 gz 显式进 DEPENDS。
+- **环境剧变（重要）**：本工作机已从 Arch 换成 **Debian 13（notebook-asus）**。
+  旧 `~/.espressif` eim 工具链不存在 → ESP-IDF v6.0.1 重装于
+  `~/espressif/esp-idf-v6.0.1`（官方 release zip，`dl.espressif.com/
+  github_assets` → CN CDN，多路 Range 并行 ~3MB/s；工具包 URL 见
+  tools.json，同样走该前缀）。激活 = `source
+  ~/espressif/esp-idf-v6.0.1/export.sh`（**不再是** eim activate 脚本）。
+  串口权限=dialout 组（已加）；CH340 开口即复位在 Debian 复现（bootlog.py
+  实测 rst:0x1）。**push 仍被挡**：本机 SSH 公钥未注册到 GitHub（用户侧动作）。
+- **基线数据**（部署前后对比探针在 `~/Projects/esp-cam/probe/ai-netopt-20260913/`）：
+  板位双网皆弱（GT3000 -73~-80 漂移 / 主网 -80~-82）；/api/status RTT 60 样本
+  avg ~1.9s max 6s；:81 流活但弱窗吞吐 ~2KB/s（一帧 SVGA 都传不完）——**物理层
+  （板位/PCB 天线）仍是网络体验的决定性瓶颈**，固件侧（AMPDU 关+择优+护栏+
+  信道健康）已尽力。挪位或焊 IPEX 外接天线才是根治。
+
+## 2026-09-13 晚："Web 打不开"诊断 + 推流 TX 窒息修复（PIT-051，USB 已上板）
+
+用户报 .139 Web 无法打开。串口+网络侧联合定位，结论两层（详见 PITFALLS PIT-051）：
+
+1. **物理层尺寸崩塌（根治需用户动作）**：分级 ping 实测送达率 64B=50%、
+   600B=17%、1400B=0%——大帧在该板位（-75dBm/ch7 busy63%）几乎必丢，
+   TCP 数据段凑不齐 → "头部能到、体数据全灭"。链路分钟级波动，好窗可
+   完整拉 6.6KB 资产（~11s），坏窗 60s 0B。设备固件全程健康：零重启/
+   零 EMFILE、UI 资产 md5 与仓库一致、AMPDU-off 等配方在运行镜像确认齐全。
+2. **推流 TX 窒息放大器（已修，`333069d` 工作树）**：NVR(.30) 每 15-20s
+   重连 :81，发不出的 SVGA 帧按 SNDTIMEO 15s×7chunk 拽住满载 TX 队列 →
+   `wifi:mem fail`（开机 2min09s 首现）→ 全设备 TX 窒息（TrafficGen ping
+   ENOMEM 83 次/25min、httpd send:11/113 风暴）。修复=推流拥塞限速
+   （帧 >1s→1帧/2s、>3s→1帧/5s 封顶、3 连快帧自动解除）+ SNDTIMEO 15s→3s。
+   上板实证：限速按设计介入、mem fail 0 次、TrafficGen 失败 2 次。
+   mjpeg_streamer.c 不在家族 md5 锁内（board-local），他仓同类可参照移植。
+- **诊断手法沉淀**：Web"打不开"先跑 `ping -s 16/200/600/1000/1400` 分级
+  送达率——斜率陡=物理层；再 grep 串口 `wifi:mem fail`/`TrafficGen.*errno=12`
+  判 TX 池耗尽。curl 判据："200+0B"（头到体丢）≠"000"（连接都不通）。
+- **好窗复测（21:15，最终验证 ALL_PASS）**：`good_window_watch.sh`（probe 3/3
+  触发抓四资产）守 28 分钟后命中：`/` 6544B/1.01s、`/style.css` 6677B/1.35s、
+  `/app.js` 19402B/4.22s、`/i18n.js` 7409B/6.94s——**新固件下 UI 在链路好窗
+  完全可用**；坏窗仍打不开=纯物理层（见整改菜单）。
+- **第二轮（21:45-22:08 用户复报）**：`web_server.c` 静态资产加
+  `Cache-Control: public, max-age=300`（HTML 恒 no-cache；代价=OTA 刷 SPIFFS
+  后浏览器最多带 5 分钟旧资产，加载器 ?retry= 可绕）——首载成功后重开页面
+  只需 index.html+API。严格采样 12 轮：idx 1/12、app 0/12，链路 21:45 起
+  持续深坏（200B 送达 50%→0%，RSSI 恒 -76=干扰加重非信号）。环境级坍塌
+  固件无可作为，整改菜单见 probe 存档。
+- 采集器常驻 ttyUSB0（probe/ai-netopt-20260913/overnight_*.log），留观。
+
+## 2026-09-14 flash_viewers 板级扩展：观看者驱动闪光灯（已上板 + 已开启）
+
+用户需求：有人看流/拍照时自动开闪光灯，无人自动关，默认关。实现（全部板本地，
+`mjpeg_streamer.c`/`web_server.c` 均不在家族 md5 锁内，契约文档未动——板级
+扩展先行的家族先例：AT+WIFI2 当初亦如此）：
+
+- **新模块 `flash_viewers.c/h`**：1Hz 静态栈任务（PIT-039 红线）。观看者=
+  `mjpeg_streamer_get_client_count()>0`（覆盖实时预览/NVR 采集）或最近 3s
+  内有 `/api/capture` 拍照（`flash_viewers_notify_capture()` 钩子）。在场→
+  LED 亮；最后一位离开后 **20s grace** 再灭（吸收 NVR 15-20s 重连 churn，
+  防频闪）。
+- **仲裁语义**：开启且在场时 watcher 每拍把 LED 拉回亮（幂等收敛，motion
+  闪光脉冲/手动熄灭后最迟 1s 恢复）——**此语义下手动 /api/led 关灯仅在无
+  观看者时可靠**；关闭开关时 watcher 一次性释放 LED 并完全退出干预。
+- **配置键**：`flash_viewers`（u8 0/1，NVS 逐键，缺省 0=关，默认关已验证）。
+  API：`POST /api/config {"flash_viewers":0|1}`（0/1 校验）+ GET /api/config
+  回显 + `/api/status` 新增 `flash_viewers:{enabled,active}`（板级附加字段，
+  契约未收录）。注意：`GET /api/config` 的 JSON 在 web_server.c 自拼
+  （config_manager 的导出函数只服务 AT/备份）——**加配置字段两处都要加**。
+- **上板验证**（16:18-16:21）：开机 61s NVR 拉流 → `viewer present — LED
+  on`；关开关 3s 内 LED 释放（on:false）；重开 3s 内恢复亮。当前开关=开
+  （用户要求的生产态）。GPIO4 LEDC 与 motion auto-flash/timelapse 共存。
+- 坑（复犯三次）：`pkill/pgrep -f <含脚本的字符串>` 会匹配包装 bash 自己的
+  命令行导致自杀——用字符类断匹配（`pgrep -f 'overnight_lo[g]'`）或按 PID。
+
+### 前端配套（同日，四仓 SPA 已同步）
+
+- **UI 开关**：Light 页新增 `row-flash-viewers`（toggle），沿用家族"键在位
+  才显示"先例——`GET /api/config` 返回 `flash_viewers` 键的板才显示（本板），
+  其他板（n16r8 已实测 config 无此键）天然隐藏，无需能力位。改动三件：
+  index.html（行模板）/app.js（loadConfig 回读 + `saveFlashViewers()` +
+  initToggle 绑定）/i18n.js（en+zh 标签与悬停提示）。
+- **四仓已同步 md5**（ai/n16r8/luatos/seeed 的 web_ui 五文件逐字节一致），
+  `family_check.sh` 中 SPA 部分通过。**注意 family_check 当前仍报分歧：
+  `docs/api-contract.md`+`docs/config-contract.md` 与 seeed 不一致——seeed
+  的 watermark(#11)/day-night 两提交已推进契约文档，其余三仓未跟上，属
+  遗留状态非本次引入，待家族契约同步时统一。**
+- **SPIFFS 已刷**（USB 0x312000，OTA 不可用仍因弱链）；PIT-017 验证：
+  设备 `/app.js`、`/i18n.js` md5 == 仓文件，`/index.html` 含开关标记；
+  NVS 的 flash_viewers=1 跨刷机保留。浏览器后端本会话不可用（无
+  IAB/CDP），UI 行为按 curl 等效验收（md5+标记+逻辑三处 grep），用户
+  下次打开 Web 即可在 Light 页看到"有人观看时亮灯"开关（中英文随语言）。

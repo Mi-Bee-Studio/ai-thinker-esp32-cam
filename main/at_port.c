@@ -5,6 +5,7 @@
  * 的成熟路径）。生效语义（契约 §6）：分辨率/画质热重配；WiFi 保存+重启。
  */
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <strings.h>
 #include <stdlib.h>
@@ -23,6 +24,7 @@
 #include "camera_driver.h"
 #include "wifi_manager.h"
 #include "storage_manager.h"
+#include "wifi_channel_health.h"   /* 契约 v1.7 ①b：信道健康快照（AT+CHHEALTH） */
 
 static const char *TAG = "at_port";
 
@@ -475,10 +477,124 @@ const char *at_port_alias(const char *name)
     return NULL;
 }
 
-/* ── 板级扩展指令（契约 §5；ai-thinker 无扩展） ────────────────── */
+/* ── 板级扩展指令（契约 §5） ────────────────────────────────────── */
+
+static void ext_ok(void)
+{
+    at_port_write("OK\r\n");
+}
+
+static void ext_err(const char *why)
+{
+    char buf[80];
+    snprintf(buf, sizeof(buf), "ERROR: %s\r\n", why ? why : "unknown");
+    at_port_write(buf);
+}
+
+static void ext_data(const char *name, const char *fmt, ...)
+{
+    char body[96];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(body, sizeof(body), fmt, ap);
+    va_end(ap);
+    char line[128];
+    snprintf(line, sizeof(line), "+%s: %s\r\n", name, body);
+    at_port_write(line);
+}
+
+/* AT+CHHEALTH?（信道健康快照）/ =SCAN（手动拥塞 scan）——契约 v1.3 ①b（全家族） */
+static esp_err_t ext_chhealth(const char *cmd)
+{
+    char line[144];
+    if (strncasecmp(cmd, "CHHEALTH?", 10) == 0) {
+        wifi_chan_health_t ch;
+        if (!wifi_channel_health_get(&ch)) {
+            at_port_write("+ERROR: chan health not sampled yet\r\n");
+            return ESP_OK;
+        }
+        snprintf(line, sizeof(line),
+                 "+CHHEALTH: rssi %d/%d dBm ch=%u disc_1h=%u busy=%u%% bss=%u/%u\r\n",
+                 (int)ch.rssi_avg, (int)ch.rssi_min, (unsigned)ch.channel,
+                 (unsigned)ch.disconnects_1h, (unsigned)ch.busy_score,
+                 (unsigned)ch.bss_on_chan, (unsigned)ch.bss_total);
+        at_port_write(line);
+        snprintf(line, sizeof(line), "+CHHEALTH: csi_adm=%.1f pps cb_ratio=%.1f scan_ts=%u\r\n",
+                 (double)ch.csi_adm_pps, (double)ch.csi_cb_ratio, (unsigned)ch.scan_ts);
+        at_port_write(line);
+        at_port_write("OK\r\n");
+        return ESP_OK;
+    }
+    if (strncasecmp(cmd, "CHHEALTH=SCAN", 13) == 0) {
+        esp_err_t ret = wifi_channel_health_scan_now();
+        if (ret != ESP_OK) {
+            at_port_write("+ERROR: busy (recording or stream clients)\r\n");
+        } else {
+            at_port_write("+CHHEALTH: scan queued (see CHHEALTH? in ~15s)\r\nOK\r\n");
+        }
+        return ESP_OK;
+    }
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+/* AT+WIFI2 — 备用网络凭据（契约 §5/v1.2；查询脱敏红线 §3）。解析约定
+ * 同 AT+WIFI=（首个逗号前 ssid，其后整体 pass、可含逗号）；空 ssid 清除。
+ * ai-thinker 生效语义（§6，n16r8 同款）：保存+重启——凭据只在启动时
+ * 读入开机择优/故障转移路径。 */
+static esp_err_t ext_wifi2(const char *cmd)
+{
+    const char *eq = strchr(cmd, '=');
+    if (!eq) {
+        const cam_config_t *cfg = config_get();
+        ext_data("WIFI2", "ssid:%s", cfg->wifi_ssid_2[0] ? cfg->wifi_ssid_2 : "(none)");
+        ext_data("WIFI2", "pass:%s", cfg->wifi_pass_2[0] ? "****" : "(unset)");
+        ext_data("WIFI2", "net:%s", wifi_using_secondary() ? "secondary" : "primary");
+        ext_ok();
+        return ESP_OK;
+    }
+
+    char buf[100];
+    strlcpy(buf, eq + 1, sizeof(buf));
+    char *comma = strchr(buf, ',');
+    if (!comma) {
+        ext_err("usage: AT+WIFI2=ssid,pass (empty ssid clears)");
+        return ESP_OK;
+    }
+    *comma = '\0';
+    const char *ssid = buf;
+    const char *pass = comma + 1;
+
+    esp_err_t ret;
+    if (!ssid[0]) {
+        /* 空 ssid = 清除备用网络（契约 §5：`ssid,` 空串清除） */
+        ret = config_set_wifi_secondary("", "");
+    } else {
+        if (strlen(ssid) > 32 || !pass[0] || strlen(pass) > 64) {
+            ext_err("invalid ssid/pass (ssid<=32, pass 1-64)");
+            return ESP_OK;
+        }
+        ret = config_set_wifi_secondary(ssid, pass);
+    }
+    if (ret != ESP_OK) {
+        ext_err("save failed");
+        return ESP_OK;
+    }
+    ext_data("WIFI2", "backup network saved");
+    at_port_write("+REBOOTING: backup credentials apply at boot\r\n");
+    vTaskDelay(pdMS_TO_TICKS(500));
+    esp_restart();
+    return ESP_OK;   /* unreachable */
+}
+
+static const at_ext_cmd_t s_ext_cmds[] = {
+    { "CHHEALTH", "CHHEALTH? | CHHEALTH=SCAN (channel health)", ext_chhealth },
+    { "WIFI2", "WIFI2? | WIFI2=ssid,pass (empty ssid clears)", ext_wifi2 },
+};
 
 const at_ext_cmd_t *at_port_ext_cmds(int *count)
 {
-    if (count) *count = 0;
-    return NULL;
+    if (count) {
+        *count = (int)(sizeof(s_ext_cmds) / sizeof(s_ext_cmds[0]));
+    }
+    return s_ext_cmds;
 }

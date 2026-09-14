@@ -72,6 +72,7 @@ static void apply_defaults(cam_config_t *cfg)
     cfg->wifi_tx_power = 80;   /* 20dBm max */
     cfg->wifi_power_save = 0;  /* disabled for streaming */
     cfg->flash_threshold = 40;
+    cfg->flash_viewers = 0;    /* 板级扩展：观看者驱动闪光灯，默认关 */
     cfg->timelapse_enabled = 0;
     cfg->timelapse_interval_s = 30;
     cfg->timelapse_burst_count = 3;
@@ -96,6 +97,14 @@ static void apply_defaults(cam_config_t *cfg)
     cfg->wifi_roam_rssi = -65;   /* scan for better AP below this */
     cfg->wifi_roam_gap_s = 10;   /* switch when other AP is 10dBm+ stronger */
     cfg->onvif_enable = 1;       /* 契约核心字段；本板历史上始终开启 */
+    /* CSI 感知调参键族（契约 v1.7 §3.2）：本板 CSI-off 生产形态，
+     * 接受存储但运行时无效果（csi_motion stub） */
+    cfg->csi_enabled = 1;
+    cfg->csi_threshold = 0.0f;   /* 0=自动（校准+settle） */
+    cfg->csi_on_hits = 4;
+    cfg->csi_off_hits = 3;
+    cfg->csi_profile = 0;        /* Lightweight */
+    cfg->csi_auto_heal = 1;      /* 自愈环默认开（PIT-041） */
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -261,6 +270,12 @@ KEY_ASSERT("cam_fps");
 KEY_ASSERT("cam_quality");
 KEY_ASSERT("cam_vflip");
 KEY_ASSERT("onvif_enable");
+KEY_ASSERT("csi_enabled");
+KEY_ASSERT("csi_threshold");
+KEY_ASSERT("csi_on_hits");
+KEY_ASSERT("csi_off_hits");
+KEY_ASSERT("csi_profile");
+KEY_ASSERT("csi_auto_heal");
 KEY_ASSERT("motion_en");
 KEY_ASSERT("motion_sens");
 KEY_ASSERT("motion_cool_s");
@@ -268,6 +283,7 @@ KEY_ASSERT("motion_act_s");
 KEY_ASSERT("wifi_tx_pwr");
 KEY_ASSERT("wifi_ps");
 KEY_ASSERT("flash_thr");
+KEY_ASSERT("flash_viewers");
 KEY_ASSERT("tl_en");
 KEY_ASSERT("tl_int_s");
 KEY_ASSERT("tl_burst");
@@ -347,6 +363,15 @@ static void load_keys_from_nvs(nvs_handle_t h, cam_config_t *cfg)
     rd_u8(h, "cam_quality",   &cfg->cam_quality);
     rd_u8(h, "cam_vflip",     &cfg->cam_vflip);
     rd_u8(h, "onvif_enable",  &cfg->onvif_enable);
+    rd_u8(h, "csi_enabled",   &cfg->csi_enabled);
+    {   /* IDF v6 无 nvs f32 API：千分刻度 u16（0-1000 ↔ 0.000-1.000，0=auto） */
+        uint16_t thr_ms = 0;
+        if (rd_u16(h, "csi_threshold", &thr_ms)) cfg->csi_threshold = thr_ms / 1000.0f;
+    }
+    rd_u8(h, "csi_on_hits",   &cfg->csi_on_hits);
+    rd_u8(h, "csi_off_hits",  &cfg->csi_off_hits);
+    rd_u8(h, "csi_profile",   &cfg->csi_profile);
+    rd_u8(h, "csi_auto_heal", &cfg->csi_auto_heal);
     rd_u8(h, "motion_en",     &cfg->motion_enabled);
     rd_u8(h, "motion_sens",   &cfg->motion_sensitivity);
     rd_u16(h, "motion_cool_s", &cfg->motion_cooldown_s);
@@ -354,6 +379,7 @@ static void load_keys_from_nvs(nvs_handle_t h, cam_config_t *cfg)
     rd_u8(h, "wifi_tx_pwr",   &cfg->wifi_tx_power);
     rd_u8(h, "wifi_ps",       &cfg->wifi_power_save);
     rd_u8(h, "flash_thr",     &cfg->flash_threshold);
+    rd_u8(h, "flash_viewers", &cfg->flash_viewers);
     rd_u8(h, "tl_en",         &cfg->timelapse_enabled);
     rd_u16(h, "tl_int_s",     &cfg->timelapse_interval_s);
     rd_u8(h, "tl_burst",      &cfg->timelapse_burst_count);
@@ -390,6 +416,12 @@ static void write_keys_to_nvs(nvs_handle_t h, const cam_config_t *cfg)
     wr_u8(h, "cam_quality",  cfg->cam_quality);
     wr_u8(h, "cam_vflip",    cfg->cam_vflip);
     wr_u8(h, "onvif_enable", cfg->onvif_enable);
+    wr_u8(h, "csi_enabled",  cfg->csi_enabled);
+    wr_u16(h, "csi_threshold", (uint16_t)(cfg->csi_threshold * 1000.0f + 0.5f));
+    wr_u8(h, "csi_on_hits",  cfg->csi_on_hits);
+    wr_u8(h, "csi_off_hits", cfg->csi_off_hits);
+    wr_u8(h, "csi_profile",  cfg->csi_profile);
+    wr_u8(h, "csi_auto_heal", cfg->csi_auto_heal);
     wr_u8(h, "motion_en",    cfg->motion_enabled);
     wr_u8(h, "motion_sens",  cfg->motion_sensitivity);
     wr_u16(h, "motion_cool_s", cfg->motion_cooldown_s);
@@ -397,6 +429,7 @@ static void write_keys_to_nvs(nvs_handle_t h, const cam_config_t *cfg)
     wr_u8(h, "wifi_tx_pwr",  cfg->wifi_tx_power);
     wr_u8(h, "wifi_ps",      cfg->wifi_power_save);
     wr_u8(h, "flash_thr",    cfg->flash_threshold);
+    wr_u8(h, "flash_viewers", cfg->flash_viewers);
     wr_u8(h, "tl_en",        cfg->timelapse_enabled);
     wr_u16(h, "tl_int_s",    cfg->timelapse_interval_s);
     wr_u8(h, "tl_burst",     cfg->timelapse_burst_count);
@@ -793,12 +826,47 @@ esp_err_t config_set_flash_threshold(uint8_t threshold)
     return set_and_save();
 }
 
+esp_err_t config_set_flash_viewers(uint8_t enable)
+{
+    config_lock();
+    s_config.flash_viewers = enable ? 1 : 0;
+    config_unlock();
+    ESP_LOGI(TAG, "flash viewers set to %u", s_config.flash_viewers);
+    return set_and_save();
+}
+
 esp_err_t config_set_onvif_enable(uint8_t enable)
 {
     config_lock();
     s_config.onvif_enable = enable ? 1 : 0;
     config_unlock();
     ESP_LOGI(TAG, "ONVIF %s (applies after reboot)", s_config.onvif_enable ? "enabled" : "disabled");
+    return set_and_save();
+}
+
+/* CSI 感知调参键族（契约 v1.7 §3.2）：本仓 POST /api/config 走 typed-setter
+ * 模式，故设整族 setter（写后立即落盘）。运行时热应用由调用方在保存成功后
+ * 经 csi_motion_apply_config() 负责（CSI-off stub 为空实现）。 */
+esp_err_t config_set_csi(uint8_t enabled, float threshold, uint8_t on_hits,
+                         uint8_t off_hits, uint8_t profile, uint8_t auto_heal)
+{
+    /* 二层防御（web 层已 400 校验；护未来 AT/其他调用方） */
+    if (threshold != 0.0f && (threshold < 0.05f || threshold > 1.0f)) threshold = 0.0f;
+    if (on_hits < 1) on_hits = 1;
+    if (on_hits > 20) on_hits = 20;
+    if (off_hits < 1) off_hits = 1;
+    if (off_hits > 20) off_hits = 20;
+    if (profile > 1) profile = 0;
+    config_lock();
+    s_config.csi_enabled = enabled ? 1 : 0;
+    s_config.csi_threshold = threshold;
+    s_config.csi_on_hits = on_hits;
+    s_config.csi_off_hits = off_hits;
+    s_config.csi_profile = profile;
+    s_config.csi_auto_heal = auto_heal ? 1 : 0;
+    config_unlock();
+    ESP_LOGI(TAG, "CSI set (en=%u, thr=%.3f, on=%u, off=%u, profile=%u, heal=%u)",
+             enabled, threshold, on_hits, off_hits, profile, auto_heal);
     return set_and_save();
 }
 
@@ -1058,6 +1126,7 @@ cJSON *config_get_json(void)
     cJSON_AddNumberToObject(root, "wifi_tx_power", (double)cfg->wifi_tx_power);
     cJSON_AddNumberToObject(root, "wifi_power_save", (double)cfg->wifi_power_save);
     cJSON_AddNumberToObject(root, "flash_threshold", (double)cfg->flash_threshold);
+    cJSON_AddNumberToObject(root, "flash_viewers", (double)cfg->flash_viewers);
     cJSON_AddNumberToObject(root, "timelapse_enabled", (double)cfg->timelapse_enabled);
     cJSON_AddNumberToObject(root, "timelapse_interval_s", (double)cfg->timelapse_interval_s);
     cJSON_AddNumberToObject(root, "timelapse_burst_count", (double)cfg->timelapse_burst_count);
@@ -1080,6 +1149,13 @@ cJSON *config_get_json(void)
     cJSON_AddNumberToObject(root, "wifi_roam_rssi", (double)cfg->wifi_roam_rssi);
     cJSON_AddNumberToObject(root, "wifi_roam_gap_s", (double)cfg->wifi_roam_gap_s);
     cJSON_AddNumberToObject(root, "onvif_enable", (double)cfg->onvif_enable);
+    /* CSI 感知调参键族（契约 v1.7 §3.2；本板 CSI-off 生产形态，存储无害） */
+    cJSON_AddBoolToObject(root, "csi_enabled", cfg->csi_enabled != 0);
+    cJSON_AddNumberToObject(root, "csi_threshold", (double)cfg->csi_threshold);
+    cJSON_AddNumberToObject(root, "csi_on_hits", (double)cfg->csi_on_hits);
+    cJSON_AddNumberToObject(root, "csi_off_hits", (double)cfg->csi_off_hits);
+    cJSON_AddNumberToObject(root, "csi_profile", (double)cfg->csi_profile);
+    cJSON_AddBoolToObject(root, "csi_auto_heal", cfg->csi_auto_heal != 0);
     cJSON_AddNumberToObject(root, "schema_version", (double)CONFIG_SCHEMA_VERSION);
 
     return root;
