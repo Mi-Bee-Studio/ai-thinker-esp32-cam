@@ -26,6 +26,7 @@ static bool s_sta_active = false;
 /* Dual WiFi failover state */
 static int s_sta_retry_count = 0;
 static bool s_using_secondary = false;
+static bool s_boot_pick_done  = false;   /* 开机 RSSI 择优只做一次（n16r8 配方） */
 #define MAX_RETRIES_PER_NETWORK 10
 
 /* DHCP 超时兜底（2026-09-03 实测事故：RSSI -82 时关联秒成但 DHCP 广播全丢，
@@ -200,11 +201,65 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 {
     if (event_base == WIFI_EVENT) {
         switch (event_id) {
-        case WIFI_EVENT_STA_START:
+        case WIFI_EVENT_STA_START: {
             ESP_LOGI(TAG, "STA started, connecting...");
             set_state(WIFI_STATE_STA_CONNECTING);
-            esp_wifi_connect();
+
+            /* 开机 RSSI 择优（n16r8 配方，2026-09-09）：仅本轮开机首次
+             * STA_START 执行——双网异名快扫一次，≥8dB 者胜出，平局/双缺
+             * 保持 last_net 的选择，主网不在空中而备网在 → 备网。后续
+             * STA_START（看门狗漫游/故障转移）不重复扫描。 */
+            bool switched = false;
+            if (!s_boot_pick_done) {
+                s_boot_pick_done = true;
+                const cam_config_t *cfg = config_get();
+                if (cfg->wifi_ssid_2[0] != '\0' &&
+                    strcmp(cfg->wifi_ssid, cfg->wifi_ssid_2) != 0) {
+                    wifi_scan_config_t sc = { 0 };
+                    sc.show_hidden = false;
+                    if (esp_wifi_scan_start(&sc, true) == ESP_OK) {
+                        uint16_t n = 0;
+                        esp_wifi_scan_get_ap_num(&n);
+                        wifi_ap_record_t *recs = malloc(sizeof(wifi_ap_record_t) * (n ? n : 1));
+                        if (recs) {
+                            if (esp_wifi_scan_get_ap_records(&n, recs) == ESP_OK) {
+                                int8_t r1 = -128, r2 = -128;
+                                for (uint16_t i = 0; i < n; i++) {
+                                    if (strcmp((const char *)recs[i].ssid, cfg->wifi_ssid) == 0 && recs[i].rssi > r1) r1 = recs[i].rssi;
+                                    if (strcmp((const char *)recs[i].ssid, cfg->wifi_ssid_2) == 0 && recs[i].rssi > r2) r2 = recs[i].rssi;
+                                }
+                                bool want2 = s_using_secondary;
+                                if (r1 > -128 && r2 > -128) {
+                                    if (r2 - r1 >= 8)      want2 = true;
+                                    else if (r1 - r2 >= 8) want2 = false;
+                                    ESP_LOGI(TAG, "boot pick: '%s' %ddBm vs '%s' %ddBm → %s",
+                                             cfg->wifi_ssid, r1, cfg->wifi_ssid_2, r2,
+                                             want2 ? "secondary" : "primary");
+                                } else if (r2 > -128 && r1 == -128) {
+                                    want2 = true;   /* 主网不在空中 */
+                                }
+                                if (want2 != s_using_secondary) {
+                                    ESP_LOGI(TAG, "boot pick switches to %s net",
+                                             want2 ? "secondary" : "primary");
+                                    s_using_secondary = want2;
+                                    s_sta_retry_count = 0;
+                                    wifi_start_sta(want2 ? cfg->wifi_ssid_2 : cfg->wifi_ssid,
+                                                   want2 ? cfg->wifi_pass_2 : cfg->wifi_pass);
+                                    switched = true;   /* 新一轮 STA_START 会自行连接 */
+                                }
+                            }
+                            free(recs);
+                        }
+                    } else {
+                        ESP_LOGW(TAG, "boot pick: scan failed — using last_net");
+                    }
+                }
+            }
+            if (!switched) {
+                esp_wifi_connect();
+            }
             break;
+        }
 
         case WIFI_EVENT_STA_CONNECTED:
             ESP_LOGI(TAG, "STA connected to AP, waiting for IP...");
