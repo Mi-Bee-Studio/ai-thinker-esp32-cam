@@ -544,7 +544,7 @@ PIT-037 修复后弱链 OTA 实测两轮全通，断链 56 竞态=镜像已写�
 - **新坑（f3b8f8a）**：PIT-043 的压缩步骤在**干净检出**上静默失效——custom
   command OUTPUT 没进 spiffs DEPENDS，GLOB 扫不到不存在的 .gz，压缩永不跑、
   镜像只含明文（CI 同样中招）。修复=5 个 gz 显式进 DEPENDS。
-- **环境剧变（重要）**：本工作机已从 Arch 换成 **Debian 13（notebook-asus）**。
+- **环境剧变（重要）**：本工作机已从 Arch 换成 **Debian 13（notebook）**。
   旧 `~/.espressif` eim 工具链不存在 → ESP-IDF v6.0.1 重装于
   `~/espressif/esp-idf-v6.0.1`（官方 release zip，`dl.espressif.com/
   github_assets` → CN CDN，多路 Range 并行 ~3MB/s；工具包 URL 见
@@ -553,7 +553,7 @@ PIT-037 修复后弱链 OTA 实测两轮全通，断链 56 竞态=镜像已写�
   串口权限=dialout 组（已加）；CH340 开口即复位在 Debian 复现（bootlog.py
   实测 rst:0x1）。**push 仍被挡**：本机 SSH 公钥未注册到 GitHub（用户侧动作）。
 - **基线数据**（部署前后对比探针在 `~/Projects/esp-cam/probe/ai-netopt-20260913/`）：
-  板位双网皆弱（GT3000 -73~-80 漂移 / 主网 -80~-82）；/api/status RTT 60 样本
+  板位双网皆弱（<家庭SSID-2> -73~-80 漂移 / 主网 -80~-82）；/api/status RTT 60 样本
   avg ~1.9s max 6s；:81 流活但弱窗吞吐 ~2KB/s（一帧 SVGA 都传不完）——**物理层
   （板位/PCB 天线）仍是网络体验的决定性瓶颈**，固件侧（AMPDU 关+择优+护栏+
   信道健康）已尽力。挪位或焊 IPEX 外接天线才是根治。
