@@ -537,8 +537,8 @@ PIT-037 修复后弱链 OTA 实测两轮全通，断链 56 竞态=镜像已写�
   （CHHEALTH+WIFI2）；csi_motion.cpp 以 v1.7 为基**回填 PIT-040 状态转移快照**
   （v1.7 线曾退化为仅日志——<1s MOTION 片段会被 1Hz 轮询漏采）；web_server.c
   删掉自动合并残留的重复 v1.6 csi 块（同 key 双发射）。
-- **上板验证**：boot pick 实测生效（`boot pick: 'MickeyBeeGT' -82dBm vs
-  'MickeyBeeGT3000' -77dBm → secondary`，开机 5.9s 连上）；`chan_health` 上线
+- **上板验证**：boot pick 实测生效（`boot pick: '<家庭SSID-1>' -82dBm vs
+  '<家庭SSID-2>' -77dBm → secondary`，开机 5.9s 连上）；`chan_health` 上线
   （ch7 busy_score 61、2 BSS、rssi_avg -81）；csi v1.7 全字段 + `api_version
   1.7`；gz 协商生效且解压 md5 == 家族明文。
 - **新坑（f3b8f8a）**：PIT-043 的压缩步骤在**干净检出**上静默失效——custom
