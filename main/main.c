@@ -22,6 +22,7 @@
 #include "status_led.h"
 #include "wifi_manager.h"
 #include "csi_motion.h"
+#include "wifi_channel_health.h"
 #include "camera_driver.h"
 #include "health_monitor.h"
 #include "mjpeg_streamer.h"
@@ -36,6 +37,7 @@
 #include "onvif_service.h"
 #include "frame_broadcaster.h"
 #include "sd_log.h"
+#include "flash_viewers.h"
 
 static const char *TAG = "main";
 
@@ -168,6 +170,7 @@ static void sta_services_task(void *arg)
      * an earlier start starved the pool (listen socket ENOBUFS errno 105,
      * 2026-09-06). ESPectre handles late join itself. */
     csi_motion_init();
+    wifi_channel_health_init();   /* 契约 v1.7 ①b：信道健康感知（CSI 无关，四仓共享） */
 
     /* Start ONVIF WS-Discovery (once) — after web server so SOAP handlers are registered.
      * 契约核心字段 onvif_enable（本板默认 1；关闭时不启动发现，SOAP 处理器
@@ -193,6 +196,9 @@ static void sta_services_task(void *arg)
             ESP_LOGI(TAG, "Motion detection disabled in config (motion_enabled=0)");
         }
     }
+
+    /* Viewer-driven flash LED watcher (板级扩展 flash_viewers，默认关) */
+    flash_viewers_start();
 
     /* Initialize timelapse */
     if (!s_timelapse_started) {

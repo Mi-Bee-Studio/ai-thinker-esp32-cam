@@ -101,6 +101,7 @@ typedef struct {
     uint8_t wifi_tx_power;      /* TX power in 0.25dBm units (80=20dBm) */
     uint8_t wifi_power_save;    /* 0=WIFI_PS_NONE, 1=WIFI_PS_MIN_MODEM */
     uint8_t flash_threshold;     /* 板级扩展：侦测联动闪光灯阈值 */
+    uint8_t flash_viewers;       /* 板级扩展：有观看者（流/拍照）自动开闪光灯，默认 0=关 */
     uint8_t timelapse_enabled;
     uint16_t timelapse_interval_s;
     uint8_t timelapse_burst_count;
@@ -129,6 +130,13 @@ typedef struct {
     uint8_t wifi_roam_gap_s;         /* min RSSI gap (dBm) to trigger switch (5-15, default 10) */
     /* ONVIF 开关（契约核心字段；本板默认 1=始终开启，行为不变） */
     uint8_t onvif_enable;            /* default 1，重启生效 */
+    /* CSI 感知调参键族（契约 v1.7 §3.2；本板 CSI-off 生产形态，接受存储但运行时无效果） */
+    uint8_t csi_enabled;       // 默认 1
+    float   csi_threshold;     // 0.0=自动；0.05-1.0=手动锁定（PIT-041 根治开关）
+    uint8_t csi_on_hits;       // 1-20，默认 4
+    uint8_t csi_off_hits;      // 1-20，默认 3
+    uint8_t csi_profile;       // 0/1，默认 0
+    uint8_t csi_auto_heal;     // 默认 1
 } cam_config_t;
 
 #endif // COMMON_H

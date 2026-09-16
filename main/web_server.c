@@ -42,6 +42,7 @@
 #include "motion_detect.h"
 #include "csi_motion.h"  /* 契约 v1.6：/api/status 的 csi 快照字段（本板 CSI-off 恒缺省） */
 #include "flash_led.h"
+#include "flash_viewers.h"   /* 板级扩展：观看者驱动闪光灯 */
 #include "time_sync.h"
 #include "lwip/sockets.h"   /* log_404_peer: getpeername/inet_ntop */
 #include "lwip/inet.h"
@@ -55,6 +56,8 @@
 #include "esp_wifi.h"
 #include "sd_log.h"
 #include "ota_updater.h"
+#include "csi_motion.h"   /* 契约 v1.7：CSI 调参面 + status csi 快照 */
+#include "wifi_channel_health.h"  /* 契约 v1.7 ①b：信道健康快照 */
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -247,6 +250,44 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddStringToObject(data, "firmware_version",
         (app_desc && app_desc->version[0]) ? app_desc->version : "unknown");
 
+    /* CSI 实时快照（契约 v1.6/v1.7；本板 CSI 门开生产形态——此前缺失，
+     * 2026-09-10 补齐与 seeed/n16r8 同款字段集；门关时恒缺省） */
+    csi_motion_status_t csi_st;
+    if (csi_motion_get_status(&csi_st)) {
+        cJSON *csi_obj = cJSON_CreateObject();
+        if (csi_obj) {
+            cJSON_AddStringToObject(csi_obj, "state", csi_st.state);
+            cJSON_AddNumberToObject(csi_obj, "score", (double)csi_st.score);
+            cJSON_AddNumberToObject(csi_obj, "thr", (double)csi_st.thr);
+            cJSON_AddNumberToObject(csi_obj, "profile", (double)csi_st.profile);
+            cJSON_AddBoolToObject(csi_obj, "thr_locked", csi_st.thr_locked);
+            cJSON_AddBoolToObject(csi_obj, "calibrating", csi_st.calibrating);
+            cJSON_AddNumberToObject(csi_obj, "flip_rate", (double)csi_st.flip_rate);
+            cJSON_AddNumberToObject(csi_obj, "tx_pps", (double)csi_st.tx_pps);
+            cJSON_AddNumberToObject(csi_obj, "cb_pps", (double)csi_st.cb_pps);
+            cJSON_AddNumberToObject(csi_obj, "adm_pps", (double)csi_st.adm_pps);
+            cJSON_AddItemToObject(data, "csi", csi_obj);
+        }
+    }
+    /* 契约 v1.7 ①b：Wi-Fi 信道健康快照（CSI 无关，全家族字段一致） */
+    wifi_chan_health_t ch;
+    if (wifi_channel_health_get(&ch)) {
+        cJSON *ch_obj = cJSON_CreateObject();
+        if (ch_obj) {
+            cJSON_AddNumberToObject(ch_obj, "rssi_avg", (double)ch.rssi_avg);
+            cJSON_AddNumberToObject(ch_obj, "rssi_min", (double)ch.rssi_min);
+            cJSON_AddNumberToObject(ch_obj, "channel", (double)ch.channel);
+            cJSON_AddNumberToObject(ch_obj, "disconnects_1h", (double)ch.disconnects_1h);
+            cJSON_AddNumberToObject(ch_obj, "scan_ts", (double)ch.scan_ts);
+            cJSON_AddNumberToObject(ch_obj, "bss_on_chan", (double)ch.bss_on_chan);
+            cJSON_AddNumberToObject(ch_obj, "bss_total", (double)ch.bss_total);
+            cJSON_AddNumberToObject(ch_obj, "busy_score", (double)ch.busy_score);
+            cJSON_AddNumberToObject(ch_obj, "csi_adm_pps", (double)ch.csi_adm_pps);
+            cJSON_AddNumberToObject(ch_obj, "csi_cb_ratio", (double)ch.csi_cb_ratio);
+            cJSON_AddItemToObject(data, "chan_health", ch_obj);
+        }
+    }
+
     /* Camera — 契约 v1.0: 传感器字段名统一为 camera */
     cJSON_AddBoolToObject(data, "camera_ok", camera_is_initialized());
     cJSON_AddStringToObject(data, "camera", camera_get_sensor_name());
@@ -324,6 +365,16 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "stream_clients", (double)mjpeg_streamer_get_client_count());
     cJSON_AddNumberToObject(data, "stream_clients_max", 1);
 
+    /* Viewer-driven flash LED watcher (板级扩展 flash_viewers) */
+    {
+        cJSON *fv = cJSON_CreateObject();
+        if (fv) {
+            cJSON_AddNumberToObject(fv, "enabled", (double)config_get()->flash_viewers);
+            cJSON_AddNumberToObject(fv, "active", (double)flash_viewers_active());
+            cJSON_AddItemToObject(data, "flash_viewers", fv);
+        }
+    }
+
     /* Brightness — method 2 = locked-exposure probe, 1 = auto-exposure luma */
     cJSON_AddNumberToObject(data, "brightness_pct", (double)m->brightness_pct);
     cJSON_AddStringToObject(data, "brightness_method",
@@ -348,20 +399,6 @@ static esp_err_t handler_api_status(httpd_req_t *req)
 
     /* Flash LED */
     cJSON_AddBoolToObject(data, "flash_on", flash_led_is_on());
-
-    /* CSI 实时快照（契约 v1.6，与 /ws csi_status 心跳同形）。本板为 CSI-off
-     * 生产形态（PIT-038 补遗二），stub 恒 false → 字段缺省；源码保持四仓
-     * 对齐，未来重开 CSI 无需改此处 */
-    csi_motion_status_t csi;
-    if (csi_motion_get_status(&csi)) {
-        cJSON *csi_obj = cJSON_CreateObject();
-        if (csi_obj) {
-            cJSON_AddStringToObject(csi_obj, "state", csi.state);
-            cJSON_AddNumberToObject(csi_obj, "score", (double)csi.score);
-            cJSON_AddNumberToObject(csi_obj, "thr", (double)csi.thr);
-            cJSON_AddItemToObject(data, "csi", csi_obj);
-        }
-    }
 
     return send_json_ok(req, data);
 }
@@ -393,6 +430,7 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "wifi_tx_power", (double)cfg->wifi_tx_power);
     cJSON_AddNumberToObject(data, "wifi_power_save", (double)cfg->wifi_power_save);
     cJSON_AddNumberToObject(data, "flash_threshold", (double)cfg->flash_threshold);
+    cJSON_AddNumberToObject(data, "flash_viewers", (double)cfg->flash_viewers);
     cJSON_AddNumberToObject(data, "timelapse_enabled", (double)cfg->timelapse_enabled);
     cJSON_AddNumberToObject(data, "timelapse_interval_s", (double)cfg->timelapse_interval_s);
     cJSON_AddNumberToObject(data, "timelapse_burst_count", (double)cfg->timelapse_burst_count);
@@ -418,6 +456,13 @@ static esp_err_t handler_api_config_get(httpd_req_t *req)
     cJSON_AddNumberToObject(data, "wifi_roam_rssi", (double)cfg->wifi_roam_rssi);
     cJSON_AddNumberToObject(data, "wifi_roam_gap_s", (double)cfg->wifi_roam_gap_s);
     cJSON_AddNumberToObject(data, "onvif_enable", (double)cfg->onvif_enable);
+    /* CSI 感知调参键族（契约 v1.7 §3.2；本板 CSI-off 生产形态，存储无害） */
+    cJSON_AddBoolToObject(data, "csi_enabled", cfg->csi_enabled != 0);
+    cJSON_AddNumberToObject(data, "csi_threshold", (double)cfg->csi_threshold);
+    cJSON_AddNumberToObject(data, "csi_on_hits", (double)cfg->csi_on_hits);
+    cJSON_AddNumberToObject(data, "csi_off_hits", (double)cfg->csi_off_hits);
+    cJSON_AddNumberToObject(data, "csi_profile", (double)cfg->csi_profile);
+    cJSON_AddBoolToObject(data, "csi_auto_heal", cfg->csi_auto_heal != 0);
     cJSON_AddNumberToObject(data, "schema_version", (double)CONFIG_SCHEMA_VERSION);
 
     return send_json_ok(req, data);
@@ -665,6 +710,72 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
         config_set_onvif_enable(item->valueint ? 1 : 0);
     }
 
+    /* CSI 调参键族（契约 v1.7 §3.2；本板 CSI-off 生产形态，接受存储但运行时
+     * 无效果——csi_motion stub 为空实现/NOT_SUPPORTED，写路径幂等无害） */
+    {
+        const cam_config_t *cur = config_get();
+        const float prev_csi_threshold = cur->csi_threshold;
+        bool csi_changed = false;
+        uint8_t c_en = cur->csi_enabled;
+        float c_thr = cur->csi_threshold;
+        uint8_t c_on = cur->csi_on_hits;
+        uint8_t c_off = cur->csi_off_hits;
+        uint8_t c_prof = cur->csi_profile;
+        uint8_t c_heal = cur->csi_auto_heal;
+
+        if ((item = cJSON_GetObjectItem(json, "csi_enabled"))) {
+            c_en = item->valueint ? 1 : 0;
+            csi_changed = true;
+        }
+        if ((item = cJSON_GetObjectItem(json, "csi_threshold"))) {
+            double val = item->valuedouble;
+            if (val != 0.0 && (val < 0.05 || val > 1.0)) {
+                cJSON_Delete(json);
+                return send_json_error(req, "Invalid csi_threshold (must be 0=auto or 0.05-1.0)", 400);
+            }
+            c_thr = (float)val;
+            csi_changed = true;
+        }
+        if (cJSON_GetObjectItem(json, "csi_on_hits") ||
+            cJSON_GetObjectItem(json, "csi_off_hits")) {
+            cJSON *on_item = cJSON_GetObjectItem(json, "csi_on_hits");
+            cJSON *off_item = cJSON_GetObjectItem(json, "csi_off_hits");
+            int on = (on_item && cJSON_IsNumber(on_item)) ? on_item->valueint : cur->csi_on_hits;
+            int off = (off_item && cJSON_IsNumber(off_item)) ? off_item->valueint : cur->csi_off_hits;
+            if (on < 1 || on > 20 || off < 1 || off > 20) {
+                cJSON_Delete(json);
+                return send_json_error(req, "Invalid csi hits (must be 1-20)", 400);
+            }
+            c_on = (uint8_t)on;
+            c_off = (uint8_t)off;
+            csi_changed = true;
+        }
+        if ((item = cJSON_GetObjectItem(json, "csi_profile"))) {
+            int val = item->valueint;
+            if (val < 0 || val > 1) {
+                cJSON_Delete(json);
+                return send_json_error(req, "Invalid csi_profile (must be 0=lightweight 1=high-accuracy)", 400);
+            }
+            c_prof = (uint8_t)val;
+            csi_changed = true;
+        }
+        if ((item = cJSON_GetObjectItem(json, "csi_auto_heal"))) {
+            c_heal = item->valueint ? 1 : 0;
+        }
+
+        if (csi_changed) {
+            esp_err_t csi_ret = config_set_csi(c_en, c_thr, c_on, c_off, c_prof, c_heal);
+            if (csi_ret == ESP_OK) {
+                /* 显式从手动锁定改回 0=恢复自动语义（重校准 + 重新启用
+                 * settle）；apply_config 幂等，CSI-off stub 为空实现 */
+                if (c_thr == 0.0f && prev_csi_threshold > 0.0f) {
+                    csi_motion_set_threshold(0.0f);
+                }
+                csi_motion_apply_config();
+            }
+        }
+    }
+
     /* Vflip (apply immediately via sensor register) */
     if ((item = cJSON_GetObjectItem(json, "cam_vflip")) && cJSON_IsNumber(item)) {
         uint8_t new_vflip = (uint8_t)item->valueint;
@@ -685,6 +796,15 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
     item = cJSON_GetObjectItem(json, "flash_threshold");
     if (item && cJSON_IsNumber(item)) {
         config_set_flash_threshold((uint8_t)item->valueint);
+    }
+
+    /* Viewer-driven flash LED switch (板级扩展, 0/1) */
+    item = cJSON_GetObjectItem(json, "flash_viewers");
+    if (item && cJSON_IsNumber(item)) {
+        if (item->valueint != 0 && item->valueint != 1) {
+            return send_json_error(req, "flash_viewers must be 0 or 1", 400);
+        }
+        config_set_flash_viewers((uint8_t)item->valueint);
     }
     {
         bool timelapse_changed = false;
@@ -916,12 +1036,40 @@ static esp_err_t handler_api_reboot(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------ */
+/*  POST /api/csi/calibrate                                            */
+/* ------------------------------------------------------------------ */
+
+/** @brief 触发 CSI 立即重校准（契约 v1.7；write auth）。本板 CSI-off 生产
+ *  形态：csi_motion_recalibrate() stub 恒返 ESP_ERR_NOT_SUPPORTED → 404。
+ *  背景执行，进度见串口日志。 */
+static esp_err_t handler_api_csi_calibrate(httpd_req_t *req)
+{
+    esp_err_t auth_ret = require_auth(req, "/api/csi/calibrate");
+    if (auth_ret != ESP_OK) {
+        return auth_ret;
+    }
+
+    esp_err_t ret = csi_motion_recalibrate();
+    if (ret == ESP_ERR_NOT_SUPPORTED) {
+        return send_json_error(req, "CSI sensing not built", HTTPD_404_NOT_FOUND);
+    }
+    if (ret != ESP_OK) {
+        return send_json_error(req, "CSI runtime not ready", 503);
+    }
+
+    cJSON *data = cJSON_CreateObject();
+    cJSON_AddStringToObject(data, "message", "CSI recalibration started");
+    return send_json_ok(req, data);
+}
+
+/* ------------------------------------------------------------------ */
 /*  GET /capture                                                       */
 /* ------------------------------------------------------------------ */
 
 static esp_err_t handler_capture(httpd_req_t *req)
 {
     set_cors_headers(req);
+    flash_viewers_notify_capture();  /* 板级扩展：拍照期间保持闪光灯判定在场 */
     camera_fb_t *fb = NULL;
     /* Non-blocking peek: broker's s_current always holds the last published
      * frame, so this returns instantly. timeout=0 avoids blocking the
@@ -1359,7 +1507,7 @@ static esp_err_t handler_api_capabilities(httpd_req_t *req)
 
     cJSON *data = cJSON_CreateObject();
     /* 契约 v1.0：12 个布尔能力位 + api_version/wifi_scan（见 docs/api-contract.md） */
-    cJSON_AddStringToObject(data, "api_version", "1.6");
+    cJSON_AddStringToObject(data, "api_version", "1.7");
     cJSON_AddBoolToObject(data, "wifi_scan", true);
     /* ai-thinker capabilities matrix */
     cJSON_AddBoolToObject(data, "ai", false);
@@ -1808,6 +1956,13 @@ static esp_err_t handler_static(httpd_req_t *req)
      * field names/values the new firmware rejects (e.g. cleanup 400). */
     if (strstr(filepath, ".html")) {
         httpd_resp_set_hdr(req, "Cache-Control", "no-cache, must-revalidate");
+    } else {
+        /* 弱链缓存（PIT-051 收尾，2026-09-13）：js/css/svg 无版本号文件名，
+         * 显式 5 分钟浏览器缓存——成功加载一次后，重开页面只需重传
+         * index.html(5.9KB gz)+API，坏窗可开率大幅提高。代价：OTA 刷
+         * SPIFFS 后浏览器最多带 5 分钟旧资产（入口 HTML 恒 no-cache，新
+         * 页面引用同名文件最多首访陈旧一次；加载器 ?retry= 亦绕缓存）。 */
+        httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=300");
     }
 
     char buf[4096];
@@ -1893,6 +2048,7 @@ static const uri_entry_t s_uris[] = {
     { "/api/config",   HTTP_POST,   handler_api_config_post  },
     { "/api/reset",    HTTP_POST,   handler_api_reset        },
     { "/api/reboot",   HTTP_POST,   handler_api_reboot       },
+    { "/api/csi/calibrate", HTTP_POST, handler_api_csi_calibrate },  /* 契约 v1.7 */
     { "/api/capture",  HTTP_GET,    handler_capture          },
     { "/metrics",      HTTP_GET,    handler_metrics          },
     { "/api/files",    HTTP_GET,    handler_api_files        },
