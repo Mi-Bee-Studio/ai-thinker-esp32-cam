@@ -52,6 +52,36 @@ esp_err_t frame_broker_get_copy(camera_fb_t **fb_out, uint32_t timeout_ms);
 /** Free a frame obtained from frame_broker_get_copy(). */
 void frame_broker_free(camera_fb_t *fb);
 
+/**
+ * @brief Publication generation of the current frame (0 if none yet).
+ *
+ * Monotonic per-producer-publish counter. Used to wait for frames captured
+ * AFTER some event (e.g. flash LED on) — frame_broker_get_copy() always
+ * returns the CURRENT frame immediately, which may predate the event.
+ */
+uint32_t frame_broker_current_gen(void);
+
+/**
+ * @brief Like frame_broker_get_copy(), but only returns a frame whose
+ *        publication generation is strictly greater than `gen_floor`.
+ *
+ * Polls at ~20ms until a NEWER frame is published or timeout. Use
+ * frame_broker_current_gen() to snapshot the generation before the event.
+ */
+esp_err_t frame_broker_get_copy_after(uint32_t gen_floor, camera_fb_t **fb_out,
+                                      uint32_t timeout_ms);
+
+/**
+ * @brief Temporarily raise the no-viewer idle cadence (2fps → 5fps).
+ *
+ * Short burst windows only (caller passes ms): the CSI photo chain needs
+ * prompt frames for the darkness probe settle, flash warm-up discard and
+ * capture — at 2fps idle those alone cost ~2s. With viewers connected the
+ * cadence is already capped at 5fps, so this only affects the idle case.
+ * Callable from any task.
+ */
+void frame_broker_boost(uint32_t ms);
+
 /** Total frames produced since init. */
 uint32_t frame_broker_get_frame_count(void);
 
