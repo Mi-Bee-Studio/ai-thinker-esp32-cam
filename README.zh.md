@@ -171,6 +171,7 @@ ai-thinker-esp32-cam/
 - `docs/zh/architecture.md` — 模块图、依赖关系、启动序列、数据流
 - `main/web_server.c` — 全部 HTTP 端点集中在文件顶部的 `s_uris[]` 路由表（文件头有阅读地图）
 - `docs/api-contract.md` · `docs/config-contract.md` · `docs/at-command.md` — MiBee Cam 家族统一的行为契约（带版本号）
+- `docs/PITFALLS.md` — 家族坑库（公开脱敏版）：代码里每处防御性写法的"为什么"，症状→根因→已验证修复
 
 ## 启动序列
 
