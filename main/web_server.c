@@ -26,6 +26,18 @@
  *   POST /api/ota (/)   — OTA update endpoints
  *   OPTIONS *          - CORS preflight
  *   GET    *          - SPIFFS static files (fallback)
+ *
+ * READING MAP (authoritative endpoint list = s_uris[] route table, near
+ * the top of this file — the list above may lag behind it):
+ *
+ *   Route table (s_uris[]) .... every HTTP endpoint in one place — start
+ *                               here to answer "what URI is handled where"
+ *   Helpers ................... auth (X-Password), CORS, JSON envelope
+ *   Handlers .................. one static esp_err_t handler_*() per
+ *                               endpoint, same names as the table
+ *   web_server_init/start ..... httpd config + registration loop
+ *
+ * Behavior contracts: docs/api-contract.md (family-wide, versioned).
  */
 #include "web_server.h"
 #include "esp_log.h"
@@ -79,6 +91,91 @@ static httpd_handle_t s_server = NULL;
 static esp_err_t send_json_error(httpd_req_t *req, const char *msg, int http_code);
 static esp_err_t send_unauthorized(httpd_req_t *req);
 static char *read_body(httpd_req_t *req, size_t max_len);
+
+/* ------------------------------------------------------------------ */
+/*  Route table — the complete HTTP surface of this server, listed in  */
+/*  registration order. Handler bodies live further down in this file. */
+/*  Wildcard matching is registration-order sensitive: the GET catch-  */
+/*  all must stay LAST.                                                */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    const char        *uri;
+    httpd_method_t    method;
+    esp_err_t       (*handler)(httpd_req_t *);
+} uri_entry_t;
+
+static esp_err_t handler_api_status(httpd_req_t *req);
+static esp_err_t handler_api_config_get(httpd_req_t *req);
+static esp_err_t handler_api_config_post(httpd_req_t *req);
+static esp_err_t handler_api_reset(httpd_req_t *req);
+static esp_err_t handler_api_reboot(httpd_req_t *req);
+static esp_err_t handler_api_csi_calibrate(httpd_req_t *req);
+static esp_err_t handler_capture(httpd_req_t *req);
+static esp_err_t handler_metrics(httpd_req_t *req);
+static esp_err_t handler_api_files(httpd_req_t *req);
+static esp_err_t handler_api_files_delete(httpd_req_t *req);
+static esp_err_t handler_api_files_batch(httpd_req_t *req);
+static esp_err_t handler_api_download(httpd_req_t *req);
+static esp_err_t handler_api_auth(httpd_req_t *req);
+static esp_err_t handler_api_scan(httpd_req_t *req);
+static esp_err_t handler_api_capabilities(httpd_req_t *req);
+static esp_err_t handler_api_time(httpd_req_t *req);
+static esp_err_t handler_api_format(httpd_req_t *req);
+static esp_err_t handler_api_storage(httpd_req_t *req);
+static esp_err_t handler_api_record_post(httpd_req_t *req);
+static esp_err_t handler_api_record_get(httpd_req_t *req);
+static esp_err_t handler_api_led(httpd_req_t *req);
+static esp_err_t handler_api_led_get(httpd_req_t *req);
+static esp_err_t handler_api_camera_get(httpd_req_t *req);
+static esp_err_t handler_api_camera_post(httpd_req_t *req);
+/* OTA handlers (handler_api_ota_url/handler_api_ota_info/handler_api_ota_upload/
+ * handler_api_spiffs_upload) are declared in ota_updater.h — defined there too */
+static esp_err_t handler_options(httpd_req_t *req);
+static esp_err_t handler_static(httpd_req_t *req);
+
+static const uri_entry_t s_uris[] = {
+    /* Specific API endpoints first (for URI match specificity) */
+    { "/api/status",   HTTP_GET,    handler_api_status       },
+    { "/api/config",   HTTP_GET,    handler_api_config_get   },
+    { "/api/config",   HTTP_POST,   handler_api_config_post  },
+    { "/api/reset",    HTTP_POST,   handler_api_reset        },
+    { "/api/reboot",   HTTP_POST,   handler_api_reboot       },
+    { "/api/csi/calibrate", HTTP_POST, handler_api_csi_calibrate },  /* 契约 v1.7 */
+    { "/api/capture",  HTTP_GET,    handler_capture          },
+    { "/metrics",      HTTP_GET,    handler_metrics          },
+    { "/api/files",    HTTP_GET,    handler_api_files        },
+    { "/api/files",    HTTP_DELETE, handler_api_files_delete  },
+    { "/api/files/batch", HTTP_POST, handler_api_files_batch  },
+    { "/api/download", HTTP_GET,    handler_api_download     },
+    { "/api/auth",     HTTP_GET,    handler_api_auth         },
+    { "/api/scan",     HTTP_GET,    handler_api_scan         },
+    { "/api/capabilities", HTTP_GET, handler_api_capabilities  },
+    /* 契约 v1.3：补齐 §2 核心端点 POST /api/time（此前缺席，家族唯一缺口） */
+    { "/api/time",     HTTP_POST,   handler_api_time         },
+    /* 契约 v1.1：timelapse 独立端点已移除 — 启停走 POST /api/config 的
+     * timelapse_enabled，运行态并入 GET /api/status */
+    { "/api/format",   HTTP_POST,   handler_api_format       },
+    { "/api/storage",  HTTP_GET,    handler_api_storage      },
+    { "/api/record",    HTTP_POST,   handler_api_record_post  },
+    { "/api/record",    HTTP_GET,    handler_api_record_get   },
+    { "/api/led",      HTTP_POST,   handler_api_led           },
+    { "/api/led",         HTTP_GET,    handler_api_led_get       },
+    { "/api/camera",      HTTP_GET,    handler_api_camera_get    },
+    { "/api/camera",      HTTP_POST,   handler_api_camera_post   },
+    /* 契约 v1.3：ai/status 桩移除（SPA 轮询本就 Caps.ai 门控，见 app.js
+     * loadCapsRetry——桩是历史遗留，违反 "false ⇒ 不注册" 红线）；
+     * OTA URL 触发补齐（与 n16r8/seeed 语义一致） */
+    { "/api/ota",      HTTP_POST,   handler_api_ota_url      },
+    { "/api/ota/info",   HTTP_GET,   handler_api_ota_info     },
+    { "/api/ota/upload", HTTP_POST,  handler_api_ota_upload   },
+    { "/api/ota/spiffs", HTTP_POST,  handler_api_spiffs_upload },
+
+    { "/*",             HTTP_OPTIONS, handler_options         },
+    { "/*",             HTTP_GET,    handler_static          },
+};
+
+#define NUM_URIS (sizeof(s_uris) / sizeof(s_uris[0]))
 
 /* 404 必带来源（issue #8 / MiBeeNvr#723 收尾）：:80 上 2.1s 间隔的 404
  * 轮询突发此前只记 404 不记 URI/来源 IP，无法指认是 NVR、浏览器还是
@@ -2033,56 +2130,6 @@ static esp_err_t handler_api_scan(httpd_req_t *req)
     cJSON_AddItemToObject(data, "networks", arr);
     return send_json_ok(req, data);
 }
-
-
-typedef struct {
-    const char        *uri;
-    httpd_method_t    method;
-    esp_err_t       (*handler)(httpd_req_t *);
-} uri_entry_t;
-
-static const uri_entry_t s_uris[] = {
-    /* Specific API endpoints first (for URI match specificity) */
-    { "/api/status",   HTTP_GET,    handler_api_status       },
-    { "/api/config",   HTTP_GET,    handler_api_config_get   },
-    { "/api/config",   HTTP_POST,   handler_api_config_post  },
-    { "/api/reset",    HTTP_POST,   handler_api_reset        },
-    { "/api/reboot",   HTTP_POST,   handler_api_reboot       },
-    { "/api/csi/calibrate", HTTP_POST, handler_api_csi_calibrate },  /* 契约 v1.7 */
-    { "/api/capture",  HTTP_GET,    handler_capture          },
-    { "/metrics",      HTTP_GET,    handler_metrics          },
-    { "/api/files",    HTTP_GET,    handler_api_files        },
-    { "/api/files",    HTTP_DELETE, handler_api_files_delete  },
-    { "/api/files/batch", HTTP_POST, handler_api_files_batch  },
-    { "/api/download", HTTP_GET,    handler_api_download     },
-    { "/api/auth",     HTTP_GET,    handler_api_auth         },
-    { "/api/scan",     HTTP_GET,    handler_api_scan         },
-    { "/api/capabilities", HTTP_GET, handler_api_capabilities  },
-    /* 契约 v1.3：补齐 §2 核心端点 POST /api/time（此前缺席，家族唯一缺口） */
-    { "/api/time",     HTTP_POST,   handler_api_time         },
-    /* 契约 v1.1：timelapse 独立端点已移除 — 启停走 POST /api/config 的
-     * timelapse_enabled，运行态并入 GET /api/status */
-    { "/api/format",   HTTP_POST,   handler_api_format       },
-    { "/api/storage",  HTTP_GET,    handler_api_storage      },
-    { "/api/record",    HTTP_POST,   handler_api_record_post  },
-    { "/api/record",    HTTP_GET,    handler_api_record_get   },
-    { "/api/led",      HTTP_POST,   handler_api_led           },
-    { "/api/led",         HTTP_GET,    handler_api_led_get       },
-    { "/api/camera",      HTTP_GET,    handler_api_camera_get    },
-    { "/api/camera",      HTTP_POST,   handler_api_camera_post   },
-    /* 契约 v1.3：ai/status 桩移除（SPA 轮询本就 Caps.ai 门控，见 app.js
-     * loadCapsRetry——桩是历史遗留，违反 "false ⇒ 不注册" 红线）；
-     * OTA URL 触发补齐（与 n16r8/seeed 语义一致） */
-    { "/api/ota",      HTTP_POST,   handler_api_ota_url      },
-    { "/api/ota/info",   HTTP_GET,    handler_api_ota_info     },
-    { "/api/ota/upload", HTTP_POST,   handler_api_ota_upload   },
-    { "/api/ota/spiffs", HTTP_POST,   handler_api_spiffs_upload },
-
-    { "/*",             HTTP_OPTIONS, handler_options         },
-    { "/*",             HTTP_GET,    handler_static          },
-};
-
-#define NUM_URIS (sizeof(s_uris) / sizeof(s_uris[0]))
 
 /* ------------------------------------------------------------------ */
 /*  Public API                                                         */
