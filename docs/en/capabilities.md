@@ -1,5 +1,5 @@
 [![Build Status](https://img.shields.io/github/actions/workflow/status/Mi-Bee-Studio/ai-thinker-esp32-cam/release.yml?branch=main)](https://github.com/Mi-Bee-Studio/ai-thinker-esp32-cam/actions)
-[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v6.0.1-blue)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)  
+[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v6.0.1-blue)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 > 🌐 [中文文档](../zh/capabilities.md)
@@ -78,10 +78,9 @@ Full endpoint list (see [`api.md`](./api.md) for details):
 |--------|------|-------------|
 | GET    | `/api/status` | Device status JSON |
 | GET    | `/api/config` | Current config (password fields never returned) |
-| POST   | `/api/config` | Update config (requires `X-Password` header) |
-| POST   | `/api/reset` | Factory reset (requires `X-Password` header) |
-| POST   | `/api/reboot` | Reboot device (requires `X-Password` header) |
-| POST   | `/api/auth` | Verify web password |
+| POST   | `/api/config` | Update config |
+| POST   | `/api/reset` | Factory reset |
+| POST   | `/api/reboot` | Reboot device |
 | GET    | `/capture` | Single JPEG frame |
 | GET    | `/stream` | MJPEG live stream |
 | GET    | `/metrics` | Prometheus metrics |
@@ -104,7 +103,6 @@ Full endpoint list (see [`api.md`](./api.md) for details):
 - ❌ **Horizontal flip / 180° rotation**: Firmware only exposes `vflip` (vertical)
 - ❌ **ROI digital zoom**: No region-of-interest cropping interface
 - ❌ **OTA updates**: Partition table has only `otadata`, no `ota_0/ota_1` slots
-- ❌ **Beyond-HTTP auth**: Only `X-Password` header
 - ❌ **HTTPS**: HTTP server is plaintext only
 
 ## Boot Sequence
@@ -143,7 +141,6 @@ Full endpoint list (see [`api.md`](./api.md) for details):
 | `resolution` | uint8 | 0 (VGA) | 0=VGA, 1=SVGA, 2=XGA, 3=UXGA |
 | `fps` | uint8 | 15 | Target frame rate |
 | `jpeg_quality` | uint8 | 12 | 0-63 (lower = better) |
-| `web_password` | char[33] | "" | Optional web access password |
 | `timezone` | char[33] | "CST-8" | Timezone string |
 | `motion_threshold` | uint8 | 30 | Diff percent threshold (1-100) |
 | `motion_cooldown` | uint8 | 5 | Trigger cooldown (seconds) |

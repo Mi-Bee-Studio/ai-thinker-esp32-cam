@@ -218,7 +218,10 @@ ai-thinker-esp32-cam/
 
 ### 设备配置
 - **device_name** — 仪表板显示的设备名称（默认：`MiBeeCam`）
-- **web_password** — 可选的 Web 界面访问密码（留空 = 无需认证）
+
+> **注**：v1.9 固件起（契约 v1.9）**已无设备级 Web 密码**——所有端点在可信
+> 局域网内开放，信任边界为路由器 WPA2 密钥。（上方 AP 模式 WiFi 密码
+> `mibeecam2026` 不受影响。）
 
 ### 摄像头配置
 - **resolution** — 图像分辨率：0=VGA, 1=SVGA, 2=XGA, 3=UXGA（默认：SVGA）

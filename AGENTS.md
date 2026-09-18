@@ -46,7 +46,7 @@ AT+REBOOT / AT+RESTORE`（+能力裁剪项）。红线：**任何读指令不回
 > 新增 `stream_clients_max`=1）。MPA(index.html) 已同步改读新字段。
 > 注：本仓实际分区为双 OTA 1.5MB×2 + SPIFFS 956KB（本文旧描述"单 factory 3.5MB/无OTA"已过时，OTA 端点存在且可用）。
 >
-> **契约 v1.1（2026-09-02）**：公开默认密码统一为 `mibeecam2026`（Kconfig 默认值，可入文档；本地部署可在 gitignored sdkconfig 用 `CONFIG_MIBEE_CAM_DEFAULT_WEB_PASSWORD` 覆盖；空密码加载自动迁移）、拒绝 <6 位密码；
+> **契约 v1.1（2026-09-02）**：公开默认密码统一为 `mibeecam2026`、拒绝 <6 位密码（**2026-09-18：Web 密码体系已随契约 v1.9 整体移除**，`X-Password`/`web_password`/Kconfig 默认值均已废除；AP 模式 WiFi 密码不受影响）；
 > `/api/timelapse/*` 三端点已移除（启停走 POST /api/config 的 `timelapse_enabled`，
 > 运行态在 GET /api/status 的 `timelapse_running`/`timelapse_photo_count`）；
 > `/api/led` 新增 JSON body 主语义（`{"brightness":0-100}`），`?action=` 保留兼容；api_version=1.1。
@@ -57,30 +57,30 @@ All business endpoints use the `/api/` prefix. Returns JSON envelope `{"ok":true
 |--------|------|------|-------------|
 | GET | `/api/status` | open | Device status (WiFi, camera, system, storage) |
 | GET | `/api/config` | open | Current configuration (passwords masked) |
-| POST | `/api/config` | write | Partial config update; first-time password setup when `web_password` is empty |
+| POST | `/api/config` | open | Partial config update |
 | GET | `/api/capabilities` | open | Board capability flags (12 booleans) |
 | GET | `/api/capture` | open | Single JPEG snapshot (`image/jpeg`, not JSON) |
 | GET | `/api/scan` | open | WiFi AP scan |
-| POST | `/api/reset` | write | Factory reset config to defaults |
-| POST | `/api/reboot` | write | Reboot device |
+| POST | `/api/reset` | open | Factory reset config to defaults |
+| POST | `/api/reboot` | open | Reboot device |
 | GET | `/api/record` | open | Recording status |
-| POST | `/api/record` | write | Start/stop recording (`?action=start|stop`) |
+| POST | `/api/record` | open | Start/stop recording (`?action=start|stop`) |
 | GET | `/api/files` | open | List SD files (`?type=all\|photos\|recordings&offset=&limit=` ≤200，含 `total`；2026-09-03 修复 type=all 翻页错位) |
-| DELETE | `/api/files` | write | Delete a file (`?name=...&type=photo\|recording`，缺省 photo；此前删录像必失败已修) |
-| POST | `/api/files/batch` | write | 批量删除 `{names:[...]}` 或 `{scope:"all\|photos\|recordings"}` → `{deleted,failed}`（契约 v1.2，跳过正在写的录像段） |
+| DELETE | `/api/files` | open | Delete a file (`?name=...&type=photo\|recording`，缺省 photo；此前删录像必失败已修) |
+| POST | `/api/files/batch` | open | 批量删除 `{names:[...]}` 或 `{scope:"all\|photos\|recordings"}` → `{deleted,failed}`（契约 v1.2，跳过正在写的录像段） |
 | GET | `/api/download` | open | Download file (`?name=...&type=photo|recording`) |
-| POST | `/api/format` | write | **申请-重启-开机格式化**：置 NVS 标志→应答 2s 后重启→main.c Step 5.5 相机初始化前执行格式化并清除标志。运行时格式化必挂死（GPIO14 相机/SD 共享 SPI），2026-09-03 前该端点因此 503 且未鉴权，均已修 |
+| POST | `/api/format` | open | **申请-重启-开机格式化**：置 NVS 标志→应答 2s 后重启→main.c Step 5.5 相机初始化前执行格式化并清除标志。运行时格式化必挂死（GPIO14 相机/SD 共享 SPI），2026-09-03 前该端点因此 503 且未鉴权，均已修 |
 | GET | `/api/ota/info` | open | OTA status/info |
-| POST | `/api/ota/upload` | write | Upload firmware binary |
-| POST | `/api/ota/spiffs` | write | Upload SPIFFS image |
-| POST | `/api/led` | write | Flash LED control (`?action=on|off|toggle`) |
+| POST | `/api/ota/upload` | open | Upload firmware binary |
+| POST | `/api/ota/spiffs` | open | Upload SPIFFS image |
+| POST | `/api/led` | open | Flash LED control (`?action=on|off|toggle`) |
 | GET | `/api/led` | open | Flash LED state |
-| POST | `/api/timelapse/start` | write | Start timelapse |
-| POST | `/api/timelapse/stop` | write | Stop timelapse |
+| POST | `/api/timelapse/start` | open | Start timelapse |
+| POST | `/api/timelapse/stop` | open | Stop timelapse |
 | GET | `/api/timelapse/status` | open | Timelapse status |
 | OPTIONS | `/*` | — | CORS preflight (204 No Content) |
 
-**Auth:** `X-Password` header for write operations. When `web_password` is empty (first boot), all writes return 401 `SET_PASSWORD_FIRST` except `POST /api/config` with a `web_password` field (first-time setup).
+**Auth:** 无设备级认证（契约 v1.9，2026-09-18 起）：`X-Password`/`SET_PASSWORD_FIRST`/`GET /api/auth` 已随 Web 密码体系移除，全部端点（含 OTA）在可信局域网内开放，信任边界=路由器 WPA2。
 
 **MJPEG stream:** Separate TCP server on port `:81` (independent of main web server on port 80).
 
@@ -219,7 +219,7 @@ POST 越界 400 带来源、`free_psram` 3.8MB、capture 0.17s、ΣΔ 流水线�
 | `preview.html` | 实时预览：MJPEG `:81/stream` + 弱 WiFi 截图兜底（`/api/capture` ~1fps）；快捷改分辨率/质量/录像/闪光/拍照 |
 | `config.html` | 全配置（折叠分组）+ 固件/WebUI OTA 上传。摄像头仅 4 档（VGA/SVGA/XGA/UXGA），无 RTSP 假控件 |
 | `files.html` | SD 文件管理：照片/录像分页列表 + 下载/删除 |
-| `setup.html` | 首次配网向导（AP 模式深色主题）：WiFi+设备名+管理密码+时区。必须含 `web_password`（SET_PASSWORD_FIRST 状态机） |
+| `setup.html` | （已于 2026-09-04 删除，SPA 已覆盖）旧首次配网向导：WiFi+设备名+时区 |
 
 **关键 API 对齐（曾因照抄 S3 出错）：** `/api/status` 返回 `resolution`/`stream_clients`（非 camera_resolution/mjpeg_clients）；摄像头字段是 `cam_framesize`/`cam_quality`/`cam_vflip`；闪光是 `POST /api/led?action=toggle`（非 JSON body）；推流在独立 `:81` 端口；拍照是 `/api/capture`。
 
@@ -273,10 +273,10 @@ rm sdkconfig && idf.py set-target esp32 && idf.py build
 for this repo** (dual OTA slots 1.5MB×2, endpoints live — see API table above):
 
 ```bash
-curl -X POST http://<ip>/api/ota/upload -H 'X-Password: <pwd>' \
+curl -X POST http://<ip>/api/ota/upload \
      -H 'Content-Type: application/octet-stream' \
      --max-time 300 --data-binary @build/mibee_cam.bin      # firmware → next slot → reboot
-curl -X POST http://<ip>/api/ota/spiffs -H 'X-Password: <pwd>' \
+curl -X POST http://<ip>/api/ota/spiffs \
      --data-binary @build/spiffs.bin                        # UI (erases SPIFFS; risky on weak WiFi)
 ```
 

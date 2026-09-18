@@ -27,7 +27,6 @@ static const char *TAG = "config";
 #define NVS_NS_LEGACY   "camcfg"         /* ai-thinker legacy blob 命名空间 */
 #define KEY_SCHEMA_VER  "schema_ver"
 #define KEY_LEGACY_BAK  "config_bak"     /* 迁移后的 legacy blob 备份键 */
-#define KEY_PW_SEED     "pw_seed_v1"     /* 契约 v1.1 密码一次性种子标记 */
 
 static cam_config_t s_config = {0};
 static bool s_config_initialized = false;
@@ -61,7 +60,6 @@ static void apply_defaults(cam_config_t *cfg)
     cfg->cam_framesize = CAMERA_RES_VGA;
     cfg->cam_fps = 15;
     cfg->cam_quality = 12;
-    strncpy(cfg->web_password, CONFIG_DEFAULT_WEB_PASSWORD, sizeof(cfg->web_password) - 1);
     strncpy(cfg->timezone, CONFIG_DEFAULT_TIMEZONE, sizeof(cfg->timezone) - 1);
     /* 家族 motion 超集（契约 §3.2）：默认灵敏度 70 = 旧 threshold 30 */
     cfg->motion_enabled = 1;
@@ -120,7 +118,7 @@ typedef struct {
     uint8_t cam_framesize;      /* 旧刻度 0-3 */
     uint8_t fps;
     uint8_t cam_quality;
-    char web_password[33];
+    char reserved_web_pw[33];   /* 旧管理密码槽位（v2.0 已废弃，不再迁移；保留占位以维持 blob 布局） */
     char timezone[33];
     uint8_t motion_threshold;
     uint8_t motion_cooldown;
@@ -216,7 +214,6 @@ static void map_legacy_to_config(const legacy_config_t *lc, cam_config_t *cfg)
     cfg->cam_framesize = legacy_scale_to_framesize(lc->cam_framesize);
     cfg->cam_fps = lc->fps ? lc->fps : 15;
     cfg->cam_quality = lc->cam_quality;
-    strlcpy(cfg->web_password, lc->web_password, sizeof(cfg->web_password));
     strlcpy(cfg->timezone, lc->timezone, sizeof(cfg->timezone));
     cfg->motion_enabled = 1;
     cfg->motion_sensitivity = (uint8_t)(100 - (lc->motion_threshold > 100 ? 100 : lc->motion_threshold));
@@ -264,7 +261,6 @@ KEY_ASSERT("wifi_ssid_2");
 KEY_ASSERT("wifi_pass_2");
 KEY_ASSERT("ap_fallback");
 KEY_ASSERT("timezone");
-KEY_ASSERT("web_password");
 KEY_ASSERT("cam_framesize");
 KEY_ASSERT("cam_fps");
 KEY_ASSERT("cam_quality");
@@ -303,7 +299,6 @@ KEY_ASSERT("wifi_rec_h");
 KEY_ASSERT("xclk_mhz");
 KEY_ASSERT("wifi_roam_rssi");
 KEY_ASSERT("wifi_roam_gap");
-KEY_ASSERT("pw_seed_v1");
 
 /* 字符串键读取：缺键/超长 → 保持默认（返回 false） */
 static bool rd_str(nvs_handle_t h, const char *key, char *out, size_t outsz)
@@ -357,7 +352,6 @@ static void load_keys_from_nvs(nvs_handle_t h, cam_config_t *cfg)
     rd_str(h, "wifi_pass_2",   cfg->wifi_pass_2,   sizeof(cfg->wifi_pass_2));
     rd_u8(h, "ap_fallback",   &cfg->allow_ap_fallback);
     rd_str(h, "timezone",      cfg->timezone,      sizeof(cfg->timezone));
-    rd_str(h, "web_password",  cfg->web_password,  sizeof(cfg->web_password));
     rd_u8(h, "cam_framesize", &cfg->cam_framesize);
     rd_u8(h, "cam_fps",       &cfg->cam_fps);
     rd_u8(h, "cam_quality",   &cfg->cam_quality);
@@ -410,7 +404,6 @@ static void write_keys_to_nvs(nvs_handle_t h, const cam_config_t *cfg)
     wr_str(h, "wifi_pass_2",  cfg->wifi_pass_2);
     wr_u8(h, "ap_fallback",  cfg->allow_ap_fallback);
     wr_str(h, "timezone",     cfg->timezone);
-    wr_str(h, "web_password", cfg->web_password);
     wr_u8(h, "cam_framesize", cfg->cam_framesize);
     wr_u8(h, "cam_fps",      cfg->cam_fps);
     wr_u8(h, "cam_quality",  cfg->cam_quality);
@@ -496,24 +489,6 @@ static bool migrate_legacy_blob(void)
     }
     legacy_seed_missing_fields(lc);
 
-    /* 密码一次性种子标记跨命名空间迁移（已种过的设备不得重种） */
-    bool pw_seeded = false;
-    {
-        nvs_handle_t h_chk;
-        uint8_t flag = 0;
-        if (nvs_open(NVS_NS_LEGACY, NVS_READONLY, &h_chk) == ESP_OK) {
-            pw_seeded = (nvs_get_u8(h_chk, KEY_PW_SEED, &flag) == ESP_OK && flag == 1);
-            nvs_close(h_chk);
-        }
-        if (!pw_seeded && nvs_open(NVS_NS, NVS_READONLY, &h_chk) == ESP_OK) {
-            pw_seeded = (nvs_get_u8(h_chk, KEY_PW_SEED, &flag) == ESP_OK && flag == 1);
-            nvs_close(h_chk);
-        }
-        if (!pw_seeded) {
-            strlcpy(lc->web_password, CONFIG_DEFAULT_WEB_PASSWORD, sizeof(lc->web_password));
-        }
-    }
-
     /* 翻译 + 写逐键 */
     cam_config_t migrated;
     map_legacy_to_config(lc, &migrated);
@@ -523,9 +498,6 @@ static bool migrate_legacy_blob(void)
         return false;
     }
     write_keys_to_nvs(h_new, &migrated);
-    if (!pw_seeded) {
-        nvs_set_u8(h_new, KEY_PW_SEED, 1);
-    }
     nvs_commit(h_new);
     nvs_close(h_new);
 
@@ -613,10 +585,6 @@ esp_err_t config_init(void)
     }
     if (s_config.cam_fps == 0 || s_config.cam_fps > 30) {
         s_config.cam_fps = 15;
-    }
-    /* 契约 v1.1：空密码迁移到家族统一默认 */
-    if (s_config.web_password[0] == '\0') {
-        strlcpy(s_config.web_password, CONFIG_DEFAULT_WEB_PASSWORD, sizeof(s_config.web_password));
     }
 
     ESP_LOGI(TAG, "Config loaded (device=%s, wifi_ssid='%s', schema v%d)",
@@ -728,18 +696,6 @@ esp_err_t config_set_resolution(camera_resolution_t res)
     s_config.cam_framesize = (uint8_t)res;
     config_unlock();
     ESP_LOGI(TAG, "Resolution set to %d", s_config.cam_framesize);
-    return set_and_save();
-}
-
-esp_err_t config_set_web_password(const char *pass)
-{
-    if (!pass) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    config_lock();
-    strlcpy(s_config.web_password, pass, sizeof(s_config.web_password));
-    config_unlock();
-    ESP_LOGI(TAG, "Web password set (pass=***)");
     return set_and_save();
 }
 
@@ -1100,7 +1056,7 @@ esp_err_t config_load_from_sd(void)
     return ESP_OK;
 }
 
-/* ── JSON 导出（契约字段名；密码类掩码） ── */
+/* ── JSON 导出（契约字段名） ── */
 
 cJSON *config_get_json(void)
 {
@@ -1116,7 +1072,6 @@ cJSON *config_get_json(void)
     cJSON_AddNumberToObject(root, "cam_framesize", (double)cfg->cam_framesize);
     cJSON_AddNumberToObject(root, "cam_fps", (double)cfg->cam_fps);
     cJSON_AddNumberToObject(root, "cam_quality", (double)cfg->cam_quality);
-    cJSON_AddStringToObject(root, "web_password", "****");  /* masked（契约 v1.1） */
     cJSON_AddStringToObject(root, "timezone", cfg->timezone);
     cJSON_AddNumberToObject(root, "motion_enabled", (double)cfg->motion_enabled);
     cJSON_AddNumberToObject(root, "motion_sensitivity", (double)cfg->motion_sensitivity);
@@ -1159,9 +1114,4 @@ cJSON *config_get_json(void)
     cJSON_AddNumberToObject(root, "schema_version", (double)CONFIG_SCHEMA_VERSION);
 
     return root;
-}
-
-const char *config_get_web_password(void)
-{
-    return s_config.web_password;
 }

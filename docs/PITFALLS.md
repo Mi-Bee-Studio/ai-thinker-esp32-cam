@@ -181,10 +181,10 @@ seeed（.133）日志每 60s 报 `Chip temperature high (93.5°C)`（规格上�
 家族 OTA 端点（seeed / ai-thinker / n16r8 有；**luatos 单分区无 OTA**）吃的是
 **裸二进制流，不是 multipart**：
 ```bash
-curl -X POST http://<ip>/api/ota/upload -H 'X-Password: <pwd>' \
+curl -X POST http://<ip>/api/ota/upload \
      -H 'Content-Type: application/octet-stream' \
      --data-binary @build/mibee_cam.bin        # 固件 → next OTA 槽 → 自动重启
-curl -X POST http://<ip>/api/ota/spiffs -H 'X-Password: <pwd>' \
+curl -X POST http://<ip>/api/ota/spiffs \
      --data-binary @build/spiffs.bin           # UI → 整擦 SPIFFS → 自动重启
 ```
 注意：镜像必须 ≤ OTA 槽尺寸（seeed 1.9MB）；上传中途失败 SPIFFS 即丢（只能串口救）；
@@ -391,6 +391,8 @@ flash 全程无告警（部分仓恰因别的触发重跑了 configure，四仓�
 （grep build 镜像）而不是只看退出码；任何占用串口的常驻进程都是烧录的天敌。
 
 ### PIT-027 真实凭据写进公开仓库（契约 v1.1 默认密码明文）→ 全家族历史重写清剿（2026-09-04，跨项目）
+
+> （2026-09-18：Web 密码体系已随契约 v1.9 整体移除——本 PIT 的教训仍有效，但触发面不复存在。）
 
 **症状**：用户发现家族统一 Web 默认密码（一个私人日期格式的真实口令）以明文
 出现在 4 个 cam 仓的 `AGENTS.md`/`docs/api-contract.md`/C 源码字面量、mibee-docs

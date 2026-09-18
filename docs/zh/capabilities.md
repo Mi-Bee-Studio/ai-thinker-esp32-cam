@@ -80,16 +80,15 @@
 |--------|------|------|
 | GET    | `/api/status` | 设备状态 JSON |
 | GET    | `/api/config` | 当前配置（密码字段不返回） |
-| POST   | `/api/config` | 更新配置（需 `X-Password` 头） |
-| POST   | `/api/reset` | 出厂重置（需 `X-Password` 头） |
-| POST   | `/api/reboot` | 重启设备（需 `X-Password` 头） |
+| POST   | `/api/config` | 更新配置 |
+| POST   | `/api/reset` | 出厂重置 |
+| POST   | `/api/reboot` | 重启设备 |
 | GET    | `/capture` | 单帧 JPEG |
 | GET    | `/stream` | MJPEG 实时流 |
 | GET    | `/api/metrics` | Prometheus 指标 |
 | GET    | `/api/files` | 列出 SD 照片（分页） |
 | DELETE | `/api/files?name=xxx` | 删除照片 |
 | GET    | `/api/download?name=xxx` | 下载照片 |
-| GET    | `/api/auth` | 验证 web 密码 |
 | POST   | `/api/timelapse/start` | 启动延时 |
 | POST   | `/api/timelapse/stop` | 停止延时 |
 | GET    | `/api/timelapse/status` | 延时状态 |
@@ -105,7 +104,6 @@
 - ❌ **水平翻转 / 180° 旋转**：固件仅暴露 `vflip`（垂直翻转）
 - ❌ **ROI 数字缩放**：固件没有兴趣区域裁切接口
 - ❌ **OTA 升级**：分区表只有 `otadata`，没有 `ota_0/ota_1` 槽位
-- ❌ **HTTP 认证以外的鉴权**：只有 `X-Password` 头
 - ❌ **HTTPS**：HTTP 服务器仅支持明文
 
 ## 已移除的功能
@@ -180,7 +178,6 @@
 | `resolution` | uint8 | 0 (VGA) | 0=VGA, 1=SVGA, 2=XGA, 3=UXGA |
 | `fps` | uint8 | 15 | 帧率目标 |
 | `jpeg_quality` | uint8 | 12 | 0-63（低=高质） |
-| `web_password` | char[33] | "" | 可选 Web 访问密码 |
 | `timezone` | char[33] | "CST-8" | 时区字符串 |
 | `motion_threshold` | uint8 | 30 | 差分百分比阈值（1-100） |
 | `motion_cooldown` | uint8 | 5 | 触发冷却（秒） |

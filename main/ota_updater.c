@@ -21,7 +21,6 @@
 #include "esp_partition.h"
 #include "esp_system.h"
 #include "esp_https_ota.h"
-#include "web_server.h"
 #include "config_manager.h"
 #include "motion_detect.h"
 #include "timelapse.h"
@@ -115,16 +114,6 @@ static void ota_quiesce_system(void)
 
 esp_err_t handler_api_ota_upload(httpd_req_t *req)
 {
-    /* Auth */
-    if (!check_auth(req)) {
-        httpd_resp_set_status(req, "401 Unauthorized");
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-        httpd_resp_send(req, "{\"ok\":false,\"error\":\"Unauthorized\"}",
-                        HTTPD_RESP_USE_STRLEN);
-        return ESP_OK;
-    }
-
     size_t content_len = req->content_len;
     const esp_partition_t *next = esp_ota_get_next_update_partition(NULL);
 
@@ -281,15 +270,6 @@ esp_err_t handler_api_ota_url(httpd_req_t *req)
 {
     ota_mutex_init();
 
-    if (!check_auth(req)) {
-        httpd_resp_set_status(req, "401 Unauthorized");
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-        httpd_resp_send(req, "{\"ok\":false,\"error\":\"Unauthorized\"}",
-                        HTTPD_RESP_USE_STRLEN);
-        return ESP_OK;
-    }
-
     if (!xSemaphoreTake(s_ota_mutex, 0)) {
         httpd_resp_set_status(req, "429 Too Many Requests");
         httpd_resp_set_type(req, "application/json");
@@ -392,16 +372,6 @@ esp_err_t handler_api_ota_url(httpd_req_t *req)
 
 esp_err_t handler_api_spiffs_upload(httpd_req_t *req)
 {
-    /* Auth */
-    if (!check_auth(req)) {
-        httpd_resp_set_status(req, "401 Unauthorized");
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-        httpd_resp_send(req, "{\"ok\":false,\"error\":\"Unauthorized\"}",
-                        HTTPD_RESP_USE_STRLEN);
-        return ESP_OK;
-    }
-
     size_t content_len = req->content_len;
 
     /* Find the SPIFFS partition */

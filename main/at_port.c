@@ -277,7 +277,6 @@ static const port_field_t s_fields[] = {
     { "wifi_pass",             AT_CFG_STR, true,  offsetof(cam_config_t, wifi_pass) },
     { "wifi_ssid_2",           AT_CFG_STR, false, offsetof(cam_config_t, wifi_ssid_2) },
     { "wifi_pass_2",           AT_CFG_STR, true,  offsetof(cam_config_t, wifi_pass_2) },
-    { "web_password",          AT_CFG_STR, true,  offsetof(cam_config_t, web_password) },
     { "timezone",              AT_CFG_STR, false, offsetof(cam_config_t, timezone) },
     { "cam_framesize",         AT_CFG_U8,  false, offsetof(cam_config_t, cam_framesize) },
     { "cam_fps",               AT_CFG_U8,  false, offsetof(cam_config_t, cam_fps) },
@@ -310,18 +309,18 @@ typedef struct { const char *name; at_cfg_type_t type; bool secret; } at_cfg_row
 static void cfg_get_device_name(char *buf, size_t len)   { field_get_generic(&s_fields[0],  buf, len); }
 static void cfg_get_wifi_ssid(char *buf, size_t len)     { field_get_generic(&s_fields[1],  buf, len); }
 static void cfg_get_wifi_ssid_2(char *buf, size_t len)   { field_get_generic(&s_fields[3],  buf, len); }
-static void cfg_get_timezone(char *buf, size_t len)      { field_get_generic(&s_fields[6],  buf, len); }
-static void cfg_get_cam_framesize(char *buf, size_t len) { field_get_generic(&s_fields[7],  buf, len); }
-static void cfg_get_cam_fps(char *buf, size_t len)       { field_get_generic(&s_fields[8],  buf, len); }
-static void cfg_get_cam_quality(char *buf, size_t len)   { field_get_generic(&s_fields[9],  buf, len); }
-static void cfg_get_cam_vflip(char *buf, size_t len)     { field_get_generic(&s_fields[10], buf, len); }
-static void cfg_get_xclk(char *buf, size_t len)          { field_get_generic(&s_fields[11], buf, len); }
-static void cfg_get_onvif(char *buf, size_t len)         { field_get_generic(&s_fields[12], buf, len); }
-static void cfg_get_motion_en(char *buf, size_t len)     { field_get_generic(&s_fields[13], buf, len); }
-static void cfg_get_motion_sens(char *buf, size_t len)   { field_get_generic(&s_fields[14], buf, len); }
-static void cfg_get_motion_cool(char *buf, size_t len)   { field_get_generic(&s_fields[15], buf, len); }
-static void cfg_get_motion_act(char *buf, size_t len)    { field_get_generic(&s_fields[16], buf, len); }
-static void cfg_get_flash_thr(char *buf, size_t len)     { field_get_generic(&s_fields[17], buf, len); }
+static void cfg_get_timezone(char *buf, size_t len)      { field_get_generic(&s_fields[5],  buf, len); }
+static void cfg_get_cam_framesize(char *buf, size_t len) { field_get_generic(&s_fields[6],  buf, len); }
+static void cfg_get_cam_fps(char *buf, size_t len)       { field_get_generic(&s_fields[7],  buf, len); }
+static void cfg_get_cam_quality(char *buf, size_t len)   { field_get_generic(&s_fields[8],  buf, len); }
+static void cfg_get_cam_vflip(char *buf, size_t len)     { field_get_generic(&s_fields[9],  buf, len); }
+static void cfg_get_xclk(char *buf, size_t len)          { field_get_generic(&s_fields[10], buf, len); }
+static void cfg_get_onvif(char *buf, size_t len)         { field_get_generic(&s_fields[11], buf, len); }
+static void cfg_get_motion_en(char *buf, size_t len)     { field_get_generic(&s_fields[12], buf, len); }
+static void cfg_get_motion_sens(char *buf, size_t len)   { field_get_generic(&s_fields[13], buf, len); }
+static void cfg_get_motion_cool(char *buf, size_t len)   { field_get_generic(&s_fields[14], buf, len); }
+static void cfg_get_motion_act(char *buf, size_t len)    { field_get_generic(&s_fields[15], buf, len); }
+static void cfg_get_flash_thr(char *buf, size_t len)     { field_get_generic(&s_fields[16], buf, len); }
 
 /* 写侧：走 config_manager 类型化 setter（含校验/落盘；凭据单写不清对端） */
 static esp_err_t cfg_set_wifi_ssid(const char *v)
@@ -339,11 +338,6 @@ static esp_err_t cfg_set_wifi_ssid_2(const char *v)
 static esp_err_t cfg_set_wifi_pass_2(const char *v)
 {
     return config_set_wifi_secondary(config_get()->wifi_ssid_2, v);
-}
-static esp_err_t cfg_set_web_password(const char *v)
-{
-    if (strlen(v) < 6) return ESP_ERR_INVALID_ARG;
-    return config_set_web_password(v);
 }
 static esp_err_t cfg_set_cam_framesize(const char *v)
 {
@@ -442,7 +436,6 @@ static const at_cfg_field_t s_cfg_fields[] = {
     { "wifi_pass",                AT_CFG_STR, true,  NULL,                 cfg_set_wifi_pass },
     { "wifi_ssid_2",              AT_CFG_STR, false, cfg_get_wifi_ssid_2,  cfg_set_wifi_ssid_2 },
     { "wifi_pass_2",              AT_CFG_STR, true,  NULL,                 cfg_set_wifi_pass_2 },
-    { "web_password",             AT_CFG_STR, true,  NULL,                 cfg_set_web_password },
     { "timezone",                 AT_CFG_STR, false, cfg_get_timezone,     cfg_set_timezone },
     { "cam_framesize",            AT_CFG_U8,  false, cfg_get_cam_framesize, cfg_set_cam_framesize },
     { "cam_fps",                  AT_CFG_U8,  false, cfg_get_cam_fps,      cfg_set_cam_fps },

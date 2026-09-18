@@ -49,7 +49,7 @@ Command "xtensa-esp32-elf-gcc" not found
    ```bash
    # Windows
    C:\Espressif\esp-idf> export.bat
-   
+
    # Linux/Mac
    source ~/esp/esp-idf/export.sh
    ```
@@ -86,7 +86,7 @@ Error: This project requires ESP-IDF v6.0 or later
    ```bash
    # 删除旧版本
    rm -rf ~/esp/esp-idf
-   
+
    # 下载 ESP-IDF v6.0
    cd ~
    mkdir esp
@@ -94,7 +94,7 @@ Error: This project requires ESP-IDF v6.0 or later
    git clone --recursive https://github.com/espressif/esp-idf.git
    cd esp-idf
    git checkout v6.0
-   
+
    # 设置环境
    ./install.sh all
    source export.sh
@@ -113,7 +113,7 @@ Error: Failed to download component...
    ```bash
    # 进入项目目录
    cd ai-thinker-esp32-cam
-   
+
    # 清理并重新构建
    idf.py clean
    idf.py build -v  # 详细输出
@@ -492,8 +492,7 @@ curl -X POST http://192.168.1.100/api/storage/init
 2. **清理空间**：
    ```bash
    # 删除旧照片
-   curl -X POST "http://192.168.1.100/api/files/cleanup?keep_days=7" \
-     -H "X-Password: mibeecam2026"
+   curl -X POST "http://192.168.1.100/api/files/cleanup?keep_days=7"
    ```
 
 3. **文件系统修复**：
@@ -534,8 +533,7 @@ curl -X POST http://192.168.1.100/api/storage/init
 2. **手动清理**：
    ```bash
    # 删除所有运动检测照片
-   curl -X POST "http://192.168.1.100/api/files/cleanup?type=motion" \
-     -H "X-Password: mibeecam2026"
+   curl -X POST "http://192.168.1.100/api/files/cleanup?type=motion"
    ```
 
 3. **使用更大的 SD 卡**：
@@ -612,7 +610,6 @@ curl -X POST http://192.168.1.100/api/storage/init
 # 通过 Web 界面启用调试
 curl -X POST "http://192.168.1.100/api/config/update" \
   -H "Content-Type: application/json" \
-  -H "X-Password: mibeecam2026" \
   -d '{"system":{"debug_level":3}}'
 ```
 
@@ -636,8 +633,7 @@ curl -X POST "http://192.168.1.100/api/config/update" \
 # 发送：reset full
 
 # 或通过 API
-curl -X POST "http://192.168.1.100/api/reset?mode=full" \
-  -H "X-Password: mibeecam2026"
+curl -X POST "http://192.168.1.100/api/reset?mode=full"
 ```
 
 #### 手动固件重刷

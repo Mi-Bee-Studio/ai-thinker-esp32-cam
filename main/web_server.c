@@ -6,20 +6,19 @@
  * Endpoints:
  *   GET  /api/status   — Device status JSON
  *   GET  /api/config   — Current config JSON (passwords excluded)
- *   POST /api/config   — Partial config update (password-protected, SET_PASSWORD_FIRST support)
- *   POST /api/reset    — Reset config to defaults (password-protected)
- *   POST /api/reboot   — Reboot device after 1s delay (password-protected)
+ *   POST /api/config   — Partial config update
+ *   POST /api/reset    — Reset config to defaults
+ *   POST /api/reboot   — Reboot device after 1s delay
  *   GET  /api/capture  — Single JPEG frame capture
  *   GET  /stream       — MJPEG video stream (via mjpeg_streamer)
  *   GET  /metrics      — Prometheus-format metrics
  *   GET  /api/files    — List SD card photos
  *   GET  /api/download — Download photo file
- *   DELETE /api/files  — Delete SD card file (password-protected)
- *   POST /api/led      — Flash LED control (password-protected)
+ *   DELETE /api/files  — Delete SD card file
+ *   POST /api/led      — Flash LED control
  *   GET  /api/capabilities — Board capability flags
- *   GET  /api/auth     — Validate password
  *   GET/POST /api/timelapse (/) — Timelapse control
- *   POST /api/record   — Recording control (password-protected)
+ *   POST /api/record   — Recording control
  *   GET  /api/record   — Recording status
  *   GET  /api/storage   — SD card storage info
  *   POST /api/format   — Format SD card
@@ -32,7 +31,7 @@
  *
  *   Route table (s_uris[]) .... every HTTP endpoint in one place — start
  *                               here to answer "what URI is handled where"
- *   Helpers ................... auth (X-Password), CORS, JSON envelope
+ *   Helpers ................... CORS, JSON envelope (无设备级认证，契约 v1.9)
  *   Handlers .................. one static esp_err_t handler_*() per
  *                               endpoint, same names as the table
  *   web_server_init/start ..... httpd config + registration loop
@@ -89,7 +88,6 @@ static httpd_handle_t s_server = NULL;
 
 /* Forward declarations for helper functions */
 static esp_err_t send_json_error(httpd_req_t *req, const char *msg, int http_code);
-static esp_err_t send_unauthorized(httpd_req_t *req);
 static char *read_body(httpd_req_t *req, size_t max_len);
 
 /* ------------------------------------------------------------------ */
@@ -117,7 +115,6 @@ static esp_err_t handler_api_files(httpd_req_t *req);
 static esp_err_t handler_api_files_delete(httpd_req_t *req);
 static esp_err_t handler_api_files_batch(httpd_req_t *req);
 static esp_err_t handler_api_download(httpd_req_t *req);
-static esp_err_t handler_api_auth(httpd_req_t *req);
 static esp_err_t handler_api_scan(httpd_req_t *req);
 static esp_err_t handler_api_capabilities(httpd_req_t *req);
 static esp_err_t handler_api_time(httpd_req_t *req);
@@ -148,7 +145,6 @@ static const uri_entry_t s_uris[] = {
     { "/api/files",    HTTP_DELETE, handler_api_files_delete  },
     { "/api/files/batch", HTTP_POST, handler_api_files_batch  },
     { "/api/download", HTTP_GET,    handler_api_download     },
-    { "/api/auth",     HTTP_GET,    handler_api_auth         },
     { "/api/scan",     HTTP_GET,    handler_api_scan         },
     { "/api/capabilities", HTTP_GET, handler_api_capabilities  },
     /* 契约 v1.3：补齐 §2 核心端点 POST /api/time（此前缺席，家族唯一缺口） */
@@ -203,60 +199,9 @@ static void set_cors_headers(httpd_req_t *req)
 {
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type, X-Password");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type");
     httpd_resp_set_hdr(req, "Access-Control-Max-Age", "86400");
 }
-/** @brief Check X-Password header against stored web_password */
-bool check_auth(httpd_req_t *req)
-{
-    char password[64] = {0};
-    if (httpd_req_get_hdr_value_str(req, "X-Password", password, sizeof(password)) == ESP_OK) {
-        const cam_config_t *cfg = config_get();
-        if (strcmp(password, cfg->web_password) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
-/** @brief Auth helper for write operations - implements SET_PASSWORD_FIRST state machine */
-static esp_err_t require_auth(httpd_req_t *req, const char *uri)
-{
-    const cam_config_t *cfg = config_get();
-
-    /* State A: web_password is empty - only POST /api/config with web_password field is allowed */
-    if (strlen(cfg->web_password) == 0) {
-        if (req->method == HTTP_POST && strcmp(uri, "/api/config") == 0) {
-            /* Check if body contains web_password field */
-            char *body = read_body(req, 2048);
-            if (!body) {
-                return send_json_error(req, "empty or invalid body", 400);
-            }
-            cJSON *json = cJSON_Parse(body);
-            free(body);
-            if (!json) {
-                return send_json_error(req, "invalid JSON", 400);
-            }
-            cJSON *pw_item = cJSON_GetObjectItem(json, "web_password");
-            bool has_password = (pw_item && cJSON_IsString(pw_item));
-            cJSON_Delete(json);
-            if (!has_password) {
-                return send_json_error(req, "SET_PASSWORD_FIRST", 401);
-            }
-            /* Allow request to proceed - handler will set the password */
-            return ESP_OK;
-        }
-        /* All other write operations return SET_PASSWORD_FIRST */
-        return send_json_error(req, "SET_PASSWORD_FIRST", 401);
-    }
-
-    /* State B: web_password is set - require X-Password header */
-    if (!check_auth(req)) {
-        return send_unauthorized(req);
-    }
-    return ESP_OK;
-}
-
 
 /** @brief Send JSON response {"ok":true,"data":...} with CORS */
 static esp_err_t send_json_ok(httpd_req_t *req, cJSON *data)
@@ -314,12 +259,6 @@ static char *read_body(httpd_req_t *req, size_t max_len)
     }
     buf[ret] = '\0';
     return buf;
-}
-
-/** @brief Send 401 unauthorized JSON */
-static esp_err_t send_unauthorized(httpd_req_t *req)
-{
-    return send_json_error(req, "unauthorized", 401);
 }
 
 /* ------------------------------------------------------------------ */
@@ -600,26 +539,6 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
         return send_json_error(req, "invalid JSON", 400);
     }
 
-    /* Auth check - handle SET_PASSWORD_FIRST state machine */
-    const cam_config_t *cfg = config_get();
-    bool password_is_empty = (strlen(cfg->web_password) == 0);
-    if (password_is_empty) {
-        /* Only allow if body contains web_password field */
-        cJSON *pw_item = cJSON_GetObjectItem(json, "web_password");
-        if (!(pw_item && cJSON_IsString(pw_item) && strlen(pw_item->valuestring) > 0)) {
-            cJSON_Delete(json);
-            return send_json_error(req, "SET_PASSWORD_FIRST", 401);
-        }
-        /* Allow request to proceed - password will be set in handler below */
-    } else {
-        /* Password is set - require X-Password header */
-        if (!check_auth(req)) {
-            cJSON_Delete(json);
-            ESP_LOGW(TAG, "POST /api/config: AUTH FAILED");
-            return send_unauthorized(req);
-        }
-    }
-
     cJSON *item;
     bool need_save = false;
     bool wifi_changed = false;
@@ -733,16 +652,6 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
             cJSON_Delete(json);
             return send_json_error(req, "camera apply failed", 500);
         }
-    }
-
-    /* Web password (has dedicated setter) */
-    if ((item = cJSON_GetObjectItem(json, "web_password")) && cJSON_IsString(item)) {
-        /* 契约 v1.1：拒绝空/过短密码 */
-        if (strlen(item->valuestring) < 6) {
-            cJSON_Delete(json);
-            return send_json_error(req, "web_password must be at least 6 characters", HTTPD_400_BAD_REQUEST);
-        }
-        config_set_web_password(item->valuestring);
     }
 
     /* Timezone (no dedicated setter, apply immediately) */
@@ -1096,11 +1005,6 @@ static esp_err_t handler_api_config_post(httpd_req_t *req)
 
 static esp_err_t handler_api_reset(httpd_req_t *req)
 {
-    esp_err_t auth_ret = require_auth(req, "/api/reset");
-    if (auth_ret != ESP_OK) {
-        return auth_ret;
-    }
-
     ESP_LOGW(TAG, "Factory reset requested via web API");
     config_reset();
 
@@ -1115,11 +1019,6 @@ static esp_err_t handler_api_reset(httpd_req_t *req)
 
 static esp_err_t handler_api_reboot(httpd_req_t *req)
 {
-    esp_err_t auth_ret = require_auth(req, "/api/reboot");
-    if (auth_ret != ESP_OK) {
-        return auth_ret;
-    }
-
     ESP_LOGW(TAG, "Reboot requested via web API");
 
     /* Send response before rebooting */
@@ -1141,11 +1040,6 @@ static esp_err_t handler_api_reboot(httpd_req_t *req)
  *  背景执行，进度见串口日志。 */
 static esp_err_t handler_api_csi_calibrate(httpd_req_t *req)
 {
-    esp_err_t auth_ret = require_auth(req, "/api/csi/calibrate");
-    if (auth_ret != ESP_OK) {
-        return auth_ret;
-    }
-
     esp_err_t ret = csi_motion_recalibrate();
     if (ret == ESP_ERR_NOT_SUPPORTED) {
         return send_json_error(req, "CSI sensing not built", HTTPD_404_NOT_FOUND);
@@ -1290,11 +1184,6 @@ static const char *current_recording_relname(void)
 
 static esp_err_t handler_api_files_delete(httpd_req_t *req)
 {
-    esp_err_t auth_ret = require_auth(req, "/api/files");
-    if (auth_ret != ESP_OK) {
-        return auth_ret;
-    }
-
     char query[256] = {0};
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
         return send_json_error(req, "missing query parameter", 400);
@@ -1355,11 +1244,6 @@ static esp_err_t handler_api_files_delete(httpd_req_t *req)
 
 static esp_err_t handler_api_files_batch(httpd_req_t *req)
 {
-    esp_err_t auth_ret = require_auth(req, "/api/files/batch");
-    if (auth_ret != ESP_OK) {
-        return auth_ret;
-    }
-
     if (!storage_is_available()) {
         return send_json_error(req, "SD card not available", 503);
     }
@@ -1539,10 +1423,6 @@ static esp_err_t handler_api_download(httpd_req_t *req)
 
 static esp_err_t handler_api_led(httpd_req_t *req)
 {
-    esp_err_t auth_ret = require_auth(req, "/api/led");
-    if (auth_ret != ESP_OK) {
-        return auth_ret;
-    }
     set_cors_headers(req);
 
     /* 契约 v1.1 主语义：JSON body {"brightness":0-100}（0=灭，>0=亮）；
@@ -1604,7 +1484,7 @@ static esp_err_t handler_api_capabilities(httpd_req_t *req)
 
     cJSON *data = cJSON_CreateObject();
     /* 契约 v1.0：12 个布尔能力位 + api_version/wifi_scan（见 docs/api-contract.md） */
-    cJSON_AddStringToObject(data, "api_version", "1.8");
+    cJSON_AddStringToObject(data, "api_version", "1.9");
     cJSON_AddBoolToObject(data, "wifi_scan", true);
     /* ai-thinker capabilities matrix */
     cJSON_AddBoolToObject(data, "ai", false);
@@ -1626,21 +1506,6 @@ static esp_err_t handler_api_capabilities(httpd_req_t *req)
     cJSON_AddBoolToObject(data, "csi_motion", true);
 #endif
     return send_json_ok(req, data);
-}
-
-
-/* ------------------------------------------------------------------ */
-
-/* ------------------------------------------------------------------ */
-/*  GET /api/auth  - Validate password (returns 200 or 401)            */
-/* ------------------------------------------------------------------ */
-
-static esp_err_t handler_api_auth(httpd_req_t *req)
-{
-    if (check_auth(req)) {
-        return send_json_ok(req, NULL);
-    }
-    return send_unauthorized(req);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1701,10 +1566,6 @@ static esp_err_t handler_api_camera_get(httpd_req_t *req)
 
 static esp_err_t handler_api_camera_post(httpd_req_t *req)
 {
-    esp_err_t auth_ret = require_auth(req, "/api/camera");
-    if (auth_ret != ESP_OK) {
-        return auth_ret;
-    }
     set_cors_headers(req);
 
     char *body = read_body(req, 2048);
@@ -1782,11 +1643,6 @@ static esp_err_t handler_api_led_get(httpd_req_t *req)
 
 static esp_err_t handler_api_time(httpd_req_t *req)
 {
-    esp_err_t auth_ret = require_auth(req, "/api/time");
-    if (auth_ret != ESP_OK) {
-        return auth_ret;
-    }
-
     char *body = read_body(req, 256);
     if (!body) {
         return send_json_error(req, "Empty body", 400);
@@ -1836,11 +1692,6 @@ static esp_err_t handler_api_time(httpd_req_t *req)
 
 static esp_err_t handler_api_format(httpd_req_t *req)
 {
-    esp_err_t auth_ret = require_auth(req, "/api/format");
-    if (auth_ret != ESP_OK) {
-        return auth_ret;
-    }
-
     if (!storage_is_available()) {
         return send_json_error(req, "SD card not available", 503);
     }
@@ -1894,11 +1745,6 @@ static esp_err_t handler_api_storage(httpd_req_t *req)
 
 static esp_err_t handler_api_record_post(httpd_req_t *req)
 {
-    esp_err_t auth_ret = require_auth(req, "/api/record");
-    if (auth_ret != ESP_OK) {
-        return auth_ret;
-    }
-
     char query[64] = {0};
     char action[16] = {0};
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
