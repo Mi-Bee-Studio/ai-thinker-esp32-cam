@@ -1610,6 +1610,29 @@ static esp_err_t handler_api_camera_post(httpd_req_t *req)
     }
     /* cam_hmirror / cam_brightness / cam_contrast / cam_saturation /
      * cam_sharpness are accepted but not persisted — see file header note. */
+
+    /* 未知键回显（契约 v1.9 §5，issue n16r8#27 家族部分）：静默 ok:true
+     * 曾让 "quality" 这类裸键的拼写错误排障半天——现在点名 WARN +
+     * 响应带 ignored 键集（本 handler 实际接受的键即已知集，含上面
+     * accepted-but-ignored 的 SPA 兼容键） */
+    static const char *known_keys[] = {
+        "cam_framesize", "cam_quality", "cam_vflip", "cam_hmirror",
+        "cam_brightness", "cam_contrast", "cam_saturation", "cam_sharpness",
+    };
+    cJSON *ignored = cJSON_CreateArray();
+    for (cJSON *child = json->child; child; child = child->next) {
+        if (!child->string) continue;   /* 顶层非对象（数组等）：无键名可点名 */
+        bool known = false;
+        for (size_t i = 0; i < sizeof(known_keys) / sizeof(known_keys[0]); i++) {
+            if (strcmp(child->string, known_keys[i]) == 0) { known = true; break; }
+        }
+        if (!known) cJSON_AddItemToArray(ignored, cJSON_CreateString(child->string));
+    }
+    if (cJSON_GetArraySize(ignored) > 0) {
+        char *names = cJSON_PrintUnformatted(ignored);
+        ESP_LOGW(TAG, "POST /api/camera ignored unknown keys: %s", names ? names : "?");
+        free(names);
+    }
     cJSON_Delete(json);
 
     if (need_apply) {
@@ -1621,6 +1644,7 @@ static esp_err_t handler_api_camera_post(httpd_req_t *req)
     }
 
     cJSON *data = cJSON_CreateObject();
+    cJSON_AddItemToObject(data, "ignored", ignored);
     return send_json_ok(req, data);
 }
 
