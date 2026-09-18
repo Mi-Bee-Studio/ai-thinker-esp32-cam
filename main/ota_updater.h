@@ -26,8 +26,6 @@ esp_err_t handler_api_ota_info(httpd_req_t *req);
  * Accepts a raw application/octet-stream body (the .bin firmware image),
  * streams it to the inactive OTA partition, validates, sets boot partition,
  * and reboots.
- *
- * Requires X-Password header for authentication.
  */
 esp_err_t handler_api_ota_upload(httpd_req_t *req);
 
@@ -36,8 +34,6 @@ esp_err_t handler_api_ota_upload(httpd_req_t *req);
  *
  * Accepts a raw SPIFFS image binary, erases and writes it to the SPIFFS
  * partition, then reboots. Used for updating the Web UI without serial flash.
- *
- * Requires X-Password header for authentication.
  */
 esp_err_t handler_api_spiffs_upload(httpd_req_t *req);
 
@@ -47,8 +43,6 @@ esp_err_t handler_api_spiffs_upload(httpd_req_t *req);
  * Accepts {"url":"http://..."} and pulls the firmware image over HTTP,
  * writes it to the inactive OTA partition and reboots. Only http:// URLs
  * (LAN distribution). Same semantics as n16r8/seeed.
- *
- * Requires X-Password header for authentication.
  */
 esp_err_t handler_api_ota_url(httpd_req_t *req);
 

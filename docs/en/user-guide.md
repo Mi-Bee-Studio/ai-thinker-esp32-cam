@@ -48,7 +48,6 @@ Full device configuration interface:
 - **Camera Settings**: Resolution, frame rate, JPEG quality
 - **Motion Detection**: Threshold, cooldown period
 - **Time Settings**: Timezone, NTP server
-- **Security**: Web password (optional)
 
 #### 4. Files (`/files.html`)
 Photo file management:
@@ -333,8 +332,9 @@ reset
 
 ### Network Security
 - **WiFi encryption**: WPA2 recommended
-- **Web interface**: Password protection optional but recommended
-- **API access**: No authentication for read-only endpoints
+- **Device password**: None since firmware v1.9 (contract v1.9) — the web
+  interface and all API endpoints are open on the trusted LAN; the trust
+  boundary is your router's WPA2 key
 
 ### Data Security
 - **Photos**: Stored locally on SD card

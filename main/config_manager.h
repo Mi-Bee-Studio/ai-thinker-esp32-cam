@@ -71,11 +71,6 @@ esp_err_t config_set_allow_ap_fallback(uint8_t allow);
 esp_err_t config_set_resolution(camera_resolution_t res);
 
 /**
- * @brief Set web UI password, save immediately
- */
-esp_err_t config_set_web_password(const char *pass);
-
-/**
  * @brief Set motion detection settings (家族超集模型，契约 §3.2), save immediately
  * @param enabled 1=on
  * @param sensitivity 0-100, higher = more sensitive（旧 threshold 迁移: 100-t）
@@ -203,17 +198,10 @@ esp_err_t config_load_from_sd(void);
 /**
  * @brief Export current config as JSON object
  * Returns a cJSON* with all config keys using unified cam_* names.
- * Password field (web_password) is masked as empty string.
  * CALLER MUST cJSON_Delete() the returned object when done.
  * @return cJSON* object, or NULL on allocation failure
  */
 cJSON *config_get_json(void);
-
-/**
- * @brief Get web UI password pointer
- * @return const pointer to stored password (valid until next save)
- */
-const char *config_get_web_password(void);
 
 #ifdef __cplusplus
 }

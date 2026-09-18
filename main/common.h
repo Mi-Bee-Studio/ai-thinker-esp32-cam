@@ -9,12 +9,10 @@
 /* 家族配置契约 v1.0（docs/config-contract.md）：持久化为逐键 NVS（mibee_cfg
  * 命名空间 + schema_ver 版本键），不再使用 blob+magic。legacy blob（V16 及
  * 更早）由 config_manager.c 的一次性迁移函数翻译。 */
-#define CONFIG_SCHEMA_VERSION 1
+#define CONFIG_SCHEMA_VERSION 2   /* v2.0：web_password 删除（契约 v2.0，2026-09-18） */
 
 // Default values
 #define CONFIG_DEFAULT_TIMEZONE     "CST-8"
-/* 契约 v1.1：家族统一默认管理密码（公开默认 mibeecam2026，本地可在 gitignored sdkconfig 覆盖） */
-#define CONFIG_DEFAULT_WEB_PASSWORD CONFIG_MIBEE_CAM_DEFAULT_WEB_PASSWORD
 #define CONFIG_DEFAULT_DEVICE_NAME  "MiBeeCam"
 #define CONFIG_DEFAULT_AP_SSID      "MiBeeCam"
 #define CONFIG_DEFAULT_AP_PASS      "mibeecam2026"
@@ -89,7 +87,6 @@ typedef struct {
     uint8_t cam_framesize;             /* framesize_t 刻度（10-15，见上） */
     uint8_t cam_fps;                   /* 1-30，default 15 */
     uint8_t cam_quality;               /* 10-63（PIT-021），default 12 */
-    char web_password[33];
     char timezone[33];
     /* 家族 motion 超集模型（契约 §3.2）：sensitivity 越大越灵敏；
      * 旧 motion_threshold 迁移为 sensitivity = 100 - threshold */

@@ -346,7 +346,7 @@ curl http://<ip>/api/status
 
 **API Troubleshooting**:
 - **Server running**: Check "Web server started" in serial
-- **Authentication**: Some endpoints require password
+- **Authentication**: None required — since firmware v1.9 there is no device password (trust boundary = router WPA2)
 - **CORS**: Check browser console for CORS errors
 - **Content-Type**: Ensure proper headers for POST requests
 
@@ -440,7 +440,6 @@ curl http://<ip>/metrics | grep heap_free
 
 **Solutions**:
 - **Web interface**: Go to Configuration page → Reset to Defaults
-- **API endpoint**: `curl -X POST http://<device-ip>/api/reset -H "X-Password: mibeecam2026"`
 - **Serial command**: Type `reset` in serial monitor
 
 **Note**: GPIO0 serves as camera master clock (XCLK) and cannot be used as a general-purpose button.
@@ -506,7 +505,7 @@ curl http://<ip>/api/status | grep heap
 ```
 
 ### Factory Reset Procedure
-1. **Via Web Interface**: 
+1. **Via Web Interface**:
    - Go to Configuration page
    - Click "Reset to Defaults"
    - Confirm and reboot

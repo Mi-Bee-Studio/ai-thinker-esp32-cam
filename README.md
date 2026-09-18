@@ -150,7 +150,6 @@ curl -X POST http://DEVICE_IP/api/reset
 | GET | `/api/ota/info` | OTA partition info |
 | POST | `/api/ota/upload` | Upload firmware (OTA) |
 | POST | `/api/ota/spiffs` | Upload Web UI (SPIFFS OTA) |
-| GET | `/api/auth` | Verify password |
 
 ---
 
@@ -238,10 +237,14 @@ All settings are stored in NVS with version 9 schema and accessible via web UI (
 ### Device Settings
 ```json
 {
-  "device_name": "MiBeeCam",
-  "web_password": "optional_ui_password"
+  "device_name": "MiBeeCam"
 }
 ```
+
+> **Note**: Since firmware v1.9 (contract v1.9) there is **no device-level web
+> password** — all endpoints are open on the trusted LAN; the trust boundary is
+> your router's WPA2 key. (The AP-mode WiFi passphrase `mibeecam2026` above is
+> unaffected.)
 
 ### Camera Configuration
 ```json
