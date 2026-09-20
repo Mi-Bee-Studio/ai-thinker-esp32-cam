@@ -18,8 +18,7 @@ idf_component_register(
         "video_recorder.c"
         "at_command.c"
         "at_port.c"
-        "onvif_discovery.c"
-        "onvif_service.c"
+        "onvif_port.c"
         "frame_broadcaster.c"
         "sd_log.c"
         "ota_updater.c"
@@ -30,6 +29,7 @@ idf_component_register(
         "csi_motion.cpp" "wifi_channel_health.c"
     INCLUDE_DIRS "."
     REQUIRES
+        onvif-c
         esp_wifi
         nvs_flash
         esp_http_server
