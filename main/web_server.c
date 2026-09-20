@@ -177,13 +177,31 @@ static const uri_entry_t s_uris[] = {
  * 设备侧页面轮询。现在每个 404 都记 方法+URI+peer IP。 */
 static void log_404_peer(httpd_req_t *req)
 {
-    char ipstr[INET_ADDRSTRLEN] = "?";
+    /* 根因修正（2026-09-20 实测 n16r8 .134，本 issue）：IDF v6 双栈 httpd
+     * 会话的 IPv4 对端以 v4-mapped 返回（fam=AF_INET6）——按 sockaddr_in
+     * 解析必得 0.0.0.0，必须 sockaddr_storage 判族。 */
+    char ipstr[INET6_ADDRSTRLEN] = "?";
     int fd = httpd_req_to_sockfd(req);
     if (fd >= 0) {
-        struct sockaddr_in peer;
-        socklen_t plen = sizeof(peer);
-        if (getpeername(fd, (struct sockaddr *)&peer, &plen) == 0) {
-            inet_ntop(AF_INET, &peer.sin_addr, ipstr, sizeof(ipstr));
+        struct sockaddr_storage ss;
+        socklen_t plen = sizeof(ss);
+        const void *addr = NULL;
+        if (getpeername(fd, (struct sockaddr *)&ss, &plen) == 0) {
+            if (ss.ss_family == AF_INET) {
+                addr = &((struct sockaddr_in *)&ss)->sin_addr;
+            } else if (ss.ss_family == AF_INET6) {
+                addr = &((struct sockaddr_in6 *)&ss)->sin6_addr;
+            }
+        }
+        if (addr) {
+            char abuf[INET6_ADDRSTRLEN];
+            if (inet_ntop(ss.ss_family, addr, abuf, sizeof(abuf)) != NULL) {
+                const char *p = abuf;
+                if (strncasecmp(p, "::ffff:", 7) == 0) {
+                    p += 7;   /* v4-mapped → 报 IPv4 文本（lwIP 大写） */
+                }
+                strlcpy(ipstr, p, sizeof(ipstr));
+            }
         }
     }
     ESP_LOGW(TAG, "404: %s %s from %s",
