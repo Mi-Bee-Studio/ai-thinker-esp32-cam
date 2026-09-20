@@ -33,8 +33,7 @@
 #include "timelapse.h"
 #include "video_recorder.h"
 #include "at_command.h"
-#include "onvif_discovery.h"
-#include "onvif_service.h"
+#include "onvif_port.h"
 #include "frame_broadcaster.h"
 #include "sd_log.h"
 #include "flash_viewers.h"
@@ -172,14 +171,16 @@ static void sta_services_task(void *arg)
     csi_motion_init();
     wifi_channel_health_init();   /* 契约 v1.7 ①b：信道健康感知（CSI 无关，四仓共享） */
 
-    /* Start ONVIF WS-Discovery (once) — after web server so SOAP handlers are registered.
-     * 契约核心字段 onvif_enable（本板默认 1；关闭时不启动发现，SOAP 处理器
-     * 在 web_server_start 内同受门控） */
-    if (config_get()->onvif_enable) {
-        onvif_discovery_init();
-        ESP_LOGI(TAG, "ONVIF discovery started");
-    } else {
-        ESP_LOGI(TAG, "ONVIF disabled in config (onvif_enable=0)");
+    /* Start ONVIF (once) — after web server: the onvif-c component registers
+     * its own SOAP handlers on the running httpd. 契约核心字段 onvif_enable
+     * （本板默认 1；关闭时组件整体不启动，SOAP 端点随之缺席） */
+    {
+        esp_err_t onvif_err = onvif_port_start();
+        if (onvif_err == ESP_OK) {
+            ESP_LOGI(TAG, "ONVIF service started (WS-Discovery + mDNS)");
+        } else {
+            ESP_LOGI(TAG, "ONVIF service skipped: %s", esp_err_to_name(onvif_err));
+        }
     }
 
     /* Start motion detection (once) — 契约 §3.2：motion_enabled=0 不启动任务 */

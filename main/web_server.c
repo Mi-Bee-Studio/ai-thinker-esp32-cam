@@ -62,7 +62,6 @@
 #include "esp_heap_caps.h"   /* free_psram：本板有 4MB PSRAM（2026-09-04 API 对齐三姐妹板） */
 
 #include "video_recorder.h"
-#include "onvif_service.h"
 #include "frame_broadcaster.h"
 #include "esp_wifi.h"
 #include "sd_log.h"
@@ -2094,9 +2093,6 @@ esp_err_t web_server_start(uint16_t port)
 
     /* Register /stream and WebSocket BEFORE wildcards (wildcard would block them) */
     /* MJPEG streamer is now independent TCP server on port 81, no httpd registration */
-
-    /* Register ONVIF SOAP service handlers */
-    onvif_register_handlers(s_server);
 
     /* Now register wildcard handlers */
     for (size_t i = 0; i < NUM_URIS; i++) {
