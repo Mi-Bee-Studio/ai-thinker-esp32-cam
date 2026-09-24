@@ -19,6 +19,7 @@
 
 #include "common.h"
 #include "config_manager.h"
+#include "watchdog.h"
 #include "status_led.h"
 #include "wifi_manager.h"
 #include "csi_motion.h"
@@ -291,6 +292,7 @@ static void wifi_state_cb(wifi_state_t state, void *user_data)
  * --------------------------------------------------------------------------- */
 void app_main(void)
 {
+    watchdog_init();
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, "  MiBee Cam");
     ESP_LOGI(TAG, "========================================");

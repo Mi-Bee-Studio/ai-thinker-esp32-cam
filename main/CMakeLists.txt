@@ -26,7 +26,7 @@ idf_component_register(
         "lm_motion.c"
         "lm_jpeg.c"
         "lm_dark_probe.c"
-        "csi_motion.cpp" "wifi_channel_health.c"
+        "csi_motion.cpp" "wifi_channel_health.c" "watchdog.c"
     INCLUDE_DIRS "."
     REQUIRES
         onvif-c
