@@ -17,6 +17,7 @@
  */
 
 #include "frame_broadcaster.h"
+#include "watchdog.h"
 #include "camera_driver.h"
 #include "mjpeg_streamer.h"
 #include "config_manager.h"
@@ -140,8 +141,10 @@ static void producer_task(void *arg)
 {
     ESP_LOGI(TAG, "Producer task started on core %d (%u fps)",
              xPortGetCoreID(), BROKER_FPS);
+    watchdog_register_current("bcast");
 
     while (s_running) {
+        watchdog_feed_current();
         /* Skip if camera not ready (reinit in progress or not started) */
         if (!camera_is_initialized()) {
             vTaskDelay(pdMS_TO_TICKS(200));

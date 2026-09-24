@@ -39,6 +39,7 @@
  * Behavior contracts: docs/api-contract.md (family-wide, versioned).
  */
 #include "web_server.h"
+#include "watchdog.h"
 #include "esp_log.h"
 #include "esp_http_server.h"
 #include "esp_system.h"
@@ -302,6 +303,7 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     const esp_app_desc_t *app_desc = esp_app_get_description();
     cJSON_AddStringToObject(data, "firmware_version",
         (app_desc && app_desc->version[0]) ? app_desc->version : "unknown");
+    watchdog_attach_status(data);
 
     /* CSI 实时快照（契约 v1.6/v1.7；本板 CSI 门开生产形态——此前缺失，
      * 2026-09-10 补齐与 seeed/n16r8 同款字段集；门关时恒缺省） */
@@ -1501,7 +1503,7 @@ static esp_err_t handler_api_capabilities(httpd_req_t *req)
 
     cJSON *data = cJSON_CreateObject();
     /* 契约 v1.0：12 个布尔能力位 + api_version/wifi_scan（见 docs/api-contract.md） */
-    cJSON_AddStringToObject(data, "api_version", "1.9");
+    cJSON_AddStringToObject(data, "api_version", "1.10");
     cJSON_AddBoolToObject(data, "wifi_scan", true);
     /* ai-thinker capabilities matrix */
     cJSON_AddBoolToObject(data, "ai", false);
