@@ -25,6 +25,8 @@
 #include "esp_heap_caps.h"
 #include "lwip/sockets.h"
 #include "lwip/inet.h"
+#include "web_server.h"
+#include "lwip/inet.h"
 
 static const char *TAG = "health_monitor";
 
@@ -151,6 +153,39 @@ static void health_collect_metrics(void)
     s_frames_dropped = recorder_get_frames_dropped();
 }
 
+/* PIT-052 后续：socket 表卡满时探针判"应用层死"仍会触发兜底重启（有界自愈，
+ * 设计如此），但占用者不可见。失败到 3/6 时转储 httpd 会话与对端——下次
+ * 卡表即可点名谁占着表（半开连接/扫描器/NVR），供针对性修复。 */
+static void log_socket_holders(void)
+{
+    httpd_handle_t h = web_server_get_handle();
+    if (!h) {
+        ESP_LOGW(TAG, "diag: httpd handle NULL");
+        return;
+    }
+    int fds[16];
+    size_t count = sizeof(fds) / sizeof(fds[0]);
+    if (httpd_get_client_list(h, &count, fds) != ESP_OK) {
+        ESP_LOGW(TAG, "diag: httpd_get_client_list failed");
+        return;
+    }
+    ESP_LOGW(TAG, "diag: httpd sessions=%u mjpeg_clients=%d rssi=%d int_free=%u",
+             (unsigned)count, mjpeg_streamer_get_client_count(),
+             (int)s_metrics.wifi_rssi,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    for (size_t i = 0; i < count; i++) {
+        struct sockaddr_in sa;
+        socklen_t sl = sizeof(sa);
+        char ip[16] = "?";
+        int port = 0;
+        if (getpeername(fds[i], (struct sockaddr *)&sa, &sl) == 0) {
+            strncpy(ip, inet_ntoa(sa.sin_addr), sizeof(ip) - 1);
+            port = ntohs(sa.sin_port);
+        }
+        ESP_LOGW(TAG, "diag: fd=%d peer=%s:%d", fds[i], ip, port);
+    }
+}
+
 static void health_timer_callback(void *arg)
 {
     (void)arg;
@@ -190,6 +225,9 @@ static void health_timer_callback(void *arg)
     } else {
         httpd_resource_streak = 0;
         httpd_stuck_count++;
+        if (httpd_stuck_count == 3) {
+            log_socket_holders();
+        }
         ESP_LOGW(TAG, "httpd :80 probe failed (%d/6)", httpd_stuck_count);
         if (httpd_stuck_count >= 6) {
             ESP_LOGE(TAG, "httpd :80 unresponsive for 60s — rebooting");
