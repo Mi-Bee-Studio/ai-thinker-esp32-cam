@@ -631,3 +631,24 @@ PIT-037 修复后弱链 OTA 实测两轮全通，断链 56 竞态=镜像已写�
   NVS 的 flash_viewers=1 跨刷机保留。浏览器后端本会话不可用（无
   IAB/CDP），UI 行为按 curl 等效验收（md5+标记+逻辑三处 grep），用户
   下次打开 Web 即可在 Light 页看到"有人观看时亮灯"开关（中英文随语言）。
+
+## 2026-09-29：EMFILE 探针双通道（PR #28）+ 本地 main 分叉事故记录
+
+- **EMFILE 重启循环修复**（PIT-052）：serialtap 三日实证每日 17-41 次
+  `rst:0xc`，签名链 `wifi:mem fail → accept(23) → probe failed 6/6 →
+  reboot`。根因=弱窗 socket 表饱和时**探针自身 socket() 即 EMFILE** 被误判
+  "httpd 死"（WiFi 掉线门挡不住，因失败时 WiFi 在线）。修复：探针三分类
+  （`PROBE_OK / PROBE_NO_RESOURCE / PROBE_APP_DEAD`）——资源紧张走 30 周期
+  5min 慢通道容忍饱和窗自愈，TCP 通而应用层无响应维持 60s 快通道。
+  新签名 `httpd probe starved (streak N/30)` 出现属预期。上板后零真实重启。
+- **本地 main 分叉事故**（PIT-053）：9/13 会话遗留的本地合并线（6a654d4）
+  与 origin/main（484e9ca，v1.10）分叉且无上游追踪，status 短格式静默——
+  9/26 曾误据其构建 OTA **把板子从 v1.10 降级到 v1.7 线**。已 reset 对齐
+  并重刷真 main+修复（`v0.2.0-68-gb33d381`）。分叉线夹带的 AGENTS.md 真实
+  SSID（38dbf08 误植）未推送未外泄，CI scan 在 PR 上拦截实锤后随 reset 消灭。
+- **部署纪律增补**：构建前 `git fetch && git rev-list --count
+  HEAD..origin/main` 显式核对（已入 PITFALLS §3 通用规则）。
+- **本机环境更新**：`gh auth setup-git` 已装凭据助手，HTTPS push/PR 全通
+  （旧"SSH 推送被挡"不再是障碍）；serialtap 守护常驻（systemd user 服务，
+  CH340=ai-cam，日志 `~/serialtap-logs/`，面板 127.0.0.1:8801，刷机走
+  `serialtap flash` 代理防抢口）。
