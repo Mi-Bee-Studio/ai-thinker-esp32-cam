@@ -15,6 +15,7 @@
 #include "timelapse.h"
 #include <inttypes.h>
 #include <stdio.h>
+#include <errno.h>
 #include <time.h>
 #include <sys/time.h>
 #include "video_recorder.h"
@@ -44,10 +45,20 @@ static recorder_state_t s_recording_state;
  * enough: LWIP accepts the connection at the TCP layer even when httpd
  * has no free worker to process it. Sending a real HTTP request forces a
  * worker to handle it, proving the event loop is alive. */
-static bool probe_httpd_port80(void)
+typedef enum {
+    PROBE_OK,          /* 完整 HTTP 应答 */
+    PROBE_APP_DEAD,    /* TCP 通但应用层无响应（worker 卡死/连不上/拒连） */
+    PROBE_NO_RESOURCE, /* 探针自身拿不到资源（EMFILE/ENOBUFS/ENOMEM）——
+                          socket 表满 ≠ httpd 死，饱和窗常可自愈（见下） */
+} probe_result_t;
+
+static probe_result_t probe_httpd_port80(void)
 {
     int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sock < 0) return false;
+    if (sock < 0) {
+        return (errno == EMFILE || errno == ENOBUFS || errno == ENOMEM)
+                   ? PROBE_NO_RESOURCE : PROBE_APP_DEAD;
+    }
 
     struct timeval tv = { .tv_sec = 3, .tv_usec = 0 };
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -59,7 +70,7 @@ static bool probe_httpd_port80(void)
         .sin_addr.s_addr = htonl(INADDR_LOOPBACK),
     };
 
-    bool ok = false;
+    probe_result_t r = PROBE_OK;
     if (connect(sock, (struct sockaddr *)&dest, sizeof(dest)) == 0) {
         static const char req[] =
             "GET /api/status HTTP/1.0\r\n"
@@ -68,11 +79,18 @@ static bool probe_httpd_port80(void)
         if (send(sock, req, sizeof(req) - 1, 0) > 0) {
             char buf[32];
             int n = recv(sock, buf, sizeof(buf), 0);
-            ok = (n > 0);
+            r = (n > 0) ? PROBE_OK : PROBE_APP_DEAD;
+        } else {
+            r = (errno == ENOBUFS || errno == ENOMEM)
+                    ? PROBE_NO_RESOURCE : PROBE_APP_DEAD;
         }
+    } else {
+        /* 回环 connect 失败：内存类=资源紧张；ECONNREFUSED=httpd 没在听（真死） */
+        r = (errno == ENOBUFS || errno == ENOMEM)
+                ? PROBE_NO_RESOURCE : PROBE_APP_DEAD;
     }
     close(sock);
-    return ok;
+    return r;
 }
 
 
@@ -143,23 +161,40 @@ static void health_timer_callback(void *arg)
      * 2026-09-03 无声重启事故：弱射频掉线 >60s 时探测必然失败（EHOSTUNREACH），
      * 计数满 6 触发 esp_restart —— 掉线被翻译成"重启"，反而放大不稳定
      * （日志特征：recv 113 ×N → wifi txq stop → rst:0xc 无 panic 文字）。
-     * 修复：WiFi 未连接时不计数——那说明网络不在，不说明 httpd 死了。 */
+     * 修复：WiFi 未连接时不计数——那说明网络不在，不说明 httpd 死了。
+     * 2026-09-29 EMFILE 误杀（同 seeed PIT-002 家族教训）：弱窗 wifi:mem fail
+     * 令 socket 表饱和，探针自身 socket() 即 EMFILE → 被当"httpd 死"计满 6
+     * → 每天重启 17-41 次（serialtap events 实证）。修复：资源紧张
+     * （EMFILE/ENOBUFS/ENOMEM）改走慢通道——连续 30 周期（5 分钟）才重启，
+     * 分钟级饱和窗可自愈不重启；TCP 通而应用层无响应仍走 60s 快通道。 */
     static int httpd_stuck_count = 0;
-    if (!probe_httpd_port80()) {
-        if (wifi_get_state() != WIFI_STATE_STA_CONNECTED &&
-            wifi_get_state() != WIFI_STATE_AP) {
-            httpd_stuck_count = 0;
-            ESP_LOGW(TAG, "httpd probe failed but WiFi down — not counting (network issue, not httpd)");
-        } else {
-            httpd_stuck_count++;
-            ESP_LOGW(TAG, "httpd :80 probe failed (%d/6)", httpd_stuck_count);
-            if (httpd_stuck_count >= 6) {
-                ESP_LOGE(TAG, "httpd :80 unresponsive for 60s — rebooting");
-                esp_restart();
-            }
+    static int httpd_resource_streak = 0;
+    probe_result_t pr = probe_httpd_port80();
+    if (pr == PROBE_OK) {
+        httpd_stuck_count = 0;
+        httpd_resource_streak = 0;
+    } else if (wifi_get_state() != WIFI_STATE_STA_CONNECTED &&
+               wifi_get_state() != WIFI_STATE_AP) {
+        httpd_stuck_count = 0;
+        httpd_resource_streak = 0;
+        ESP_LOGW(TAG, "httpd probe failed but WiFi down — not counting (network issue, not httpd)");
+    } else if (pr == PROBE_NO_RESOURCE) {
+        httpd_stuck_count = 0;
+        httpd_resource_streak++;
+        ESP_LOGW(TAG, "httpd probe starved (EMFILE/ENOBUFS, streak %d/30) — socket table saturated, not httpd dead",
+                 httpd_resource_streak);
+        if (httpd_resource_streak >= 30) {
+            ESP_LOGE(TAG, "httpd socket table starved for 5min — rebooting");
+            esp_restart();
         }
     } else {
-        httpd_stuck_count = 0;
+        httpd_resource_streak = 0;
+        httpd_stuck_count++;
+        ESP_LOGW(TAG, "httpd :80 probe failed (%d/6)", httpd_stuck_count);
+        if (httpd_stuck_count >= 6) {
+            ESP_LOGE(TAG, "httpd :80 unresponsive for 60s — rebooting");
+            esp_restart();
+        }
     }
 }
 
