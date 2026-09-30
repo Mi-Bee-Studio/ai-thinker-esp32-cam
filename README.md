@@ -51,6 +51,36 @@
 | **Flash Memory** | 4MB (3.5MB available for firmware) |
 | **PSRAM** | 8MB (4MB usable for frame buffers) |
 
+### Board Overview
+
+| Item | Value |
+|------|-------|
+| Board | MiBee Cam / AI-Thinker ESP32-CAM class board — ESP32-D0WD-V3, Xtensa LX6 dual-core @ 240 MHz |
+| Flash | 4 MB (custom partition table: nvs + phy_init + factory 3.5 MB + otadata + SPIFFS 432 KB) |
+| PSRAM | 8 MB (frame buffers; ~4 MB usable) |
+| Wireless | 2.4 GHz WiFi b/g/n + BT 4.2 |
+| USB | Micro-USB for power (no USB-UART bridge — flashing via external USB-TTL on U0TX/U0RX) |
+| Camera | OV2640 (UXGA max), JPEG output |
+| TF card | 1-bit SDMMC shared with the camera bus (see pin notes) |
+| LEDs | Status LED GPIO33 (active-low) · Flash LED GPIO4 (LEDC PWM brightness) |
+| Dimensions | AI-Thinker ESP32-CAM form factor (27 × 40 mm class) |
+
+### Pinout Diagram (USB up, front/component-side view; functional pin map)
+
+```
+                 ┌─ microUSB (power) ─┐
+                 │      OV2640        │
+                 │  ESP32-D0WD-V3 +   │   Status LED = IO33 (active-low)
+                 │  4MB Flash/8MB PSRAM   Flash LED = IO4 (PWM)
+                 └────────────────────┘
+  Camera (SCCB) → SIOD=IO26 · SIOC=IO27        XCLK=IO0 (camera-only)
+  Camera bus    → D0=IO5 · D1=IO18 · D2=IO19 · D3=IO21
+                  D4=IO36 · D5=IO39 · D6=IO34 · D7=IO35 (inputs)
+  Camera timing → VSYNC=IO25 · HREF=IO23 · PCLK=IO22 · PWDN=IO32
+  TF (SDMMC)    → CS=IO13 · CLK=IO14 (**shared with camera XCLK — critical timing**) · MOSI=IO15 · MISO=IO2
+  UART0 (flash) → U0TX/U0RX — external USB-TTL for esptool
+```
+
 ---
 
 ## 🔌 Pin Mapping
@@ -351,6 +381,19 @@ Key metrics available:
   - First flash requires serial: `idf.py -p /dev/ttyUSB0 flash`
 
 ---
+
+## 🛡️ Firmware Baseline Norms
+
+Two baselines are mandatory fleet-wide for every MiBee firmware repo:
+
+1. **Watchdog: mandatory.** ✅ This firmware: ESP-IDF task watchdog (TWDT 30 s,
+   panic on timeout) with named per-task registration (`watchdog_register_current`)
+   and periodic feeding (`watchdog_feed_current`).
+2. **Web/API firmware upgrade (OTA): mandatory where the hardware allows.**
+   ✅ This firmware: dual OTA slots + the `/api/ota` family
+   (`/api/ota/upload`, `/api/ota/info`, `/api/ota/spiffs` — firmware and Web UI
+   upgrades from the web interface) plus `esp_https_ota` pull-style updates;
+   wired flashing (serialtap/esptool) remains the recovery path, not a substitute.
 
 ## 📄 License
 
