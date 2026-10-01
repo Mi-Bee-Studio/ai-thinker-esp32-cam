@@ -77,6 +77,35 @@
 | LED_STATUS | 33 | 状态 LED（低电平有效） |
 | LED_FLASH | 4 | 闪光灯 LED（PWM 控制） |
 
+### 板子概要
+
+| 项目 | 值 |
+|------|-----|
+| 主板 | MiBee Cam / AI-Thinker ESP32-CAM 形态板 —— ESP32-D0WD-V3，Xtensa LX6 双核 240MHz |
+| Flash | 4MB（自定义分区表：nvs + phy_init + factory 3.5MB + otadata + SPIFFS 432KB） |
+| PSRAM | 8MB（帧缓冲；实际可用约 4MB） |
+| 无线 | 2.4GHz WiFi b/g/n + BT 4.2 |
+| USB | Micro-USB 仅供电（无 USB-UART 桥——烧录走 U0TX/U0RX 外接 USB-TTL） |
+| 摄像头 | OV2640（最高 UXGA），JPEG 输出 |
+| TF 卡 | 1-bit SDMMC，与相机时序共享（见引脚表注释） |
+| LED | 状态灯 IO33（低有效）· 闪光灯 IO4（LEDC PWM 调光） |
+
+### 引脚位置图（USB 朝上，正面/元件面视角；功能引脚图）
+
+```
+                 ┌─ microUSB（供电）─┐
+                 │      OV2640       │
+                 │  ESP32-D0WD-V3 +  │   状态灯 = IO33（低有效）
+                 │ 4MB闪存/8MB PSRAM │   闪光灯 = IO4（PWM）
+                 └───────────────────┘
+  相机(SCCB) → SIOD=IO26 · SIOC=IO27            XCLK=IO0（仅相机用，不能当 BOOT）
+  相机数据  → D0=IO5 · D1=IO18 · D2=IO19 · D3=IO21
+              D4=IO36 · D5=IO39 · D6=IO34 · D7=IO35（仅输入）
+  相机时序  → VSYNC=IO25 · HREF=IO23 · PCLK=IO22 · PWDN=IO32
+  TF(SDMMC) → CS=IO13 · CLK=IO14（**与相机 XCLK 共享——时序关键**）· MOSI=IO15 · MISO=IO2
+  UART0     → U0TX/U0RX——烧录用外接 USB-TTL
+```
+
 ## 快速开始
 
 ### 前置要求
@@ -310,6 +339,18 @@ curl http://DEVICE_IP/api/record
 - 双 WiFi 故障转移配置
 - REST API 完整控制
 - Prometheus 指标端点
+
+## 固件基线规范
+
+两条基线对所有 MiBee 固件仓强制执行：
+
+1. **看门狗：必须启用。** ✅ 本固件：ESP-IDF 任务看门狗（TWDT 30s、超时
+   panic），任务按名注册（`watchdog_register_current`）并周期喂狗
+   （`watchdog_feed_current`）；
+2. **Web/API 固件升级（OTA）：硬件允许则必须提供。** ✅ 本固件：OTA 双槽 +
+   `/api/ota` 系列端点（`/api/ota/upload`、`/api/ota/info`、`/api/ota/spiffs`，
+   Web 界面可升级固件与 Web UI），另支持 `esp_https_ota` 拉取式升级；有线烧录
+   （serialtap/esptool）只是兜底恢复手段，不能替代 OTA。
 
 ## 许可证
 
