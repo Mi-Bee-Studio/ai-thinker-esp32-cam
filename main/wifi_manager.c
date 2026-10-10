@@ -11,6 +11,8 @@
 #include "freertos/timers.h"
 #include "freertos/task.h"
 #include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include "config_manager.h"
 #include "sd_log.h"
 #include "nvs.h"
@@ -205,24 +207,65 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
             ESP_LOGI(TAG, "STA started, connecting...");
             set_state(WIFI_STATE_STA_CONNECTING);
 
-            /* 开机 RSSI 择优（n16r8 配方，2026-09-09）：仅本轮开机首次
-             * STA_START 执行——双网异名快扫一次，≥8dB 者胜出，平局/双缺
-             * 保持 last_net 的选择，主网不在空中而备网在 → 备网。后续
-             * STA_START（看门狗漫游/故障转移）不重复扫描。 */
+            /* 开机 RSSI 择优（n16r8 配方，2026-09-09）+ SELFTEST 自检行：
+             * 仅本轮开机首次 STA_START 执行——快扫一次两用：①SELFTEST
+             * wifi 行（最强 5 BSS + 配置网 RSSI，工作区 AGENTS.md"固件
+             * 自检行"规范，serialtap 按前缀聚合做台架异常发现）；②双网
+             * 异名时 ≥8dB 者胜出，平局/双缺保持 last_net，主网不在空中
+             * 而备网在 → 备网。后续 STA_START（看门狗漫游/故障转移）不
+             * 重复扫描。设备日志含真实 SSID（本地日志不入仓）。 */
             bool switched = false;
             if (!s_boot_pick_done) {
                 s_boot_pick_done = true;
                 const cam_config_t *cfg = config_get();
-                if (cfg->wifi_ssid_2[0] != '\0' &&
-                    strcmp(cfg->wifi_ssid, cfg->wifi_ssid_2) != 0) {
-                    wifi_scan_config_t sc = { 0 };
-                    sc.show_hidden = false;
-                    if (esp_wifi_scan_start(&sc, true) == ESP_OK) {
-                        uint16_t n = 0;
-                        esp_wifi_scan_get_ap_num(&n);
-                        wifi_ap_record_t *recs = malloc(sizeof(wifi_ap_record_t) * (n ? n : 1));
-                        if (recs) {
-                            if (esp_wifi_scan_get_ap_records(&n, recs) == ESP_OK) {
+                wifi_scan_config_t sc = { 0 };
+                sc.show_hidden = false;
+                if (esp_wifi_scan_start(&sc, true) == ESP_OK) {
+                    uint16_t n = 0;
+                    esp_wifi_scan_get_ap_num(&n);
+                    wifi_ap_record_t *recs = malloc(sizeof(wifi_ap_record_t) * (n ? n : 1));
+                    if (recs) {
+                        if (esp_wifi_scan_get_ap_records(&n, recs) == ESP_OK) {
+                            /* ① SELFTEST wifi 行 */
+                            {
+                                char top_str[240] = "-";
+                                size_t off = 0;
+                                int top = n < 5 ? n : 5;
+                                for (int i = 0; i < top; i++) {
+                                    char item[56];
+                                    int wl = snprintf(item, sizeof(item), "%s%ddBm ch%u %.24s",
+                                                      off ? "; " : "", recs[i].rssi,
+                                                      (unsigned)recs[i].primary,
+                                                      (const char *)recs[i].ssid);
+                                    if (wl < 0 || off + (size_t)wl + 1 > sizeof(top_str)) break;
+                                    memcpy(top_str + off, item, (size_t)wl + 1);
+                                    off += (size_t)wl;
+                                }
+                                char ours_str[100] = "-";
+                                if (cfg->wifi_ssid[0] || cfg->wifi_ssid_2[0]) {
+                                    ours_str[0] = '\0';
+                                    for (int c = 0; c < 2; c++) {
+                                        const char *ssid = c ? cfg->wifi_ssid_2 : cfg->wifi_ssid;
+                                        if (!ssid[0]) continue;
+                                        int8_t best = -128;
+                                        for (uint16_t i = 0; i < n; i++) {
+                                            if (strcmp((const char *)recs[i].ssid, ssid) == 0 &&
+                                                recs[i].rssi > best) {
+                                                best = recs[i].rssi;
+                                            }
+                                        }
+                                        char item[52];
+                                        snprintf(item, sizeof(item), "%s%.24s=%ddBm",
+                                                 ours_str[0] ? "," : "", ssid, best);
+                                        strlcat(ours_str, item, sizeof(ours_str));
+                                    }
+                                }
+                                ESP_LOGI(TAG, "SELFTEST: wifi aps=%u top=\"%s\" ours=\"%s\"",
+                                         (unsigned)n, top_str, ours_str);
+                            }
+                            /* ② 双网异名择优 */
+                            if (cfg->wifi_ssid_2[0] != '\0' &&
+                                strcmp(cfg->wifi_ssid, cfg->wifi_ssid_2) != 0) {
                                 int8_t r1 = -128, r2 = -128;
                                 for (uint16_t i = 0; i < n; i++) {
                                     if (strcmp((const char *)recs[i].ssid, cfg->wifi_ssid) == 0 && recs[i].rssi > r1) r1 = recs[i].rssi;
@@ -248,11 +291,11 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                                     switched = true;   /* 新一轮 STA_START 会自行连接 */
                                 }
                             }
-                            free(recs);
                         }
-                    } else {
-                        ESP_LOGW(TAG, "boot pick: scan failed — using last_net");
+                        free(recs);
                     }
+                } else {
+                    ESP_LOGW(TAG, "boot pick: scan failed — using last_net");
                 }
             }
             if (!switched) {

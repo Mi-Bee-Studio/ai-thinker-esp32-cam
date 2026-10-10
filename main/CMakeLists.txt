@@ -30,6 +30,8 @@ idf_component_register(
     INCLUDE_DIRS "."
     REQUIRES
         onvif-c
+        esp_psram
+        spi_flash
         esp_wifi
         nvs_flash
         esp_http_server

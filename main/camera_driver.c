@@ -8,6 +8,7 @@
 
 #include "camera_driver.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_camera.h"
 #include "driver/gpio.h"
 #include "sensor.h"
@@ -348,6 +349,14 @@ esp_err_t camera_init(camera_resolution_t resolution, uint8_t fps, uint8_t jpeg_
     s_current_resolution = resolution;
 
     ESP_LOGI(TAG, "Camera initialized successfully");
+    /* SELFTEST 自检行（相机部分，工作区 AGENTS.md"固件自检行"规范）：
+     * 本板相机初始化延迟到 WiFi 就绪后（ESP32 I2S DMA 冲突 workaround），
+     * app_main 的整机行只能打 sensor=deferred，这里成功后补实测证据。 */
+    if (sensor) {
+        ESP_LOGI(TAG, "SELFTEST: camera sensor=0x%04X res=%d heap=%uKB",
+                 sensor->id.PID, (int)resolution,
+                 (unsigned)(esp_get_free_heap_size() >> 10));
+    }
     return ESP_OK;
 }
 
