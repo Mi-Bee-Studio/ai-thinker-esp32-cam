@@ -10,6 +10,9 @@
 
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_chip_info.h"
+#include "esp_flash.h"
+#include "esp_psram.h"
 #include "esp_ota_ops.h"
 #include "esp_spiffs.h"
 #include "nvs_flash.h"
@@ -326,6 +329,27 @@ void app_main(void)
     /* Start family AT console (core + port; available immediately after config).
      * 契约 v1.1：共享核心 at_command.c + 板级 at_port.c（原 serial_config.c 已并入） */
     at_command_init();
+
+    /* SELFTEST 自检行（工作区 AGENTS.md"固件自检行"规范）：一行可 grep
+     * 的开机体检证据，serialtap 按前缀聚合做台架异常发现。本板相机
+     * 初始化延迟到 WiFi 就绪后（ESP32 I2S DMA workaround），此处
+     * sensor=deferred，camera_driver 成功后补 SELFTEST: camera 行；
+     * wifi 部分由 wifi_manager 开机快扫后补 SELFTEST: wifi 行。 */
+    {
+        esp_chip_info_t ci;
+        esp_chip_info(&ci);
+        uint32_t flsz = 0;
+        esp_flash_get_size(NULL, &flsz);
+        size_t psz = esp_psram_get_size();
+        char psram_str[12];
+        if (psz) snprintf(psram_str, sizeof(psram_str), "%uMB", (unsigned)(psz >> 20));
+        else     strlcpy(psram_str, "none", sizeof(psram_str));
+        ESP_LOGI(TAG, "SELFTEST: board=ai-thinker-esp32-cam fw=v0.1 chip=%s rev=v%d.%d"
+                      " cores=%u flash=%uMB psram=%s sensor=deferred heap=%uKB",
+                 CONFIG_IDF_TARGET, ci.revision / 100, ci.revision % 100, ci.cores,
+                 (unsigned)(flsz >> 20), psram_str,
+                 (unsigned)(esp_get_free_heap_size() >> 10));
+    }
 
     /* Step 3/19: LED init */
     ret = led_init();
