@@ -39,6 +39,25 @@ static const char *TAG = "ota_updater";
 /* 串口/上传两条 OTA 路径互斥（契约 v1.3：POST /api/ota URL 触发） */
 static SemaphoreHandle_t s_ota_mutex = NULL;
 
+/* ---------- PIT-058：OTA 长事务豁免自愈探针（n16r8 #41 同款移植） ----------
+ * 弱链路流式上传可持续数分钟，esp_ota_write 拖慢 httpd 事件循环属预期——
+ * health 探针把预期当卡死，60s 即 esp_restart 杀掉上传本身。
+ * 用截止时刻而非旗标：任何 handler 退出路径都不可能漏清（漏清 = 自愈
+ * 永久失效，比 PIT-058 本身更糟）；窗口过期自动恢复值守。 */
+#define OTA_TXN_GRACE_S 600
+static TickType_t s_txn_grace_until = 0;
+
+void ota_txn_grace_begin(void)
+{
+    s_txn_grace_until = xTaskGetTickCount() + pdMS_TO_TICKS(OTA_TXN_GRACE_S * 1000);
+    ESP_LOGI(TAG, "httpd self-heal probe grace window opened (%ds)", OTA_TXN_GRACE_S);
+}
+
+bool ota_updater_busy(void)
+{
+    return s_txn_grace_until != 0 && xTaskGetTickCount() < s_txn_grace_until;
+}
+
 static void ota_mutex_init(void)
 {
     if (!s_ota_mutex) {
@@ -141,6 +160,7 @@ esp_err_t handler_api_ota_upload(httpd_req_t *req)
              (unsigned)content_len, next->label);
 
     /* Stop camera + all dependents to prevent flash/DMA conflicts */
+    ota_txn_grace_begin();   /* 流式上传 + esp_ota_begin 全擦可持续数分钟（PIT-058） */
     ota_quiesce_system();
 
     /* Begin OTA write */
@@ -332,6 +352,7 @@ esp_err_t handler_api_ota_url(httpd_req_t *req)
     cJSON_Delete(json);
 
     ESP_LOGI(TAG, "OTA URL trigger: %s", url_buf);
+    ota_txn_grace_begin();   /* esp_https_ota 可持续数分钟（PIT-058） */
     ota_quiesce_system();
 
     esp_http_client_config_t http_config = {
@@ -402,6 +423,7 @@ esp_err_t handler_api_spiffs_upload(httpd_req_t *req)
              (unsigned)content_len, spiffs_part->label, (unsigned)spiffs_part->address);
 
     /* Quiesce system — same as firmware OTA */
+    ota_txn_grace_begin();   /* 全分区擦除+逐块写入（PIT-058） */
     ota_quiesce_system();
 
     /* Erase the SPIFFS partition */
