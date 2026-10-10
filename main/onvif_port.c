@@ -22,6 +22,9 @@
 #include "esp_mac.h"
 #include "esp_http_server.h"
 #include "esp_app_desc.h"
+#include "time_sync.h"
+#include <sys/time.h>
+#include <time.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -61,6 +64,40 @@ static uint8_t port_frame_rate(void)
     return config_get()->cam_fps;   /* 契约 §3.1 cam_fps 消费者（旧 GetProfiles 同源） */
 }
 
+/* ---- 时间配置接缝（issue #43：apply-or-fault，绝不静默） ---- */
+
+static bool port_time_ntp_active(void)
+{
+    return time_sync_is_synced();   /* 如实：SNTP 真同步过才报 NTP */
+}
+
+static const char *port_time_tz(void)
+{
+    return config_get_timezone();
+}
+
+static esp_err_t port_time_apply(const onvif_c_time_req_t *req)
+{
+    if (req->has_tz && req->tz[0]) {
+        esp_err_t err = config_set_timezone(req->tz);
+        if (err != ESP_OK) return err;
+    }
+    if (req->ntp_mode) {
+        return time_sync_restart(config_get_timezone());
+    }
+    if (req->has_utc) {
+        struct timeval tv = { .tv_sec = (time_t)req->utc_epoch, .tv_usec = 0 };
+        if (settimeofday(&tv, NULL) != 0) return ESP_FAIL;
+        ESP_LOGI(TAG, "manual time set to %lld", (long long)req->utc_epoch);
+    }
+    return ESP_OK;
+}
+
+static esp_err_t port_ntp_set(const char *const *servers, size_t n)
+{
+    return config_set_ntp_servers(n > 0 ? servers[0] : "", n > 1 ? servers[1] : "");
+}
+
 esp_err_t onvif_port_start(void)
 {
     /* 运行时开关（原 main.c Step 门：config onvif_enable，本板默认 1） */
@@ -86,6 +123,10 @@ esp_err_t onvif_port_start(void)
         .stream_uri       = port_stream_uri,
         .frame_rate       = port_frame_rate,
         .events_enabled   = NULL,   /* 本板无事件能力（无 CSI） */
+        .time_ntp_active  = port_time_ntp_active,
+        .time_tz          = port_time_tz,
+        .time_apply       = port_time_apply,
+        .ntp_set          = port_ntp_set,
         .http_port        = 80,
         .wdt_watch_discovery = true,
         .mdns_hostname    = hostname,

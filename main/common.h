@@ -88,6 +88,8 @@ typedef struct {
     uint8_t cam_fps;                   /* 1-30，default 15 */
     uint8_t cam_quality;               /* 10-63（PIT-021），default 12 */
     char timezone[33];
+    char ntp_server1[64];   /* 契约 v2.1：SNTP 源 1，空 = 内置公网池 */
+    char ntp_server2[64];   /* 契约 v2.1：SNTP 源 2，空 = 内置公网池 */
     /* 家族 motion 超集模型（契约 §3.2）：sensitivity 越大越灵敏；
      * 旧 motion_threshold 迁移为 sensitivity = 100 - threshold */
     uint8_t motion_enabled;            /* default 1 */
