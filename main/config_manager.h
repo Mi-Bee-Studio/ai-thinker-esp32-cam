@@ -98,6 +98,12 @@ esp_err_t config_set_jpeg_quality(uint8_t quality);
  */
 esp_err_t config_set_timezone(const char *tz);
 
+/** 契约 v2.1：SNTP 源（空串 = 清回内置公网池）。 */
+const char *config_get_timezone(void);
+const char *config_get_ntp_server1(void);
+const char *config_get_ntp_server2(void);
+esp_err_t config_set_ntp_servers(const char *s1, const char *s2);
+
 /**
  * @brief Set vertical flip, save immediately
  */

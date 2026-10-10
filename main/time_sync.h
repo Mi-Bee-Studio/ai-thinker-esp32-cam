@@ -6,6 +6,9 @@
 #include <stdbool.h>
 
 esp_err_t time_sync_init(const char *timezone);
+
+/** 用最新 ntp_server1/2 配置重启 SNTP（issue #43）。 */
+esp_err_t time_sync_restart(const char *timezone);
 bool time_sync_is_synced(void);
 const char *time_sync_get_str(void);
 const char *time_sync_get_date_path(void);
