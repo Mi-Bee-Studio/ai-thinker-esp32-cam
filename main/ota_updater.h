@@ -46,4 +46,22 @@ esp_err_t handler_api_spiffs_upload(httpd_req_t *req);
  */
 esp_err_t handler_api_ota_url(httpd_req_t *req);
 
+/**
+ * @brief Open the OTA transaction grace window (PIT-058).
+ *
+ * Streaming a multi-MB image over a weak link keeps the httpd task busy
+ * for minutes; that is expected, not a hang. Call at every long-transaction
+ * entry point. Uses a deadline (not a flag) so no handler exit path can
+ * leave self-heal permanently disabled — the window lapses on its own.
+ */
+void ota_txn_grace_begin(void);
+
+/**
+ * @brief True while the OTA grace window (PIT-058) is open.
+ *
+ * The health probe must skip entirely while busy; stale failure counters
+ * from before the window must be reset by the caller.
+ */
+bool ota_updater_busy(void);
+
 #endif /* OTA_UPDATER_H */

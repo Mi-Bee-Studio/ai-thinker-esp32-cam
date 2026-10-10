@@ -26,6 +26,7 @@
 #include "lwip/sockets.h"
 #include "lwip/inet.h"
 #include "web_server.h"
+#include "ota_updater.h"
 #include "lwip/inet.h"
 
 static const char *TAG = "health_monitor";
@@ -204,6 +205,15 @@ static void health_timer_callback(void *arg)
      * 分钟级饱和窗可自愈不重启；TCP 通而应用层无响应仍走 60s 快通道。 */
     static int httpd_stuck_count = 0;
     static int httpd_resource_streak = 0;
+    /* PIT-058：OTA 长事务窗口内整体跳过——esp_ota_write 拖慢 httpd 事件循环
+     * 属预期（弱链 1.36MB 上传实测 60-70s，探针满 6 次把上传连杀 7 次）。
+     * 窗口内同时清零计数，避免窗口一过就被陈旧计数直接送进重启。 */
+    if (ota_updater_busy()) {
+        ESP_LOGD(TAG, "httpd probe skipped: OTA transaction grace window");
+        httpd_stuck_count = 0;
+        httpd_resource_streak = 0;
+        return;
+    }
     probe_result_t pr = probe_httpd_port80();
     if (pr == PROBE_OK) {
         httpd_stuck_count = 0;
