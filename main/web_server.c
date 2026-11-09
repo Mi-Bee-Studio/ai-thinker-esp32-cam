@@ -1503,7 +1503,7 @@ static esp_err_t handler_api_capabilities(httpd_req_t *req)
 
     cJSON *data = cJSON_CreateObject();
     /* 契约 v1.0：12 个布尔能力位 + api_version/wifi_scan（见 docs/api-contract.md） */
-    cJSON_AddStringToObject(data, "api_version", "1.10");
+    cJSON_AddStringToObject(data, "api_version", "1.11");
     cJSON_AddBoolToObject(data, "wifi_scan", true);
     /* ai-thinker capabilities matrix */
     cJSON_AddBoolToObject(data, "ai", false);
